@@ -1,0 +1,14 @@
+app = "efb-connector-sync"
+primary_region = "fra"
+
+[build]
+
+[env]
+  SYNC_DAYS = "3"
+
+# Note: This app uses scheduled machines.
+# Deploy with: fly deploy
+# Then configure the schedule with:
+#   fly machine update <machine-id> --schedule "0 19 * * *"
+# Or run manually:
+#   fly machine run . --command "./gpx-uploader sync --days 3"

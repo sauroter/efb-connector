@@ -21,3 +21,6 @@ config.json
 
 # Python virtual environment
 .venv/
+
+# Fly.io
+.fly/
