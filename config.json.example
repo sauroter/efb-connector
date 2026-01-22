@@ -5,5 +5,14 @@
     "item": "efb",
     "username_field": "username",
     "password_field": "password"
+  },
+  "garmin": {
+    "onepassword": {
+      "account": "your-account.1password.eu",
+      "vault": "Private",
+      "item": "garmin",
+      "email_field": "username",
+      "password_field": "password"
+    }
   }
 }

@@ -15,3 +15,9 @@ config.json
 .vscode/
 *.swp
 *.swo
+
+# Devbox
+.devbox/
+
+# Python virtual environment
+.venv/
