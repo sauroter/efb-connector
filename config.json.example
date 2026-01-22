@@ -1,0 +1,9 @@
+{
+  "onepassword": {
+    "account": "your-account.1password.eu",
+    "vault": "Private",
+    "item": "efb",
+    "username_field": "username",
+    "password_field": "password"
+  }
+}

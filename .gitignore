@@ -1,0 +1,17 @@
+# Binary
+gpx-uploader
+
+# Config (contains personal 1Password account details)
+config.json
+
+# GPX files (personal GPS data)
+*.gpx
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
