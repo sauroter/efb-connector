@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // resendEndpoint is the Resend API endpoint for sending emails.
@@ -15,8 +17,22 @@ var resendEndpoint = "https://api.resend.com/emails"
 // SendMagicLinkEmail sends a magic link login email to the given address via
 // the Resend HTTP API. The magic link URL is constructed from baseURL and
 // token.
+func (s *AuthService) isDevMode() bool {
+	return s.resendAPIKey == "" ||
+		strings.HasPrefix(s.resendAPIKey, "re_test") ||
+		s.resendAPIKey == "placeholder"
+}
+
 func (s *AuthService) SendMagicLinkEmail(to, token, baseURL string) error {
-	link := baseURL + "/auth/callback?token=" + token
+	link := baseURL + "/auth/verify?token=" + token
+
+	if s.isDevMode() {
+		slog.Warn("DEV MODE: magic link email not sent — click the link below to log in",
+			"to", to,
+			"link", link,
+		)
+		return nil
+	}
 
 	payload := map[string]interface{}{
 		"from":    "EFB Connector <noreply@efb-connector.com>",

@@ -514,7 +514,7 @@ func TestSendMagicLinkEmail(t *testing.T) {
 	}
 
 	html, ok := receivedBody["html"].(string)
-	if !ok || !strings.Contains(html, "https://example.com/auth/callback?token=test-token-123") {
+	if !ok || !strings.Contains(html, "https://example.com/auth/verify?token=test-token-123") {
 		t.Errorf("html does not contain expected link: %q", html)
 	}
 }
