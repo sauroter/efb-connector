@@ -17,7 +17,7 @@
   <nav class="container">
     <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li></ul>
     <ul>
-      <li><a href="/dashboard">Dashboard</a></li>
+      <li class="hide-mobile"><a href="/dashboard">Dashboard</a></li>
       <li><a href="/sync/history">Sync History</a></li>
       <li>
         <form method="POST" action="/auth/logout" style="display: inline;">
@@ -87,7 +87,7 @@
           {{$status := index .LastSync "Status"}}
           <p>
             Last sync:
-            <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
+            <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "completed"}}status-completed{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
               {{$status}}
             </span>
             &mdash;
@@ -139,7 +139,7 @@
   </main>
 
   <footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
-    <small>&copy; 2025 EFB Connector &middot; <a href="/impressum">Impressum</a> &middot; <a href="/privacy">Datenschutz</a> &middot; <a href="https://github.com/sauroter/efb-connector">GitHub</a></small>
+    <small>&copy; 2025–2026 EFB Connector &middot; <a href="/impressum">Impressum</a> &middot; <a href="/privacy">Datenschutz</a> &middot; <a href="https://github.com/sauroter/efb-connector">GitHub</a></small>
   </footer>
 </body>
 </html>{{end}}

@@ -12,7 +12,7 @@
     Syncing&hellip;
     {{else}}
     Last sync:
-    <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{end}}">
+    <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{end}}">
       {{.Status}}
     </span>
     &mdash;
