@@ -18,6 +18,11 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.rateLimiter.AllowSync(userID) {
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">You can only sync once per hour. Please try again later.</p></div>`))
+			return
+		}
 		setFlash(w, "You can only sync once per hour. Please try again later.")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
@@ -38,6 +43,15 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	s.logger.Info("sync triggered", "user_id", userID)
+
+	if r.Header.Get("HX-Request") == "true" {
+		// Return a "running" partial that will auto-poll for updates.
+		s.render(w, "sync_status.html", map[string]any{
+			"HasRun": true,
+			"Status": "running",
+		})
+		return
+	}
 	setFlash(w, "Sync started. This may take a few minutes.")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
