@@ -1,0 +1,5 @@
+{{define "sync_status.html"}}{{if .HasRun}}<div>
+<p>Run #{{.ID}} - Status: {{.Status}}</p>
+<p>Found: {{.ActivitiesFound}} | Synced: {{.ActivitiesSynced}} | Skipped: {{.ActivitiesSkipped}} | Failed: {{.ActivitiesFailed}}</p>
+{{if .ErrorMessage}}<p>Error: {{.ErrorMessage}}</p>{{end}}
+</div>{{else}}<p>No sync runs yet.</p>{{end}}{{end}}

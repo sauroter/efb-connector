@@ -1,0 +1,169 @@
+// Package web implements the HTTP server, routes, and handlers for the
+// efb-connector multi-tenant web UI.
+package web
+
+import (
+	"fmt"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"path/filepath"
+
+	"efb-connector/internal/auth"
+	"efb-connector/internal/database"
+	"efb-connector/internal/efb"
+	"efb-connector/internal/garmin"
+	"efb-connector/internal/sync"
+)
+
+// Server holds all dependencies needed by the HTTP handlers.
+type Server struct {
+	db             *database.DB
+	auth           *auth.AuthService
+	syncEngine     *sync.SyncEngine
+	garmin         garmin.GarminProvider
+	efb            *efb.EFBClient
+	rateLimiter    *auth.RateLimiter
+	internalSecret string
+	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
+	logger         *slog.Logger
+	templates      *template.Template
+}
+
+// ServerDeps bundles the dependencies required to construct a Server.
+type ServerDeps struct {
+	DB             *database.DB
+	Auth           *auth.AuthService
+	SyncEngine     *sync.SyncEngine
+	Garmin         garmin.GarminProvider
+	EFB            *efb.EFBClient
+	RateLimiter    *auth.RateLimiter
+	InternalSecret string
+	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
+	Logger         *slog.Logger
+	TemplatesDir   string // path to the templates/ directory
+}
+
+// NewServer creates a Server with the given dependencies and parses all
+// templates from the templates directory.
+func NewServer(deps ServerDeps) (*Server, error) {
+	tmpl, err := parseTemplates(deps.TemplatesDir)
+	if err != nil {
+		return nil, fmt.Errorf("web: parse templates: %w", err)
+	}
+
+	return &Server{
+		db:             deps.DB,
+		auth:           deps.Auth,
+		syncEngine:     deps.SyncEngine,
+		garmin:         deps.Garmin,
+		efb:            deps.EFB,
+		rateLimiter:    deps.RateLimiter,
+		internalSecret: deps.InternalSecret,
+		configBaseURL:  deps.BaseURL,
+		logger:         deps.Logger,
+		templates:      tmpl,
+	}, nil
+}
+
+// Routes returns the fully-configured HTTP handler with all routes registered
+// and wrapped in logging + recovery middleware.
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+
+	// ── Public routes (no auth required) ──
+	mux.HandleFunc("GET /", s.handleLanding)
+	mux.HandleFunc("GET /login", s.handleLoginForm)
+	mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	mux.HandleFunc("GET /auth/verify", s.handleVerifyMagicLink)
+	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+
+	// ── Authenticated routes (wrapped in RequireAuth + CSRFProtect) ──
+	authMux := http.NewServeMux()
+	authMux.HandleFunc("GET /dashboard", s.handleDashboard)
+	authMux.HandleFunc("GET /settings/garmin", s.handleGarminSettingsForm)
+	authMux.HandleFunc("POST /settings/garmin", s.handleGarminSettingsSave)
+	authMux.HandleFunc("POST /settings/garmin/delete", s.handleGarminSettingsDelete)
+	authMux.HandleFunc("GET /settings/efb", s.handleEFBSettingsForm)
+	authMux.HandleFunc("POST /settings/efb", s.handleEFBSettingsSave)
+	authMux.HandleFunc("POST /settings/efb/delete", s.handleEFBSettingsDelete)
+	authMux.HandleFunc("POST /account/delete", s.handleAccountDelete)
+	authMux.HandleFunc("POST /sync/trigger", s.handleSyncTrigger)
+	authMux.HandleFunc("GET /sync/status", s.handleSyncStatus)
+	authMux.HandleFunc("GET /sync/history", s.handleSyncHistory)
+
+	// Mount authenticated routes under their path prefixes.
+	protected := s.auth.RequireAuth(s.auth.CSRFProtect(authMux))
+	mux.Handle("/dashboard", protected)
+	mux.Handle("/settings/", protected)
+	mux.Handle("/account/", protected)
+	mux.Handle("/sync/", protected)
+
+	// ── Internal / admin routes ──
+	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
+	mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Wrap the entire mux in logging + recovery middleware.
+	return s.recovery(s.logging(mux))
+}
+
+// render executes the named template with data and writes the result to w.
+// On error it logs the failure and sends a 500 response.
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
+		s.logger.Error("template render failed", "template", name, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// flash reads and clears the "flash" cookie, returning its value (or "").
+func flash(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie("flash")
+	if err != nil {
+		return ""
+	}
+	// Clear the cookie immediately.
+	http.SetCookie(w, &http.Cookie{
+		Name:   "flash",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+	return cookie.Value
+}
+
+// setFlash sets a one-time flash message cookie.
+func setFlash(w http.ResponseWriter, msg string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "flash",
+		Value:    msg,
+		Path:     "/",
+		MaxAge:   60, // generous: should be consumed on the next page load
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// parseTemplates loads all templates from the given directory.
+func parseTemplates(dir string) (*template.Template, error) {
+	tmpl := template.New("")
+
+	// Parse partials first so they are available to top-level templates.
+	partials := filepath.Join(dir, "partials", "*.html")
+	if matches, _ := filepath.Glob(partials); len(matches) > 0 {
+		if _, err := tmpl.ParseGlob(partials); err != nil {
+			return nil, err
+		}
+	}
+
+	// Parse top-level templates.
+	pages := filepath.Join(dir, "*.html")
+	if matches, _ := filepath.Glob(pages); len(matches) > 0 {
+		if _, err := tmpl.ParseGlob(pages); err != nil {
+			return nil, err
+		}
+	}
+
+	return tmpl, nil
+}

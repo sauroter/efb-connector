@@ -1,0 +1,22 @@
+{{define "settings_garmin.html"}}<!DOCTYPE html>
+<html><head><title>Garmin Settings - EFB Connector</title></head>
+<body>
+<h1>Garmin Settings</h1>
+{{if .Flash}}<p>{{.Flash}}</p>{{end}}
+{{if .Connected}}
+<p>Connected as: {{.Email}}</p>
+<form method="POST" action="/settings/garmin/delete">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <button type="submit">Disconnect</button>
+</form>
+{{end}}
+<h2>{{if .Connected}}Update{{else}}Connect{{end}} Garmin</h2>
+<form method="POST" action="/settings/garmin">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label>Email: <input type="email" name="email" required></label><br>
+  <label>Password: <input type="password" name="password" required></label><br>
+  <button type="submit">Save</button>
+</form>
+<p><a href="/dashboard">Back to Dashboard</a></p>
+</body>
+</html>{{end}}

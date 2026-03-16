@@ -1,0 +1,23 @@
+{{define "sync_history.html"}}<!DOCTYPE html>
+<html><head><title>Sync History - EFB Connector</title></head>
+<body>
+<h1>Sync History</h1>
+{{if .Flash}}<p>{{.Flash}}</p>{{end}}
+{{if .Runs}}
+<table>
+<tr><th>ID</th><th>Trigger</th><th>Status</th><th>Found</th><th>Synced</th><th>Skipped</th><th>Failed</th><th>Started</th></tr>
+{{range .Runs}}
+<tr>
+  <td>{{.ID}}</td><td>{{.Trigger}}</td><td>{{.Status}}</td>
+  <td>{{.ActivitiesFound}}</td><td>{{.ActivitiesSynced}}</td>
+  <td>{{.ActivitiesSkipped}}</td><td>{{.ActivitiesFailed}}</td>
+  <td>{{.StartedAt}}</td>
+</tr>
+{{end}}
+</table>
+{{else}}
+<p>No sync runs yet.</p>
+{{end}}
+<p><a href="/dashboard">Back to Dashboard</a></p>
+</body>
+</html>{{end}}

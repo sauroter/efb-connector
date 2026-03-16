@@ -1,0 +1,26 @@
+{{define "dashboard.html"}}<!DOCTYPE html>
+<html><head><title>Dashboard - EFB Connector</title></head>
+<body>
+<h1>Dashboard</h1>
+{{if .Flash}}<p>{{.Flash}}</p>{{end}}
+<p>User: {{.User.Email}}</p>
+<p>Garmin: {{if .GarminConnected}}Connected{{else}}Not connected{{end}}</p>
+<p>EFB: {{if .EFBConnected}}Connected{{else}}Not connected{{end}}</p>
+{{if .LastSync}}
+<h2>Last Sync</h2>
+<p>Status: {{index .LastSync "Status"}} | Found: {{index .LastSync "ActivitiesFound"}} | Synced: {{index .LastSync "ActivitiesSynced"}}</p>
+{{end}}
+<nav>
+  <a href="/settings/garmin">Garmin Settings</a> |
+  <a href="/settings/efb">EFB Settings</a> |
+  <a href="/sync/history">Sync History</a>
+</nav>
+<form method="POST" action="/sync/trigger">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <button type="submit">Sync Now</button>
+</form>
+<form method="POST" action="/auth/logout">
+  <button type="submit">Logout</button>
+</form>
+</body>
+</html>{{end}}

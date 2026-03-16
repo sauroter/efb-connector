@@ -1,0 +1,11 @@
+{{define "login.html"}}<!DOCTYPE html>
+<html><head><title>Login - EFB Connector</title></head>
+<body>
+<h1>Login</h1>
+{{if .Flash}}<p>{{.Flash}}</p>{{end}}
+<form method="POST" action="/login">
+  <label>Email: <input type="email" name="email" required></label>
+  <button type="submit">Send login link</button>
+</form>
+</body>
+</html>{{end}}
