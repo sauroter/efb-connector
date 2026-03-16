@@ -1,0 +1,15 @@
+/* Status badges */
+.status-badge { display: inline-block; padding: 0.2em 0.7em; border-radius: 999px; font-size: 0.85em; font-weight: 600; }
+.status-connected { background: #d1fae5; color: #065f46; }
+.status-disconnected { background: #fee2e2; color: #991b1b; }
+.status-success { background: #d1fae5; color: #065f46; }
+.status-partial { background: #fef3c7; color: #92400e; }
+.status-failed { background: #fee2e2; color: #991b1b; }
+.status-running { background: #dbeafe; color: #1e40af; }
+
+/* Spinner */
+.spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.4em; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Flash messages */
+.flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }

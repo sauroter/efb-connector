@@ -1,18 +1,18 @@
 {{define "landing.html"}}<!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <title>EFB Connector — Sync Garmin to Kanu-EFB</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
   <style>
     .hero { text-align: center; padding: 4rem 1rem; }
     .hero h1 { font-size: 2.5rem; }
     .hero p { font-size: 1.2rem; color: var(--pico-muted-color); max-width: 600px; margin: 1rem auto 2rem; }
     .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; margin: 3rem 0; }
     .feature-card { padding: 1.5rem; background: var(--pico-card-background-color); border-radius: var(--pico-border-radius); border: 1px solid var(--pico-muted-border-color); }
-    .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-primary-border); }
   </style>
 </head>
 <body>
@@ -25,6 +25,7 @@
     {{template "flash" .}}
 
     <section class="hero">
+      <img src="/static/favicon.svg" alt="EFB Connector" width="72" height="72" style="margin-bottom: 1rem;">
       <h1>Sync your Garmin paddling activities to Kanu-EFB</h1>
       <p>EFB Connector automatically downloads your kayaking and canoeing activities from Garmin Connect and uploads them to your Kanu-EFB electronic logbook — every day, without any manual steps.</p>
       <a href="/login" role="button">Get started — it's free</a>

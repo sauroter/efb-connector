@@ -1,18 +1,13 @@
 {{define "sync_history.html"}}<!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <title>Sync History — EFB Connector</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
   <style>
-    .status-badge { display: inline-block; padding: 0.2em 0.7em; border-radius: 999px; font-size: 0.8em; font-weight: 600; white-space: nowrap; }
-    .status-success { background: #d1fae5; color: #065f46; }
-    .status-partial { background: #fef3c7; color: #92400e; }
-    .status-failed { background: #fee2e2; color: #991b1b; }
-    .status-running { background: #dbeafe; color: #1e40af; }
-    .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }
     table { font-size: 0.9rem; }
     td, th { vertical-align: middle; }
   </style>
@@ -21,7 +16,16 @@
   <nav class="container">
     <ul>
       <li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li>
+    </ul>
+    <ul>
       <li><a href="/dashboard">Dashboard</a></li>
+      <li><a href="/sync/history">Sync History</a></li>
+      <li>
+        <form method="POST" action="/auth/logout" style="display: inline;">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button type="submit" class="outline secondary" style="margin: 0;">Logout</button>
+        </form>
+      </li>
     </ul>
   </nav>
 
