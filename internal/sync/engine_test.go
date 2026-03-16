@@ -1,0 +1,710 @@
+package sync
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"efb-connector/internal/database"
+	"efb-connector/internal/efb"
+	"efb-connector/internal/garmin"
+)
+
+// ──────────────────────────────────────────────
+// Test helpers
+// ──────────────────────────────────────────────
+
+// testKey is a 32-byte AES key used in all tests.
+var testKey = []byte("12345678901234567890123456789012")
+
+// openTestDB opens an in-memory SQLite database with migrations applied.
+func openTestDB(t *testing.T) *database.DB {
+	t.Helper()
+	db, err := database.Open(":memory:", testKey)
+	if err != nil {
+		t.Fatalf("Open DB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// mockGarminProvider implements garmin.GarminProvider for testing.
+type mockGarminProvider struct {
+	activities    []garmin.Activity
+	listErr       error
+	gpxData       map[string][]byte // activityID → GPX bytes
+	downloadErr   map[string]error  // activityID → error
+	validateErr   error
+}
+
+func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCredentials, _, _ time.Time) ([]garmin.Activity, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.activities, nil
+}
+
+func (m *mockGarminProvider) DownloadGPX(_ context.Context, _ garmin.GarminCredentials, activityID string) ([]byte, error) {
+	if m.downloadErr != nil {
+		if err, ok := m.downloadErr[activityID]; ok {
+			return nil, err
+		}
+	}
+	if data, ok := m.gpxData[activityID]; ok {
+		return data, nil
+	}
+	return []byte(`<?xml version="1.0"?><gpx></gpx>`), nil
+}
+
+func (m *mockGarminProvider) ValidateCredentials(_ context.Context, _ garmin.GarminCredentials) error {
+	return m.validateErr
+}
+
+// newMockEFBServer creates a test HTTP server simulating the EFB portal.
+// It accepts login with username "efbuser" / password "efbpass".
+// Uploads return "Datenbank gespeichert" on success.
+func newMockEFBServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm()
+		user := r.FormValue("username")
+		pass := r.FormValue("password")
+		if user == "efbuser" && pass == "efbpass" {
+			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		// Bad credentials.
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		hasSession := err == nil && cookie.Value == "1"
+
+		switch r.Method {
+		case http.MethodGet:
+			if !hasSession {
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+		case http.MethodPost:
+			if !hasSession {
+				http.Error(w, "not authenticated", http.StatusForbidden)
+				return
+			}
+			_ = r.ParseMultipartForm(10 << 20)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Datenbank gespeichert"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>home</html>"))
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newMockEFBServer5xx creates a server that returns 500 on upload.
+func newMockEFBServer5xx(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+			return
+		}
+		_ = r.ParseMultipartForm(10 << 20)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newMockEFBServerBadLogin creates a server that always rejects login.
+func newMockEFBServerBadLogin(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newMockEFBServerPartialFailure creates a server that fails on the Nth upload.
+func newMockEFBServerPartialFailure(t *testing.T, failOnUploadN int) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+	var uploadCount atomic.Int32
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+			return
+		}
+		_ = r.ParseMultipartForm(10 << 20)
+		n := int(uploadCount.Add(1))
+		if n == failOnUploadN {
+			// Simulate a non-5xx upload failure (e.g., missing success marker).
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Upload fehlgeschlagen"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Datenbank gespeichert"))
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// noSleep is a sleep function that does nothing, used in tests to avoid delays.
+func noSleep(_, _ time.Duration) {}
+
+// setupUser creates a user with both Garmin and EFB credentials in the DB.
+func setupUser(t *testing.T, db *database.DB) *database.User {
+	t.Helper()
+	u, err := db.CreateUser(fmt.Sprintf("user-%d@example.com", time.Now().UnixNano()))
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := db.SaveGarminCredentials(u.ID, "garmin@example.com", "garminpass"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+	return u
+}
+
+// makeActivities creates N test activities with sequential IDs.
+func makeActivities(n int) []garmin.Activity {
+	acts := make([]garmin.Activity, n)
+	for i := range n {
+		acts[i] = garmin.Activity{
+			ProviderID:   fmt.Sprintf("act-%d", i+1),
+			Name:         fmt.Sprintf("Paddling Session %d", i+1),
+			Type:         "kayaking",
+			Date:         time.Now().Add(-time.Duration(i) * time.Hour),
+			DurationSecs: 3600,
+			DistanceM:    5000,
+		}
+	}
+	return acts
+}
+
+// newEngine creates a SyncEngine with noSleep for testing.
+func newEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient) *SyncEngine {
+	e := NewSyncEngine(db, gp, ec, discardLogger())
+	e.sleepFunc = noSleep
+	return e
+}
+
+// discardLogger returns a logger that discards all output.
+func discardLogger() *slog.Logger {
+	return slog.Default()
+}
+
+// ──────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────
+
+func TestSyncUser_HappyPath(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(3)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if run == nil {
+		t.Fatal("expected sync run, got nil")
+	}
+	if run.Status != "completed" {
+		t.Errorf("status = %q, want completed", run.Status)
+	}
+	if run.ActivitiesFound != 3 {
+		t.Errorf("found = %d, want 3", run.ActivitiesFound)
+	}
+	if run.ActivitiesSynced != 3 {
+		t.Errorf("synced = %d, want 3", run.ActivitiesSynced)
+	}
+	if run.ActivitiesSkipped != 0 {
+		t.Errorf("skipped = %d, want 0", run.ActivitiesSkipped)
+	}
+	if run.ActivitiesFailed != 0 {
+		t.Errorf("failed = %d, want 0", run.ActivitiesFailed)
+	}
+
+	// Verify activities are recorded as synced.
+	for _, act := range gp.activities {
+		synced, err := db.IsActivitySynced(user.ID, act.ProviderID)
+		if err != nil {
+			t.Fatalf("IsActivitySynced(%q): %v", act.ProviderID, err)
+		}
+		if !synced {
+			t.Errorf("activity %q should be marked as synced", act.ProviderID)
+		}
+	}
+}
+
+func TestSyncUser_Idempotency(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(3)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	// First sync.
+	runID1, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("first SyncUser: %v", err)
+	}
+	run1, _ := db.GetSyncRun(runID1)
+	if run1.ActivitiesSynced != 3 {
+		t.Fatalf("first run synced = %d, want 3", run1.ActivitiesSynced)
+	}
+
+	// Second sync: same activities, should all be skipped.
+	runID2, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("second SyncUser: %v", err)
+	}
+
+	run2, _ := db.GetSyncRun(runID2)
+	if run2.Status != "completed" {
+		t.Errorf("status = %q, want completed", run2.Status)
+	}
+	if run2.ActivitiesSynced != 0 {
+		t.Errorf("second run synced = %d, want 0", run2.ActivitiesSynced)
+	}
+	if run2.ActivitiesSkipped != 3 {
+		t.Errorf("second run skipped = %d, want 3", run2.ActivitiesSkipped)
+	}
+}
+
+func TestSyncUser_RetryLogic(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	// First sync: activity download fails.
+	gp := &mockGarminProvider{
+		activities: makeActivities(1),
+		downloadErr: map[string]error{
+			"act-1": fmt.Errorf("garmin: temporary network error"),
+		},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID1, _ := engine.SyncUser(context.Background(), user.ID, "manual")
+	run1, _ := db.GetSyncRun(runID1)
+	if run1.ActivitiesFailed != 1 {
+		t.Fatalf("first run failed = %d, want 1", run1.ActivitiesFailed)
+	}
+
+	// Second sync: fix the download, activity should be retried.
+	gp.downloadErr = nil
+	runID2, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("second SyncUser: %v", err)
+	}
+
+	run2, _ := db.GetSyncRun(runID2)
+	if run2.ActivitiesSynced != 1 {
+		t.Errorf("second run synced = %d, want 1", run2.ActivitiesSynced)
+	}
+}
+
+func TestSyncUser_RetryCapAt3(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{
+		activities: makeActivities(1),
+		downloadErr: map[string]error{
+			"act-1": fmt.Errorf("garmin: persistent error"),
+		},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	// Run sync 4 times with persistent failure.
+	for i := range 4 {
+		engine.SyncUser(context.Background(), user.ID, "manual")
+		_ = i
+	}
+
+	// After 3 retries (initial + 3 retries => retry_count reaches 3),
+	// the activity should be marked as permanent_failure and not retried.
+	gp.downloadErr = nil // fix the error
+	runID, _ := engine.SyncUser(context.Background(), user.ID, "manual")
+	run, _ := db.GetSyncRun(runID)
+
+	// The activity should not appear as something to sync (it is a permanent failure).
+	// But it won't be "skipped" either since it's not status=success.
+	// It should simply not be attempted.
+	if run.ActivitiesSynced != 0 {
+		t.Errorf("synced = %d, want 0 (permanent failure should not be retried)", run.ActivitiesSynced)
+	}
+}
+
+func TestSyncUser_GarminAuthFailure(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{
+		listErr: garmin.ErrGarminAuth,
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err == nil {
+		t.Fatal("expected error for garmin auth failure")
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "failed" {
+		t.Errorf("status = %q, want failed", run.Status)
+	}
+
+	// Verify garmin credentials are invalidated (user should no longer be syncable).
+	users, _ := db.GetSyncableUsers()
+	for _, u := range users {
+		if u.ID == user.ID {
+			t.Error("user should not be syncable after garmin auth failure")
+		}
+	}
+}
+
+func TestSyncUser_GarminMFARequired(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{
+		listErr: garmin.ErrGarminMFARequired,
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	_, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err == nil {
+		t.Fatal("expected error for garmin MFA required")
+	}
+
+	// Verify garmin credentials are invalidated.
+	users, _ := db.GetSyncableUsers()
+	for _, u := range users {
+		if u.ID == user.ID {
+			t.Error("user should not be syncable after garmin MFA required")
+		}
+	}
+}
+
+func TestSyncUser_EFB5xx(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer5xx(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(3)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err == nil {
+		t.Fatal("expected error for EFB 5xx")
+	}
+	if !strings.Contains(err.Error(), "5xx") {
+		t.Errorf("error should mention 5xx, got: %v", err)
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "failed" {
+		t.Errorf("status = %q, want failed", run.Status)
+	}
+	// First upload fails with 5xx, remaining 2 are marked failed too.
+	if run.ActivitiesFailed != 3 {
+		t.Errorf("failed = %d, want 3", run.ActivitiesFailed)
+	}
+	if run.ActivitiesSynced != 0 {
+		t.Errorf("synced = %d, want 0", run.ActivitiesSynced)
+	}
+}
+
+func TestSyncUser_EFBLoginFailure(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerBadLogin(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err == nil {
+		t.Fatal("expected error for EFB login failure")
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "failed" {
+		t.Errorf("status = %q, want failed", run.Status)
+	}
+
+	// Verify EFB credentials are invalidated.
+	users, _ := db.GetSyncableUsers()
+	for _, u := range users {
+		if u.ID == user.ID {
+			t.Error("user should not be syncable after EFB login failure")
+		}
+	}
+}
+
+func TestSyncUser_NoNewActivities(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{activities: nil}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "completed" {
+		t.Errorf("status = %q, want completed", run.Status)
+	}
+	if run.ActivitiesFound != 0 {
+		t.Errorf("found = %d, want 0", run.ActivitiesFound)
+	}
+}
+
+func TestSyncUser_MixedResults(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	// Second upload fails (non-5xx).
+	srv := newMockEFBServerPartialFailure(t, 2)
+
+	gp := &mockGarminProvider{activities: makeActivities(3)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	// err should be nil since the sync partially succeeded (no fatal error).
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "partial" {
+		t.Errorf("status = %q, want partial", run.Status)
+	}
+	if run.ActivitiesSynced != 2 {
+		t.Errorf("synced = %d, want 2", run.ActivitiesSynced)
+	}
+	if run.ActivitiesFailed != 1 {
+		t.Errorf("failed = %d, want 1", run.ActivitiesFailed)
+	}
+}
+
+func TestSyncUser_GPXDownloadFailure(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{
+		activities: makeActivities(3),
+		downloadErr: map[string]error{
+			"act-2": fmt.Errorf("garmin: download failed"),
+		},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "partial" {
+		t.Errorf("status = %q, want partial", run.Status)
+	}
+	if run.ActivitiesSynced != 2 {
+		t.Errorf("synced = %d, want 2", run.ActivitiesSynced)
+	}
+	if run.ActivitiesFailed != 1 {
+		t.Errorf("failed = %d, want 1", run.ActivitiesFailed)
+	}
+}
+
+func TestSyncAllUsers(t *testing.T) {
+	db := openTestDB(t)
+	srv := newMockEFBServer(t)
+
+	// Create two syncable users.
+	u1 := setupUser(t, db)
+	u2 := setupUser(t, db)
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	err := engine.SyncAllUsers(context.Background())
+	if err != nil {
+		t.Fatalf("SyncAllUsers: %v", err)
+	}
+
+	// Verify both users got synced.
+	for _, uid := range []int64{u1.ID, u2.ID} {
+		history, err := db.GetSyncHistory(uid, 1)
+		if err != nil {
+			t.Fatalf("GetSyncHistory(%d): %v", uid, err)
+		}
+		if len(history) != 1 {
+			t.Errorf("user %d: expected 1 sync run, got %d", uid, len(history))
+			continue
+		}
+		if history[0].Status != "completed" {
+			t.Errorf("user %d: status = %q, want completed", uid, history[0].Status)
+		}
+		if history[0].ActivitiesSynced != 2 {
+			t.Errorf("user %d: synced = %d, want 2", uid, history[0].ActivitiesSynced)
+		}
+	}
+}
+
+func TestSyncAllUsers_ContextCancelled(t *testing.T) {
+	db := openTestDB(t)
+	srv := newMockEFBServer(t)
+
+	// Create users but cancel context immediately.
+	_ = setupUser(t, db)
+	_ = setupUser(t, db)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := engine.SyncAllUsers(ctx)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
+	}
+}
+
+func TestSyncUser_UserNotFound(t *testing.T) {
+	db := openTestDB(t)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	_, err := engine.SyncUser(context.Background(), 99999, "manual")
+	if err == nil {
+		t.Fatal("expected error for non-existent user")
+	}
+}
+
+func TestIsServer5xxError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{fmt.Errorf("some other error"), false},
+		{fmt.Errorf("efb: upload failed with status 500: Internal Server Error"), true},
+		{fmt.Errorf("efb: upload failed with status 503: Service Unavailable"), true},
+		{fmt.Errorf("efb: upload failed with status 403: Forbidden"), false},
+		{fmt.Errorf("efb: upload failed with status 200: OK"), false},
+	}
+
+	for _, tt := range tests {
+		got := isServer5xxError(tt.err)
+		if got != tt.want {
+			t.Errorf("isServer5xxError(%v) = %v, want %v", tt.err, got, tt.want)
+		}
+	}
+}

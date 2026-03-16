@@ -1,0 +1,33 @@
+{{define "sync_status.html"}}{{if .HasRun}}
+<div id="sync-status"
+  {{if eq .Status "running"}}
+  hx-get="/sync/status"
+  hx-trigger="every 3s"
+  hx-target="#sync-status"
+  hx-swap="outerHTML"
+  {{end}}>
+  <p>
+    {{if eq .Status "running"}}
+    <span style="display:inline-block;width:1em;height:1em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:0.4em;"></span>
+    Syncing&hellip;
+    {{else}}
+    Last sync:
+    <span style="display:inline-block;padding:0.2em 0.7em;border-radius:999px;font-size:0.85em;font-weight:600;{{if eq .Status "success"}}background:#d1fae5;color:#065f46;{{else if eq .Status "partial"}}background:#fef3c7;color:#92400e;{{else if eq .Status "failed"}}background:#fee2e2;color:#991b1b;{{end}}">
+      {{.Status}}
+    </span>
+    &mdash;
+    Found: {{.ActivitiesFound}},
+    Synced: {{.ActivitiesSynced}},
+    Skipped: {{.ActivitiesSkipped}},
+    Failed: {{.ActivitiesFailed}}
+    {{end}}
+  </p>
+  {{if .ErrorMessage}}
+  <p><small style="color:#991b1b;">Error: {{.ErrorMessage}}</small></p>
+  {{end}}
+</div>
+{{else}}
+<div id="sync-status">
+  <p style="color:var(--pico-muted-color);">No sync runs yet.</p>
+</div>
+{{end}}{{end}}

@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Build the CLI tool
-go build -o gpx-uploader ./cmd
+# Build the web server
+go build -o efb-connector ./cmd/server
 
-# Run directly without building
-go run ./cmd [path-to-gpx-file]
+# Build the CLI tool (preserved)
+go build -o gpx-uploader ./cmd/cli
+
+# Run the web server locally
+ENCRYPTION_KEY=<base64key> RESEND_API_KEY=<key> INTERNAL_SECRET=<secret> BASE_URL=http://localhost:8080 go run ./cmd/server
 
 # Run tests
 go test ./...
@@ -20,32 +23,40 @@ go test ./... -run TestName
 
 ## Project Overview
 
-This is a Go CLI tool (`efb-connector`) that uploads GPX files to the Kanu-EFB portal (https://efb.kanu-efb.de/). The tool:
+This is a Go web server (`efb-connector`) that provides a multi-tenant portal for syncing GPS tracks to the Kanu-EFB portal (https://efb.kanu-efb.de/). The server:
 
-1. Authenticates via form POST to the login endpoint
-2. Maintains session cookies across requests
-3. Uploads GPX files via multipart form data to the user map endpoint
+1. Authenticates users via magic links (email-based, no passwords)
+2. Stores encrypted EFB and Garmin credentials per user in SQLite
+3. Syncs GPS tracks from Garmin Connect to Kanu-EFB on a schedule
 
 ## Authentication
+
+User authentication uses magic links sent via email (Resend API). No passwords stored.
+
+EFB and Garmin credentials are stored encrypted (AES-256-GCM) in the SQLite database.
+
+## Configuration
+
+The server is configured via environment variables:
+
+| Variable | Description |
+|---|---|
+| `ENCRYPTION_KEY` | Base64-encoded 32-byte key for credential encryption |
+| `RESEND_API_KEY` | Resend API key for sending magic link emails |
+| `INTERNAL_SECRET` | Secret for internal/cron API endpoints |
+| `BASE_URL` | Public base URL (e.g. `https://efb-connector.fly.dev`) |
+| `PORT` | HTTP listen port (default: `8080`) |
+| `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
+
+## CLI Tool (preserved)
+
+The original CLI tool is preserved at `cmd/cli/`:
+
+```bash
+./gpx-uploader path/to/file.gpx
+```
 
 Credentials are resolved in this order:
 1. **1Password CLI** (if configured in `config.json`)
 2. **Environment variables:** `EFBUSERNAME` and `EFBPASSWORD`
 3. **Interactive prompts** (fallback)
-
-## Configuration
-
-To use 1Password integration:
-
-```bash
-cp config.json.example config.json
-# Edit config.json with your 1Password account details
-```
-
-The config file is gitignored to keep your account details private.
-
-## Usage
-
-```bash
-./gpx-uploader path/to/file.gpx
-```

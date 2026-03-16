@@ -1,11 +1,15 @@
-# Binary
+# Binaries
 gpx-uploader
+efb-connector
 
 # Config (contains personal 1Password account details)
 config.json
 
 # GPX files (personal GPS data)
 *.gpx
+
+# SQLite databases
+*.db
 
 # macOS
 .DS_Store
@@ -24,3 +28,9 @@ config.json
 
 # Fly.io
 .fly/
+
+# Infrastructure secrets
+infrastructure/secrets.sh
+
+# Brainstorming artifacts
+.superpowers/

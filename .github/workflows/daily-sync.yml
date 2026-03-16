@@ -1,0 +1,16 @@
+name: Daily Sync
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily sync
+        run: |
+          curl --fail --max-time 900 -X POST \
+            -H "Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}" \
+            "${{ secrets.BASE_URL }}/internal/sync/run-all"
