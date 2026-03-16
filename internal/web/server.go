@@ -78,6 +78,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /login", s.handleLoginSubmit)
 	mux.HandleFunc("GET /auth/verify", s.handleVerifyMagicLink)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	mux.HandleFunc("GET /impressum", s.handleImpressum)
+	mux.HandleFunc("GET /privacy", s.handlePrivacy)
 
 	// ── Authenticated routes (wrapped in RequireAuth + CSRFProtect) ──
 	protect := func(h http.HandlerFunc) http.Handler {

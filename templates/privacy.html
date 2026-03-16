@@ -1,0 +1,102 @@
+{{define "privacy.html"}}<!DOCTYPE html>
+<html lang="de" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datenschutzerklärung — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+</head>
+<body>
+  <nav class="container">
+    <ul><li><a href="/"><strong>EFB Connector</strong></a></li></ul>
+  </nav>
+
+  <main class="container" style="max-width: 720px;">
+    <h1>Datenschutzerklärung</h1>
+
+    <h2>1. Verantwortlicher</h2>
+    <p>
+      Georg Held<br>
+      Bisamstraße 11a<br>
+      85356 Freising<br>
+      E-Mail: georg.held@sauroter.de<br>
+      Telefon: +49 170 7798944
+    </p>
+
+    <h2>2. Erhobene Daten</h2>
+    <p>Im Rahmen der Nutzung von EFB Connector werden folgende Daten verarbeitet:</p>
+    <ul>
+      <li><strong>E-Mail-Adresse</strong> — für die Authentifizierung per Magic Link (passwortlose Anmeldung)</li>
+      <li><strong>Garmin-Connect-Zugangsdaten</strong> — Benutzername und Passwort, verschlüsselt gespeichert (AES-256-GCM)</li>
+      <li><strong>Kanu-EFB-Zugangsdaten</strong> — Benutzername und Passwort, verschlüsselt gespeichert (AES-256-GCM)</li>
+      <li><strong>Garmin-Aktivitätsdaten</strong> — Aktivitätsname, Aktivitätstyp, Datum und GPX-Tracks</li>
+    </ul>
+
+    <h2>3. Zweck der Verarbeitung</h2>
+    <p>
+      Die Daten werden ausschließlich zum Zweck der automatischen Synchronisation von Paddelaktivitäten aus Garmin Connect in das elektronische Fahrtenbuch von Kanu-EFB (<a href="https://efb.kanu-efb.de/">efb.kanu-efb.de</a>) verarbeitet.
+    </p>
+
+    <h2>4. Garmin-Aktivitätsdaten</h2>
+    <p>
+      Aktivitätsdaten (einschließlich GPX-Tracks) werden von Garmin Connect heruntergeladen, temporär im Arbeitsspeicher verarbeitet und direkt an Kanu-EFB hochgeladen. GPX-Daten werden nicht dauerhaft auf dem Server gespeichert. Aktivitätsmetadaten (Name, Typ, Datum) werden in der Datenbank gespeichert, um die Synchronisationshistorie nachzuverfolgen und doppelte Uploads zu vermeiden (Idempotenz).
+    </p>
+
+    <h2>5. Datenspeicherung</h2>
+    <p>
+      Alle Daten werden in einer SQLite-Datenbank auf der Hosting-Plattform Fly.io im Rechenzentrum Frankfurt (fra) gespeichert. Zugangsdaten (Garmin und EFB) sind mit AES-256-GCM verschlüsselt. Es erfolgt keine Weitergabe personenbezogener Daten an Dritte über den für die Funktionalität notwendigen Datenaustausch hinaus.
+    </p>
+
+    <h2>6. Cookies und Sessions</h2>
+    <p>EFB Connector verwendet ausschließlich technisch notwendige Cookies:</p>
+    <ul>
+      <li><strong>Session-Cookie</strong> — zur Authentifizierung nach dem Login</li>
+      <li><strong>Flash-Cookie</strong> — zur einmaligen Anzeige von Statusmeldungen</li>
+    </ul>
+    <p>Es werden keine Tracking-, Analyse- oder Werbe-Cookies eingesetzt.</p>
+
+    <h2>7. Drittanbieter</h2>
+    <p>Folgende Drittanbieter sind in die Datenverarbeitung eingebunden:</p>
+    <ul>
+      <li><strong>Resend</strong> (resend.com) — Versand der Magic-Link-E-Mails</li>
+      <li><strong>Fly.io</strong> (fly.io) — Hosting der Anwendung und Datenbank (Rechenzentrum Frankfurt)</li>
+      <li><strong>Garmin Connect API</strong> (connect.garmin.com) — Abruf von Aktivitätsdaten</li>
+      <li><strong>Kanu-EFB</strong> (efb.kanu-efb.de) — Upload der Aktivitätsdaten in das Fahrtenbuch</li>
+    </ul>
+
+    <h2>8. Ihre Rechte (DSGVO)</h2>
+    <p>Sie haben gemäß DSGVO folgende Rechte bezüglich Ihrer personenbezogenen Daten:</p>
+    <ul>
+      <li><strong>Auskunft</strong> (Art. 15 DSGVO) — Sie können Auskunft über Ihre gespeicherten Daten verlangen.</li>
+      <li><strong>Berichtigung</strong> (Art. 16 DSGVO) — Sie können die Berichtigung unrichtiger Daten verlangen.</li>
+      <li><strong>Löschung</strong> (Art. 17 DSGVO) — Sie können die Löschung Ihrer Daten verlangen. Eine Self-Service-Löschung ist über das Dashboard verfügbar.</li>
+      <li><strong>Datenübertragbarkeit</strong> (Art. 20 DSGVO) — Sie können die Herausgabe Ihrer Daten in einem strukturierten Format verlangen.</li>
+      <li><strong>Widerspruch</strong> (Art. 21 DSGVO) — Sie können der Verarbeitung Ihrer Daten widersprechen.</li>
+    </ul>
+
+    <h2>9. Datenlöschung</h2>
+    <p>
+      Sie können Ihr Konto und alle damit verbundenen Daten jederzeit selbst über das Dashboard löschen (Menüpunkt „Danger zone" → „Delete my account"). Bei der Kontolöschung werden folgende Daten unwiderruflich entfernt:
+    </p>
+    <ul>
+      <li>Ihr Benutzerkonto und Ihre E-Mail-Adresse</li>
+      <li>Gespeicherte Garmin- und EFB-Zugangsdaten</li>
+      <li>Synchronisationshistorie</li>
+      <li>Alle aktiven Sessions</li>
+    </ul>
+
+    <h2>10. Kontakt</h2>
+    <p>
+      Bei Fragen zum Datenschutz wenden Sie sich bitte an:<br>
+      Georg Held<br>
+      E-Mail: georg.held@sauroter.de
+    </p>
+
+    <p><small>Stand: März 2026</small></p>
+  </main>
+
+  <footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
+    <small>&copy; 2025 EFB Connector &middot; <a href="/impressum">Impressum</a> &middot; <a href="/privacy">Datenschutz</a> &middot; <a href="https://github.com/sauroter/efb-connector">GitHub</a></small>
+  </footer>
+</body>
+</html>{{end}}

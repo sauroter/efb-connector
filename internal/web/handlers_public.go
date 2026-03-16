@@ -149,6 +149,16 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// handleImpressum renders the Impressum (legal notice) page.
+func (s *Server) handleImpressum(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "impressum.html", nil)
+}
+
+// handlePrivacy renders the privacy policy page.
+func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "privacy.html", nil)
+}
+
 // baseURL returns the application base URL. It prefers the explicitly
 // configured BASE_URL (from the environment) and falls back to reconstructing
 // from the request's Host header and protocol headers.
