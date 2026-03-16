@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="30" fill="#1e40af"/>
+  <!-- Paddle blade top -->
+  <path d="M30 8 C30 8 28 14 28 20 C28 24 30 26 32 26 C34 26 36 24 36 20 C36 14 34 8 34 8 C33 6 31 6 30 8Z" fill="#fff"/>
+  <!-- Paddle shaft -->
+  <rect x="31" y="25" width="2" height="18" rx="1" fill="#fff"/>
+  <!-- Paddle blade bottom -->
+  <path d="M30 56 C30 56 28 50 28 44 C28 40 30 38 32 38 C34 38 36 40 36 44 C36 50 34 56 34 56 C33 58 31 58 30 56Z" fill="#fff"/>
+</svg>

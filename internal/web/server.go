@@ -72,6 +72,12 @@ func NewServer(deps ServerDeps) (*Server, error) {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	// ── Static files ──
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/favicon.svg")
+	})
+
 	// ── Public routes (no auth required) ──
 	mux.HandleFunc("GET /", s.handleLanding)
 	mux.HandleFunc("GET /login", s.handleLoginForm)
