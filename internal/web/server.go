@@ -79,25 +79,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 
 	// ── Authenticated routes (wrapped in RequireAuth + CSRFProtect) ──
-	authMux := http.NewServeMux()
-	authMux.HandleFunc("GET /dashboard", s.handleDashboard)
-	authMux.HandleFunc("GET /settings/garmin", s.handleGarminSettingsForm)
-	authMux.HandleFunc("POST /settings/garmin", s.handleGarminSettingsSave)
-	authMux.HandleFunc("POST /settings/garmin/delete", s.handleGarminSettingsDelete)
-	authMux.HandleFunc("GET /settings/efb", s.handleEFBSettingsForm)
-	authMux.HandleFunc("POST /settings/efb", s.handleEFBSettingsSave)
-	authMux.HandleFunc("POST /settings/efb/delete", s.handleEFBSettingsDelete)
-	authMux.HandleFunc("POST /account/delete", s.handleAccountDelete)
-	authMux.HandleFunc("POST /sync/trigger", s.handleSyncTrigger)
-	authMux.HandleFunc("GET /sync/status", s.handleSyncStatus)
-	authMux.HandleFunc("GET /sync/history", s.handleSyncHistory)
-
-	// Mount authenticated routes under their path prefixes.
-	protected := s.auth.RequireAuth(s.auth.CSRFProtect(authMux))
-	mux.Handle("/dashboard", protected)
-	mux.Handle("/settings/", protected)
-	mux.Handle("/account/", protected)
-	mux.Handle("/sync/", protected)
+	protect := func(h http.HandlerFunc) http.Handler {
+		return s.auth.RequireAuth(s.auth.CSRFProtect(h))
+	}
+	mux.Handle("GET /dashboard", protect(s.handleDashboard))
+	mux.Handle("GET /settings/garmin", protect(s.handleGarminSettingsForm))
+	mux.Handle("POST /settings/garmin", protect(s.handleGarminSettingsSave))
+	mux.Handle("POST /settings/garmin/delete", protect(s.handleGarminSettingsDelete))
+	mux.Handle("GET /settings/efb", protect(s.handleEFBSettingsForm))
+	mux.Handle("POST /settings/efb", protect(s.handleEFBSettingsSave))
+	mux.Handle("POST /settings/efb/delete", protect(s.handleEFBSettingsDelete))
+	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
+	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
+	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))
+	mux.Handle("GET /sync/history", protect(s.handleSyncHistory))
 
 	// ── Internal / admin routes ──
 	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
