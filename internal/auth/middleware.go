@@ -55,7 +55,7 @@ func (s *AuthService) CSRFProtect(next http.Handler) http.Handler {
 			}
 
 			submitted := r.FormValue("csrf_token")
-			expected := s.csrfToken(cookie.Value, r.URL.Path)
+			expected := s.csrfToken(cookie.Value)
 
 			if !hmac.Equal([]byte(submitted), []byte(expected)) {
 				http.Error(w, "Forbidden: invalid CSRF token", http.StatusForbidden)
@@ -67,23 +67,23 @@ func (s *AuthService) CSRFProtect(next http.Handler) http.Handler {
 	})
 }
 
-// CSRFToken generates a CSRF token for the current request. It must be called
+// CSRFToken generates a CSRF token for the current session. It must be called
 // after RequireAuth so that a session cookie is present. The token is
-// HMAC-SHA256(session_token || request_path, csrf_secret).
+// HMAC-SHA256(session_token, csrf_secret) — session-scoped, not path-scoped,
+// so a single token works across all forms in the session.
 func (s *AuthService) CSRFToken(r *http.Request) string {
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return ""
 	}
-	return s.csrfToken(cookie.Value, r.URL.Path)
+	return s.csrfToken(cookie.Value)
 }
 
-// csrfToken computes HMAC-SHA256(sessionToken || path, csrfSecret).
-func (s *AuthService) csrfToken(sessionToken, path string) string {
+// csrfToken computes HMAC-SHA256(sessionToken, csrfSecret).
+func (s *AuthService) csrfToken(sessionToken string) string {
 	secret := s.deriveCSRFSecret()
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(sessionToken))
-	mac.Write([]byte(path))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

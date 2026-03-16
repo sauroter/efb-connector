@@ -282,7 +282,7 @@ func TestCSRFProtect_POST_ValidToken(t *testing.T) {
 	sessionToken, _ := svc.CreateSession(user.ID)
 
 	// Generate the expected CSRF token.
-	csrfToken := svc.csrfToken(sessionToken, "/action")
+	csrfToken := svc.csrfToken(sessionToken)
 
 	called := false
 	handler := svc.CSRFProtect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -345,12 +345,12 @@ func TestCSRFToken_ViaPublicMethod(t *testing.T) {
 		t.Errorf("CSRF token not deterministic: %q vs %q", token, token2)
 	}
 
-	// Different path should yield different token.
+	// Same session, different path should yield the same token (session-scoped, not path-scoped).
 	req2 := httptest.NewRequest(http.MethodGet, "/other", nil)
 	req2.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionToken})
 	token3 := svc.CSRFToken(req2)
-	if token == token3 {
-		t.Error("CSRF token should differ for different paths")
+	if token != token3 {
+		t.Error("CSRF token should be the same across paths for the same session")
 	}
 }
 
