@@ -97,6 +97,11 @@ func (s *Server) Routes() http.Handler {
 
 	// ── Internal / admin routes ──
 	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
+	mux.HandleFunc("GET /internal/admin/status", s.handleAdminStatus)
+	mux.HandleFunc("GET /internal/admin/users", s.handleAdminUsers)
+	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)
+	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
+	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Wrap the entire mux in logging + recovery middleware.

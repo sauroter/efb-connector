@@ -35,7 +35,7 @@ func (s *AuthService) SendMagicLinkEmail(to, token, baseURL string) error {
 	}
 
 	payload := map[string]interface{}{
-		"from":    "EFB Connector <noreply@efb-connector.com>",
+		"from":    s.emailFrom,
 		"to":      []string{to},
 		"subject": "Your login link",
 		"html":    fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link),

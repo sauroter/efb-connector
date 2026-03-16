@@ -63,6 +63,11 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+// Ping verifies the database connection is alive.
+func (d *DB) Ping() error {
+	return d.db.Ping()
+}
+
 // runMigrations creates the migrations tracking table (if absent) and applies
 // any migrations not yet recorded there.
 func (d *DB) runMigrations() error {

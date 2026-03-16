@@ -49,6 +49,7 @@ func run(logger *slog.Logger) error {
 	port := envOr("PORT", "8080")
 	dbPath := envOr("DB_PATH", "/data/efb-connector.db")
 	baseURL := envOr("BASE_URL", "")
+	emailFrom := envOr("EMAIL_FROM", "")
 
 	encKeyB64 := os.Getenv("ENCRYPTION_KEY")
 	if encKeyB64 == "" {
@@ -81,7 +82,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer db.Close()
 
-	authService := auth.NewAuthService(db, resendAPIKey, baseURL, encryptionKey)
+	authService := auth.NewAuthService(db, resendAPIKey, baseURL, emailFrom, encryptionKey)
 	rateLimiter := auth.NewRateLimiter()
 
 	garminProvider := garmin.NewPythonGarminProvider("scripts/garmin_fetch.py")
@@ -114,6 +115,26 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// ── Periodic cleanup of expired sessions and magic links ──
+
+	stopCleanup := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := db.CleanupExpired(); err != nil {
+					logger.Error("cleanup expired records failed", "error", err)
+				} else {
+					logger.Info("cleanup expired records completed")
+				}
+			case <-stopCleanup:
+				return
+			}
+		}
+	}()
+
 	// ── Graceful shutdown ──
 
 	errCh := make(chan error, 1)
@@ -138,6 +159,7 @@ func run(logger *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	close(stopCleanup)
 	logger.Info("shutting down server")
 	if err := httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)

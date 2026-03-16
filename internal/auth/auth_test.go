@@ -30,7 +30,7 @@ func openTestDB(t *testing.T) *database.DB {
 func newTestService(t *testing.T) *AuthService {
 	t.Helper()
 	db := openTestDB(t)
-	return NewAuthService(db, "test-resend-key", "https://example.com", testKey)
+	return NewAuthService(db, "test-resend-key", "https://example.com", "", testKey)
 }
 
 // ──────────────────────────────────────────────

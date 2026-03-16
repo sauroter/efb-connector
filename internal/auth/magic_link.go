@@ -19,6 +19,7 @@ type AuthService struct {
 	db            *database.DB
 	resendAPIKey  string
 	baseURL       string
+	emailFrom     string
 	encryptionKey []byte // used to derive CSRF secret via HKDF
 }
 
@@ -28,11 +29,15 @@ type AuthService struct {
 //   - baseURL is the application base URL, e.g. "https://efb.example.com".
 //   - encryptionKey must be 32 bytes (AES-256); it is used to derive CSRF
 //     secrets via HKDF.
-func NewAuthService(db *database.DB, resendAPIKey, baseURL string, encryptionKey []byte) *AuthService {
+func NewAuthService(db *database.DB, resendAPIKey, baseURL, emailFrom string, encryptionKey []byte) *AuthService {
+	if emailFrom == "" {
+		emailFrom = "EFB Connector <noreply@efb-connector.com>"
+	}
 	return &AuthService{
 		db:            db,
 		resendAPIKey:  resendAPIKey,
 		baseURL:       baseURL,
+		emailFrom:     emailFrom,
 		encryptionKey: encryptionKey,
 	}
 }
