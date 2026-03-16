@@ -118,9 +118,11 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate credentials with the Garmin provider.
+	tokenStorePath := s.garminTokenStorePath(userID)
 	creds := garmin.GarminCredentials{
-		Email:    email,
-		Password: password,
+		Email:          email,
+		Password:       password,
+		TokenStorePath: tokenStorePath,
 	}
 	if err := s.garmin.ValidateCredentials(context.Background(), creds); err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)

@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"efb-connector/internal/auth"
@@ -138,6 +139,24 @@ func setFlash(w http.ResponseWriter, msg string) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// garminTokenStorePath returns the per-user Garmin token store directory,
+// creating it if it doesn't exist. Uses /data/garmin_tokens/<userID> if /data
+// exists (Fly.io), otherwise ~/.config/efb-connector/garmin_tokens/<userID>.
+func (s *Server) garminTokenStorePath(userID int64) string {
+	var base string
+	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
+		base = "/data/garmin_tokens"
+	} else {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, ".config", "efb-connector", "garmin_tokens")
+	}
+	dir := filepath.Join(base, fmt.Sprintf("%d", userID))
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		s.logger.Error("failed to create garmin token store", "user_id", userID, "error", err)
+	}
+	return dir
 }
 
 // parseTemplates loads all templates from the given directory.
