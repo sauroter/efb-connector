@@ -1,6 +1,8 @@
 package database
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -52,6 +54,24 @@ func (d *DB) IsActivitySynced(userID int64, garminID string) (bool, error) {
 		return false, fmt.Errorf("database: is activity synced: %w", err)
 	}
 	return count > 0, nil
+}
+
+// GetActivityStatus returns the upload_status for an activity, or "" if the
+// activity does not exist in the database.
+func (d *DB) GetActivityStatus(userID int64, garminID string) (string, error) {
+	var status string
+	err := d.db.QueryRow(
+		`SELECT upload_status FROM synced_activities
+		  WHERE user_id = ? AND garmin_activity_id = ?`,
+		userID, garminID,
+	).Scan(&status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("database: get activity status: %w", err)
+	}
+	return status, nil
 }
 
 // GetFailedActivities returns activities with status "failed" and retry_count < 3.
