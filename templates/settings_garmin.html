@@ -1,22 +1,79 @@
 {{define "settings_garmin.html"}}<!DOCTYPE html>
-<html><head><title>Garmin Settings - EFB Connector</title></head>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Garmin Settings — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <style>
+    .settings-card { max-width: 540px; }
+    .status-badge { display: inline-block; padding: 0.2em 0.7em; border-radius: 999px; font-size: 0.85em; font-weight: 600; }
+    .status-connected { background: #d1fae5; color: #065f46; }
+    .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }
+    .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.4em; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
 <body>
-<h1>Garmin Settings</h1>
-{{if .Flash}}<p>{{.Flash}}</p>{{end}}
-{{if .Connected}}
-<p>Connected as: {{.Email}}</p>
-<form method="POST" action="/settings/garmin/delete">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Disconnect</button>
-</form>
-{{end}}
-<h2>{{if .Connected}}Update{{else}}Connect{{end}} Garmin</h2>
-<form method="POST" action="/settings/garmin">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <label>Email: <input type="email" name="email" required></label><br>
-  <label>Password: <input type="password" name="password" required></label><br>
-  <button type="submit">Save</button>
-</form>
-<p><a href="/dashboard">Back to Dashboard</a></p>
+  <nav class="container">
+    <ul>
+      <li><a href="/"><strong>EFB Connector</strong></a></li>
+      <li><a href="/dashboard">Dashboard</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    {{if .Flash}}
+    <div role="alert" class="flash-message">{{.Flash}}</div>
+    {{end}}
+
+    <hgroup>
+      <h1>Garmin Connect</h1>
+      <p>Link your Garmin account to sync paddling activities.</p>
+    </hgroup>
+
+    {{if .Connected}}
+    <article class="settings-card">
+      <header>
+        <strong>Current connection</strong>
+        <span class="status-badge status-connected" style="float:right;">Connected</span>
+      </header>
+      <p>Account: <strong>{{.Email}}</strong></p>
+      <form method="POST" action="/settings/garmin/delete"
+            onsubmit="return confirm('Remove your Garmin credentials?');">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" class="outline contrast">Remove connection</button>
+      </form>
+    </article>
+    {{end}}
+
+    <article class="settings-card">
+      <header><strong>{{if .Connected}}Update credentials{{else}}Connect Garmin{{end}}</strong></header>
+      <p>Enter your Garmin Connect email and password. Credentials will be validated and stored encrypted.</p>
+      <form method="POST" action="/settings/garmin"
+            hx-post="/settings/garmin"
+            hx-indicator="#save-spinner">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label for="email">Email address
+          <input type="email" id="email" name="email" placeholder="you@garmin.com"
+                 {{if .Email}}value="{{.Email}}"{{end}} required>
+        </label>
+        <label for="password">Password
+          <input type="password" id="password" name="password" placeholder="••••••••" required>
+        </label>
+        <button type="submit">
+          <span id="save-spinner" class="spinner htmx-indicator"></span>
+          Test &amp; Save
+        </button>
+      </form>
+    </article>
+
+    <p><a href="/dashboard">&larr; Back to Dashboard</a></p>
+  </main>
+
+  <footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
+    <small>&copy; 2025 EFB Connector</small>
+  </footer>
 </body>
 </html>{{end}}

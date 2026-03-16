@@ -1,23 +1,82 @@
 {{define "sync_history.html"}}<!DOCTYPE html>
-<html><head><title>Sync History - EFB Connector</title></head>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sync History — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    .status-badge { display: inline-block; padding: 0.2em 0.7em; border-radius: 999px; font-size: 0.8em; font-weight: 600; white-space: nowrap; }
+    .status-success { background: #d1fae5; color: #065f46; }
+    .status-partial { background: #fef3c7; color: #92400e; }
+    .status-failed { background: #fee2e2; color: #991b1b; }
+    .status-running { background: #dbeafe; color: #1e40af; }
+    .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }
+    table { font-size: 0.9rem; }
+    td, th { vertical-align: middle; }
+  </style>
+</head>
 <body>
-<h1>Sync History</h1>
-{{if .Flash}}<p>{{.Flash}}</p>{{end}}
-{{if .Runs}}
-<table>
-<tr><th>ID</th><th>Trigger</th><th>Status</th><th>Found</th><th>Synced</th><th>Skipped</th><th>Failed</th><th>Started</th></tr>
-{{range .Runs}}
-<tr>
-  <td>{{.ID}}</td><td>{{.Trigger}}</td><td>{{.Status}}</td>
-  <td>{{.ActivitiesFound}}</td><td>{{.ActivitiesSynced}}</td>
-  <td>{{.ActivitiesSkipped}}</td><td>{{.ActivitiesFailed}}</td>
-  <td>{{.StartedAt}}</td>
-</tr>
-{{end}}
-</table>
-{{else}}
-<p>No sync runs yet.</p>
-{{end}}
-<p><a href="/dashboard">Back to Dashboard</a></p>
+  <nav class="container">
+    <ul>
+      <li><a href="/"><strong>EFB Connector</strong></a></li>
+      <li><a href="/dashboard">Dashboard</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    {{if .Flash}}
+    <div role="alert" class="flash-message">{{.Flash}}</div>
+    {{end}}
+
+    <hgroup>
+      <h1>Sync History</h1>
+      <p>Last {{if .Runs}}{{len .Runs}}{{else}}0{{end}} sync runs.</p>
+    </hgroup>
+
+    {{if .Runs}}
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Trigger</th>
+            <th>Status</th>
+            <th>Found</th>
+            <th>Synced</th>
+            <th>Skipped</th>
+            <th>Failed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Runs}}
+          <tr>
+            <td><small>{{.StartedAt.Format "2006-01-02 15:04 UTC"}}</small></td>
+            <td>{{.Trigger}}</td>
+            <td>
+              <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{else if eq .Status "running"}}status-running{{else}}{{end}}">
+                {{.Status}}
+              </span>
+              {{if .ErrorMessage}}<br><small style="color:var(--pico-muted-color);">{{.ErrorMessage}}</small>{{end}}
+            </td>
+            <td>{{.ActivitiesFound}}</td>
+            <td>{{.ActivitiesSynced}}</td>
+            <td>{{.ActivitiesSkipped}}</td>
+            <td>{{.ActivitiesFailed}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p style="color: var(--pico-muted-color);">No sync runs yet. Go to the dashboard to trigger your first sync.</p>
+    {{end}}
+
+    <p><a href="/dashboard">&larr; Back to Dashboard</a></p>
+  </main>
+
+  <footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
+    <small>&copy; 2025 EFB Connector</small>
+  </footer>
 </body>
 </html>{{end}}

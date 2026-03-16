@@ -1,26 +1,153 @@
 {{define "dashboard.html"}}<!DOCTYPE html>
-<html><head><title>Dashboard - EFB Connector</title></head>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <style>
+    .status-badge { display: inline-block; padding: 0.2em 0.7em; border-radius: 999px; font-size: 0.85em; font-weight: 600; }
+    .status-connected { background: #d1fae5; color: #065f46; }
+    .status-disconnected { background: #fee2e2; color: #991b1b; }
+    .status-success { background: #d1fae5; color: #065f46; }
+    .status-partial { background: #fef3c7; color: #92400e; }
+    .status-failed { background: #fee2e2; color: #991b1b; }
+    .status-running { background: #dbeafe; color: #1e40af; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+    .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }
+    nav.app-nav ul { margin: 0; padding: 0; }
+    .sync-status-container { min-height: 3rem; }
+    .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.4em; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
 <body>
-<h1>Dashboard</h1>
-{{if .Flash}}<p>{{.Flash}}</p>{{end}}
-<p>User: {{.User.Email}}</p>
-<p>Garmin: {{if .GarminConnected}}Connected{{else}}Not connected{{end}}</p>
-<p>EFB: {{if .EFBConnected}}Connected{{else}}Not connected{{end}}</p>
-{{if .LastSync}}
-<h2>Last Sync</h2>
-<p>Status: {{index .LastSync "Status"}} | Found: {{index .LastSync "ActivitiesFound"}} | Synced: {{index .LastSync "ActivitiesSynced"}}</p>
-{{end}}
-<nav>
-  <a href="/settings/garmin">Garmin Settings</a> |
-  <a href="/settings/efb">EFB Settings</a> |
-  <a href="/sync/history">Sync History</a>
-</nav>
-<form method="POST" action="/sync/trigger">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Sync Now</button>
-</form>
-<form method="POST" action="/auth/logout">
-  <button type="submit">Logout</button>
-</form>
+  <nav class="container app-nav">
+    <ul><li><a href="/"><strong>EFB Connector</strong></a></li></ul>
+    <ul>
+      <li><a href="/sync/history">Sync History</a></li>
+      <li>
+        <form method="POST" action="/auth/logout" style="display: inline;">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button type="submit" class="outline secondary" style="margin: 0; padding: 0.3em 0.8em;">Logout</button>
+        </form>
+      </li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    {{if .Flash}}
+    <div role="alert" class="flash-message">{{.Flash}}</div>
+    {{end}}
+
+    <hgroup>
+      <h1>Dashboard</h1>
+      <p>Signed in as <strong>{{.User.Email}}</strong></p>
+    </hgroup>
+
+    <section class="card-grid">
+      <!-- Garmin connection card -->
+      <article>
+        <header>
+          <strong>Garmin Connect</strong>
+          {{if .GarminConnected}}
+            <span class="status-badge status-connected" style="float:right;">Connected</span>
+          {{else}}
+            <span class="status-badge status-disconnected" style="float:right;">Not connected</span>
+          {{end}}
+        </header>
+        {{if .GarminConnected}}
+          <p>Your Garmin account is linked.</p>
+          <a href="/settings/garmin" role="button" class="outline secondary">Manage</a>
+        {{else}}
+          <p>Connect your Garmin account to enable activity sync.</p>
+          <a href="/settings/garmin" role="button">Connect Garmin</a>
+        {{end}}
+      </article>
+
+      <!-- EFB connection card -->
+      <article>
+        <header>
+          <strong>Kanu-EFB</strong>
+          {{if .EFBConnected}}
+            <span class="status-badge status-connected" style="float:right;">Connected</span>
+          {{else}}
+            <span class="status-badge status-disconnected" style="float:right;">Not connected</span>
+          {{end}}
+        </header>
+        {{if .EFBConnected}}
+          <p>Your EFB account is linked.</p>
+          <a href="/settings/efb" role="button" class="outline secondary">Manage</a>
+        {{else}}
+          <p>Connect your Kanu-EFB account to enable activity upload.</p>
+          <a href="/settings/efb" role="button">Connect EFB</a>
+        {{end}}
+      </article>
+    </section>
+
+    <!-- Sync section -->
+    <section>
+      <h2>Sync</h2>
+
+      <div id="sync-status" class="sync-status-container">
+        {{if .LastSync}}
+          {{$status := index .LastSync "Status"}}
+          <p>
+            Last sync:
+            <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
+              {{$status}}
+            </span>
+            &mdash;
+            Found: {{index .LastSync "ActivitiesFound"}},
+            Synced: {{index .LastSync "ActivitiesSynced"}},
+            Skipped: {{index .LastSync "ActivitiesSkipped"}},
+            Failed: {{index .LastSync "ActivitiesFailed"}}
+          </p>
+          {{if index .LastSync "ErrorMessage"}}
+          <p><small style="color: var(--pico-del-color);">Error: {{index .LastSync "ErrorMessage"}}</small></p>
+          {{end}}
+        {{else}}
+          <p style="color: var(--pico-muted-color);">No sync runs yet.</p>
+        {{end}}
+      </div>
+
+      {{if and .GarminConnected .EFBConnected}}
+      <form method="POST" action="/sync/trigger"
+            hx-post="/sync/trigger"
+            hx-target="#sync-status"
+            hx-swap="innerHTML"
+            hx-indicator="#sync-spinner">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit">
+          <span id="sync-spinner" class="spinner htmx-indicator"></span>
+          Sync now
+        </button>
+      </form>
+      <p><small style="color: var(--pico-muted-color);">Next automatic sync: ~04:00 UTC daily</small></p>
+      {{else}}
+      <p><small style="color: var(--pico-muted-color);">Connect both Garmin and EFB to enable sync.</small></p>
+      {{end}}
+    </section>
+
+    <!-- Danger zone -->
+    <section>
+      <details>
+        <summary style="color: var(--pico-del-color);">Danger zone</summary>
+        <article>
+          <h3>Delete account</h3>
+          <p>This will permanently delete your account and all associated data, including your credentials and sync history. This action cannot be undone.</p>
+          <form method="POST" action="/account/delete" onsubmit="return confirm('Are you sure? This cannot be undone.');">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="contrast">Delete my account</button>
+          </form>
+        </article>
+      </details>
+    </section>
+  </main>
+
+  <footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
+    <small>&copy; 2025 EFB Connector</small>
+  </footer>
 </body>
 </html>{{end}}
