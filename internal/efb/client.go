@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DefaultBaseURL is the base URL for the Kanu-EFB portal.
@@ -28,6 +29,10 @@ const (
 // EFBClient is an authenticated HTTP client for the Kanu-EFB portal.
 // After a successful Login call the cookie jar retains the session, so
 // subsequent Upload calls do not require re-authentication.
+//
+// Session persistence across process restarts (exporting/importing the cookie
+// jar to/from the database) is intentionally deferred to Phase 4 (Sync
+// Engine), once the database layer exists.
 type EFBClient struct {
 	baseURL    string
 	loginURL   string
@@ -55,7 +60,8 @@ func NewEFBClient(baseURL string) *EFBClient {
 		loginURL:  baseURL + defaultLoginPath,
 		uploadURL: baseURL + defaultUploadPath,
 		httpClient: &http.Client{
-			Jar: jar,
+			Jar:     jar,
+			Timeout: 30 * time.Second,
 		},
 	}
 }
@@ -146,12 +152,12 @@ func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("efb: upload failed with status %d: %s",
-			resp.StatusCode, string(respBody))
+			resp.StatusCode, truncateBody(respBody))
 	}
 
 	// The portal returns a page containing "Datenbank gespeichert" on success.
 	if !strings.Contains(string(respBody), "Datenbank gespeichert") {
-		return fmt.Errorf("efb: upload did not succeed: %s", string(respBody))
+		return fmt.Errorf("efb: upload did not succeed: %s", truncateBody(respBody))
 	}
 
 	return nil
@@ -203,4 +209,14 @@ func (c *EFBClient) IsSessionValid(ctx context.Context) bool {
 
 	// If the server redirected us to the login page the session has expired.
 	return !strings.HasSuffix(resp.Request.URL.Path, defaultLoginPath)
+}
+
+// truncateBody returns up to 500 bytes of body as a string, preventing full
+// HTML error pages from appearing in error messages.
+func truncateBody(b []byte) string {
+	const maxLen = 500
+	if len(b) <= maxLen {
+		return string(b)
+	}
+	return string(b[:maxLen]) + "…"
 }
