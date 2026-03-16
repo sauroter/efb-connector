@@ -148,8 +148,14 @@ def connect_garmin(config):
         tokenstore = get_tokenstore_path()
 
     try:
+        Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
-        client.login(tokenstore=tokenstore)
+        try:
+            client.login(tokenstore=tokenstore)
+        except FileNotFoundError:
+            # No cached tokens yet — fresh login, then save tokens.
+            client.login()
+            client.garth.dump(tokenstore)
         return client
     except Exception as e:
         print(f"Error connecting to Garmin: {e}", file=sys.stderr)
@@ -216,8 +222,15 @@ def validate_credentials(config):
         tokenstore = get_tokenstore_path()
 
     try:
+        Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
-        client.login(tokenstore=tokenstore)
+        try:
+            client.login(tokenstore=tokenstore)
+        except FileNotFoundError:
+            # No cached tokens yet — do a fresh login without tokenstore,
+            # then save tokens for next time.
+            client.login()
+            client.garth.dump(tokenstore)
         print(json.dumps({"status": "ok"}))
         sys.exit(0)
     except GarminConnectAuthenticationError as e:
