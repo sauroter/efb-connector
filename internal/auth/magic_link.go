@@ -8,10 +8,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	"efb-connector/internal/database"
-
-	"time"
 )
 
 // AuthService is the central authentication service. It bridges the database
