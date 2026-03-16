@@ -6,12 +6,16 @@ Usage:
     python garmin_fetch.py list [--days N]
     python garmin_fetch.py fetch <activity_id> [--output DIR]
     python garmin_fetch.py fetch-all [--days N] [--output DIR]
+    python garmin_fetch.py validate
 
 Environment variables:
     GARMIN_EMAIL - Garmin Connect email
     GARMIN_PASSWORD - Garmin Connect password
 
 Or use 1Password references in config.json.
+
+Credentials may also be supplied via stdin as a single JSON line:
+    {"email": "...", "password": "...", "tokenstore": "..."}
 """
 
 import argparse
@@ -22,10 +26,32 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
-    from garminconnect import Garmin
+    from garminconnect import (
+        Garmin,
+        GarminConnectAuthenticationError,
+    )
 except ImportError:
     print("Error: garminconnect not installed. Run: pip install garminconnect", file=sys.stderr)
     sys.exit(1)
+
+
+def get_credentials_from_stdin():
+    """Try to read credentials from stdin JSON.
+
+    Returns (email, password, tokenstore) if stdin is piped and contains valid
+    JSON, otherwise returns (None, None, None).
+    """
+    if sys.stdin.isatty():
+        return None, None, None
+    try:
+        line = sys.stdin.readline().strip()
+        if not line:
+            return None, None, None
+        data = json.loads(line)
+        return data.get("email"), data.get("password"), data.get("tokenstore")
+    except (json.JSONDecodeError, IOError):
+        return None, None, None
+
 
 # Water sport activity types to filter
 WATER_SPORT_TYPES = [
@@ -99,13 +125,31 @@ def get_credentials(config):
     return email, password
 
 
+def get_tokenstore_path():
+    """Get tokenstore path, using sensible defaults for local vs container."""
+    # Explicit override via environment
+    if tokenstore := os.environ.get("GARMIN_TOKENSTORE"):
+        return tokenstore
+
+    # In Docker/Fly.io, /data is the mounted volume
+    if Path("/data").exists():
+        return "/data/garmin_tokens"
+
+    # Local development: use XDG config directory
+    return str(Path.home() / ".config" / "efb-connector" / "garmin_tokens")
+
+
 def connect_garmin(config):
     """Connect to Garmin and return client."""
-    email, password = get_credentials(config)
+    email, password, tokenstore = get_credentials_from_stdin()
+    if not email or not password:
+        email, password = get_credentials(config)
+    if not tokenstore:
+        tokenstore = get_tokenstore_path()
 
     try:
         client = Garmin(email, password)
-        client.login()
+        client.login(tokenstore=tokenstore)
         return client
     except Exception as e:
         print(f"Error connecting to Garmin: {e}", file=sys.stderr)
@@ -157,6 +201,43 @@ def fetch_gpx(client, activity_id, output_dir="."):
         return None
 
 
+def validate_credentials(config):
+    """Validate Garmin credentials and report the result as JSON.
+
+    Exit codes:
+        0 - credentials are valid
+        1 - authentication failed
+        2 - MFA / CAPTCHA required
+    """
+    email, password, tokenstore = get_credentials_from_stdin()
+    if not email or not password:
+        email, password = get_credentials(config)
+    if not tokenstore:
+        tokenstore = get_tokenstore_path()
+
+    try:
+        client = Garmin(email, password)
+        client.login(tokenstore=tokenstore)
+        print(json.dumps({"status": "ok"}))
+        sys.exit(0)
+    except GarminConnectAuthenticationError as e:
+        msg = str(e)
+        lower = msg.lower()
+        if any(kw in lower for kw in ("mfa", "captcha", "two-factor", "2fa")):
+            print(json.dumps({"status": "mfa_required", "message": msg}), file=sys.stderr)
+            sys.exit(2)
+        print(json.dumps({"status": "error", "message": msg}), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        msg = str(e)
+        lower = msg.lower()
+        if any(kw in lower for kw in ("mfa", "captcha", "two-factor", "2fa")):
+            print(json.dumps({"status": "mfa_required", "message": msg}), file=sys.stderr)
+            sys.exit(2)
+        print(json.dumps({"status": "error", "message": msg}), file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch GPX files from Garmin Connect")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -177,6 +258,9 @@ def main():
     fetch_all_parser.add_argument("--output", "-o", default=".", help="Output directory (default: current)")
     fetch_all_parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
+    # Validate command
+    subparsers.add_parser("validate", help="Validate Garmin credentials")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -184,6 +268,11 @@ def main():
         sys.exit(1)
 
     config = load_config()
+
+    if args.command == "validate":
+        validate_credentials(config)
+        return
+
     client = connect_garmin(config)
 
     if args.command == "list":
