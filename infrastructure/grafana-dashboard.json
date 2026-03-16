@@ -1,188 +1,354 @@
 {
-  "dashboard": {
-    "title": "EFB Connector",
-    "uid": "efb-connector",
-    "timezone": "utc",
-    "refresh": "30s",
-    "time": {
-      "from": "now-24h",
-      "to": "now"
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" }
+  ],
+  "title": "EFB Connector",
+  "uid": "efb-connector",
+  "timezone": "utc",
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Users",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "users_total{app=\"efb-connector\"}",
+          "legendFormat": "Total",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      }
     },
-    "panels": [
-      {
-        "title": "Total Users",
-        "type": "stat",
-        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
-        "targets": [
-          {
-            "expr": "users_total{app=\"efb-connector\"}",
-            "legendFormat": "Total"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "steps": [
-                { "color": "blue", "value": null }
-              ]
-            }
-          }
+    {
+      "id": 2,
+      "title": "Active Users",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "users_active{app=\"efb-connector\"}",
+          "legendFormat": "Active",
+          "refId": "A"
         }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
       },
-      {
-        "title": "Active Users",
-        "type": "stat",
-        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
-        "targets": [
-          {
-            "expr": "users_active{app=\"efb-connector\"}",
-            "legendFormat": "Active"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "steps": [
-                { "color": "green", "value": null }
-              ]
-            }
-          }
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Fully Connected Users",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "users_syncable{app=\"efb-connector\"}",
+          "legendFormat": "Syncable",
+          "refId": "A"
         }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
       },
-      {
-        "title": "Fully Connected Users",
-        "type": "stat",
-        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
-        "targets": [
-          {
-            "expr": "users_syncable{app=\"efb-connector\"}",
-            "legendFormat": "Syncable"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "steps": [
-                { "color": "green", "value": null }
-              ]
-            }
-          }
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Sync Runs by Status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "increase(sync_runs_total{app=\"efb-connector\"}[1h])",
+          "legendFormat": "{{trigger}} / {{status}}",
+          "refId": "A"
         }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
       },
-      {
-        "title": "Sync Runs by Status",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-        "targets": [
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Activities Processed",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "increase(sync_activities_total{app=\"efb-connector\"}[1h])",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": [
           {
-            "expr": "increase(sync_runs_total{app=\"efb-connector\"}[1h])",
-            "legendFormat": "{{trigger}} / {{status}}"
+            "matcher": { "id": "byName", "options": "failed" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "synced" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "skipped" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }]
           }
         ]
       },
-      {
-        "title": "Activities Processed",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-        "targets": [
-          {
-            "expr": "increase(sync_activities_total{app=\"efb-connector\"}[1h])",
-            "legendFormat": "{{result}}"
-          }
-        ],
-        "fieldConfig": {
-          "overrides": [
-            {
-              "matcher": { "id": "byName", "options": "failed" },
-              "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
-            },
-            {
-              "matcher": { "id": "byName", "options": "synced" },
-              "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
-            },
-            {
-              "matcher": { "id": "byName", "options": "skipped" },
-              "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }]
-            }
-          ]
-        }
-      },
-      {
-        "title": "HTTP Request Rate",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-        "targets": [
-          {
-            "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\"}[5m]))",
-            "legendFormat": "{{path}}"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "reqps"
-          }
-        }
-      },
-      {
-        "title": "HTTP Request Duration (p95)",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
-            "legendFormat": "p95 {{path}}"
-          },
-          {
-            "expr": "histogram_quantile(0.50, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
-            "legendFormat": "p50 {{path}}"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s"
-          }
-        }
-      },
-      {
-        "title": "HTTP Error Rate (5xx)",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-        "targets": [
-          {
-            "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\", status=~\"5..\"}[5m]))",
-            "legendFormat": "5xx {{path}}"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "reqps",
-            "color": { "fixedColor": "red", "mode": "fixed" }
-          }
-        }
-      },
-      {
-        "title": "Sync Duration (p50 / p95)",
-        "type": "timeseries",
-        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
-            "legendFormat": "p95 {{trigger}}"
-          },
-          {
-            "expr": "histogram_quantile(0.50, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
-            "legendFormat": "p50 {{trigger}}"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s"
-          }
-        }
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
       }
-    ],
-    "schemaVersion": 39,
-    "version": 1
-  },
-  "overwrite": true
+    },
+    {
+      "id": 6,
+      "title": "HTTP Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\"}[5m]))",
+          "legendFormat": "{{path}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 7,
+      "title": "HTTP Request Duration (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
+          "legendFormat": "p95 {{path}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
+          "legendFormat": "p50 {{path}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 8,
+      "title": "HTTP Error Rate (5xx)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\", status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx {{path}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Sync Duration (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
+          "legendFormat": "p95 {{trigger}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
+          "legendFormat": "p50 {{trigger}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    }
+  ]
 }
