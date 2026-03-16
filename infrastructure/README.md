@@ -1,6 +1,6 @@
 # Fly.io Infrastructure
 
-Shell scripts for deploying the efb-connector-sync app to Fly.io.
+Shell scripts for deploying the efb-connector web service to Fly.io.
 
 ## Prerequisites
 
@@ -11,7 +11,8 @@ Shell scripts for deploying the efb-connector-sync app to Fly.io.
 
 ```bash
 cp secrets.sh.example secrets.sh
-# Edit secrets.sh with your credentials
+# Edit secrets.sh with your credentials:
+# ENCRYPTION_KEY, RESEND_API_KEY, INTERNAL_SECRET, BASE_URL
 ```
 
 ## Deploy
@@ -21,30 +22,32 @@ source secrets.sh
 ./deploy.sh
 ```
 
-The deploy script is idempotent - it can be run multiple times safely.
+The deploy script is idempotent — it can be run multiple times safely.
 
 ## Verify Deployment
 
 ```bash
 # Check app status
-fly status -a efb-connector-sync
+fly status -a efb-connector
 
 # List volumes
-fly volumes list -a efb-connector-sync
+fly volumes list -a efb-connector
 
-# List machines (should show scheduled machine)
-fly machines list -a efb-connector-sync
+# List machines
+fly machines list -a efb-connector
 
 # List secrets
-fly secrets list -a efb-connector-sync
+fly secrets list -a efb-connector
+
+# Health check
+curl https://efb-connector.sauroter.de/health
 ```
 
-## Manual Trigger
-
-To run the sync immediately instead of waiting for the daily schedule:
+## Manual Sync (all users)
 
 ```bash
-fly machines start <machine-id> -a efb-connector-sync
+curl -X POST https://efb-connector.sauroter.de/internal/sync/run-all \
+  -H "Authorization: Bearer <INTERNAL_SECRET>"
 ```
 
 ## Destroy
