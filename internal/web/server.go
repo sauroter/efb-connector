@@ -14,7 +14,10 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/metrics"
 	"efb-connector/internal/sync"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server holds all dependencies needed by the HTTP handlers.
@@ -52,6 +55,8 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
+
+	metrics.RegisterDBGauges(deps.DB)
 
 	return &Server{
 		db:             deps.DB,
@@ -111,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// Wrap the entire mux in logging + recovery middleware.
 	return s.recovery(s.logging(mux))

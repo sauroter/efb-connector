@@ -1,0 +1,188 @@
+{
+  "dashboard": {
+    "title": "EFB Connector",
+    "uid": "efb-connector",
+    "timezone": "utc",
+    "refresh": "30s",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "Total Users",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "users_total{app=\"efb-connector\"}",
+            "legendFormat": "Total"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "color": "blue", "value": null }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Active Users",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+        "targets": [
+          {
+            "expr": "users_active{app=\"efb-connector\"}",
+            "legendFormat": "Active"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Fully Connected Users",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+        "targets": [
+          {
+            "expr": "users_syncable{app=\"efb-connector\"}",
+            "legendFormat": "Syncable"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "title": "Sync Runs by Status",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "increase(sync_runs_total{app=\"efb-connector\"}[1h])",
+            "legendFormat": "{{trigger}} / {{status}}"
+          }
+        ]
+      },
+      {
+        "title": "Activities Processed",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          {
+            "expr": "increase(sync_activities_total{app=\"efb-connector\"}[1h])",
+            "legendFormat": "{{result}}"
+          }
+        ],
+        "fieldConfig": {
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "failed" },
+              "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            },
+            {
+              "matcher": { "id": "byName", "options": "synced" },
+              "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            },
+            {
+              "matcher": { "id": "byName", "options": "skipped" },
+              "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }]
+            }
+          ]
+        }
+      },
+      {
+        "title": "HTTP Request Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+        "targets": [
+          {
+            "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\"}[5m]))",
+            "legendFormat": "{{path}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "title": "HTTP Request Duration (p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
+            "legendFormat": "p95 {{path}}"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum by (le, path) (rate(http_request_duration_seconds_bucket{app=\"efb-connector\"}[5m])))",
+            "legendFormat": "p50 {{path}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "title": "HTTP Error Rate (5xx)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+        "targets": [
+          {
+            "expr": "sum by (path) (rate(http_requests_total{app=\"efb-connector\", status=~\"5..\"}[5m]))",
+            "legendFormat": "5xx {{path}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": { "fixedColor": "red", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "title": "Sync Duration (p50 / p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
+            "legendFormat": "p95 {{trigger}}"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum by (le, trigger) (rate(sync_duration_seconds_bucket{app=\"efb-connector\"}[1h])))",
+            "legendFormat": "p50 {{trigger}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      }
+    ],
+    "schemaVersion": 39,
+    "version": 1
+  },
+  "overwrite": true
+}

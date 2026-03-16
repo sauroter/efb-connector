@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"efb-connector/internal/metrics"
 )
 
 // logging is HTTP middleware that logs every request with method, path, status
@@ -15,13 +17,15 @@ func (s *Server) logging(next http.Handler) http.Handler {
 
 		next.ServeHTTP(sw, r)
 
+		duration := time.Since(start)
 		s.logger.Info("http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.status,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 			"remote_addr", r.RemoteAddr,
 		)
+		metrics.ObserveHTTPRequest(r.Method, r.URL.Path, sw.status, duration.Seconds())
 	})
 }
 

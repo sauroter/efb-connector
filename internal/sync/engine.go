@@ -14,6 +14,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/metrics"
 )
 
 // SyncEngine orchestrates the per-user sync flow.
@@ -62,6 +63,7 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 	}
 	log = log.With("run_id", runID)
 	log.Info("sync run started")
+	syncStart := time.Now()
 
 	// Run the sync and capture results.
 	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log)
@@ -94,6 +96,8 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 		"skipped", skipped,
 		"failed", failed,
 	)
+
+	metrics.ObserveSyncRun(trigger, status, time.Since(syncStart).Seconds(), found, synced, skipped, failed)
 
 	return runID, syncErr
 }
