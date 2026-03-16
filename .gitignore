@@ -34,3 +34,19 @@ infrastructure/secrets.sh
 
 # Brainstorming artifacts
 .superpowers/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Build artifacts
+cli
+server
+
+# Debug files
+debug.html
+
+# Devbox lock
+devbox.lock
+
+# Python cache
+__pycache__/
