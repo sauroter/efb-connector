@@ -242,10 +242,8 @@ print(filepath)
 }
 
 func TestDownloadGPX_TempDirCleaned(t *testing.T) {
-	// Capture the temp dir used by the provider by using a script that echoes
-	// the output dir back.  We then check that directory no longer exists.
+	// Verify that no garmin-gpx-* temp dirs leak after DownloadGPX returns.
 	dir := t.TempDir()
-	var capturedTmpDir string
 
 	script := writeMockScript(t, dir, `
 import argparse, os
@@ -281,7 +279,6 @@ print(gpx_path)
 		t.Errorf("temp dir not cleaned up: before=%d, after=%d dirs",
 			len(tmpsBefore), len(tmpsAfter))
 	}
-	_ = capturedTmpDir
 }
 
 func TestDownloadGPX_ScriptExitNonZero(t *testing.T) {
@@ -327,6 +324,30 @@ parser.parse_args()
 		t.Fatal("expected error for empty stdout, got nil")
 	}
 	if !strings.Contains(err.Error(), "did not return a file path") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestDownloadGPX_PathTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	// Script returns a path that escapes the temp directory.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+fp = sub.add_parser("fetch")
+fp.add_argument("activity_id")
+fp.add_argument("--output", "-o", default=".")
+parser.parse_args()
+print("/etc/passwd")
+`)
+
+	p := NewPythonGarminProvider(script)
+	_, err := p.DownloadGPX(context.Background(), newCreds(), "99")
+	if err == nil {
+		t.Fatal("expected path traversal error, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes temp directory") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

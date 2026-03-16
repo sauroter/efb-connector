@@ -144,6 +144,11 @@ func (p *PythonGarminProvider) DownloadGPX(
 		gpxPath = filepath.Join(tmpDir, gpxPath)
 	}
 
+	// Guard against path traversal: reject any path that escapes tmpDir.
+	if !strings.HasPrefix(filepath.Clean(gpxPath), filepath.Clean(tmpDir)) {
+		return nil, fmt.Errorf("garmin: GPX path %q escapes temp directory", gpxPath)
+	}
+
 	data, err := os.ReadFile(gpxPath)
 	if err != nil {
 		return nil, fmt.Errorf("garmin: failed to read GPX file %q: %w", gpxPath, err)
@@ -189,6 +194,15 @@ func (p *PythonGarminProvider) run(
 		return "", "", fmt.Errorf("garmin: failed to marshal credentials: %w", err)
 	}
 	cmd.Stdin = bytes.NewReader(credsJSON)
+
+	// Restrict the subprocess environment to a minimal whitelist so that
+	// server secrets (ENCRYPTION_KEY, INTERNAL_SECRET, DATABASE_URL, etc.)
+	// present in the parent process are never visible to the Python script.
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"PYTHONPATH=" + os.Getenv("PYTHONPATH"),
+	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
