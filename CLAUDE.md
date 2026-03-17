@@ -44,7 +44,7 @@ The server is configured via environment variables:
 | `ENCRYPTION_KEY` | Base64-encoded 32-byte key for credential encryption |
 | `RESEND_API_KEY` | Resend API key for sending magic link emails |
 | `INTERNAL_SECRET` | Secret for internal/cron API endpoints |
-| `BASE_URL` | Public base URL (e.g. `https://efb-connector.fly.dev`) |
+| `BASE_URL` | Public base URL (e.g. `https://efb-connector.sauroter.de`) |
 | `PORT` | HTTP listen port (default: `8080`) |
 | `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
 
