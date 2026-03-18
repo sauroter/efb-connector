@@ -5,20 +5,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Build the web server
-go build -o efb-connector ./cmd/server
+# Local dev server (mock EFB + Garmin)
+make dev
 
-# Build the CLI tool (preserved)
-go build -o gpx-uploader ./cmd/cli
+# Build the web server binary
+make build
 
-# Run the web server locally
-ENCRYPTION_KEY=<base64key> RESEND_API_KEY=<key> INTERNAL_SECRET=<secret> BASE_URL=http://localhost:8080 go run ./cmd/server
+# Run all tests
+make test
 
-# Run tests
-go test ./...
+# Lint
+make lint
+
+# Clean build artifacts and local dev DB
+make clean
 
 # Run a single test
 go test ./... -run TestName
+
+# Build the CLI tool (preserved)
+go build -o gpx-uploader ./cmd/cli
 ```
 
 ## Project Overview
@@ -47,6 +53,7 @@ The server is configured via environment variables:
 | `BASE_URL` | Public base URL (e.g. `https://efb-connector.sauroter.de`) |
 | `PORT` | HTTP listen port (default: `8080`) |
 | `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
+| `DEV_MODE` | Set to `true` for local dev (mock EFB + Garmin, relaxed env requirements) |
 
 ## CLI Tool (preserved)
 

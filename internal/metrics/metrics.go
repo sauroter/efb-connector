@@ -71,8 +71,10 @@ func ObserveSyncRun(trigger, status string, durationSeconds float64, found, sync
 }
 
 // RegisterDBGauges registers gauges that query the database on each scrape.
+// It is safe to call multiple times (e.g. in tests); duplicate registrations
+// are silently ignored.
 func RegisterDBGauges(db *database.DB) {
-	prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "users_total",
 		Help: "Total number of registered users.",
 	}, func() float64 {
@@ -83,7 +85,7 @@ func RegisterDBGauges(db *database.DB) {
 		return float64(stats.TotalUsers)
 	}))
 
-	prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "users_active",
 		Help: "Number of active users.",
 	}, func() float64 {
@@ -94,7 +96,7 @@ func RegisterDBGauges(db *database.DB) {
 		return float64(stats.ActiveUsers)
 	}))
 
-	prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "users_syncable",
 		Help: "Number of fully connected users (valid Garmin + EFB credentials, sync enabled).",
 	}, func() float64 {

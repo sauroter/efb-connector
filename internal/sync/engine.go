@@ -21,7 +21,7 @@ import (
 type SyncEngine struct {
 	db     *database.DB
 	garmin garmin.GarminProvider
-	efb    *efb.EFBClient
+	efb    efb.EFBProvider
 	logger *slog.Logger
 
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
@@ -29,7 +29,7 @@ type SyncEngine struct {
 }
 
 // NewSyncEngine creates a SyncEngine with the given dependencies.
-func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient, logger *slog.Logger) *SyncEngine {
+func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec efb.EFBProvider, logger *slog.Logger) *SyncEngine {
 	return &SyncEngine{
 		db:     db,
 		garmin: gp,
@@ -40,6 +40,11 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient,
 			time.Sleep(jitter)
 		},
 	}
+}
+
+// DisableSleep removes inter-upload delays. Intended for tests and dev mode.
+func (s *SyncEngine) DisableSleep() {
+	s.sleepFunc = func(_, _ time.Duration) {}
 }
 
 // activityToSync holds either a new activity from Garmin or a previously failed

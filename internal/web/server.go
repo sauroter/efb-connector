@@ -26,7 +26,7 @@ type Server struct {
 	auth           *auth.AuthService
 	syncEngine     *sync.SyncEngine
 	garmin         garmin.GarminProvider
-	efb            *efb.EFBClient
+	efb            efb.EFBProvider
 	rateLimiter    *auth.RateLimiter
 	internalSecret string
 	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
@@ -40,7 +40,7 @@ type ServerDeps struct {
 	Auth           *auth.AuthService
 	SyncEngine     *sync.SyncEngine
 	Garmin         garmin.GarminProvider
-	EFB            *efb.EFBClient
+	EFB            efb.EFBProvider
 	RateLimiter    *auth.RateLimiter
 	InternalSecret string
 	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
