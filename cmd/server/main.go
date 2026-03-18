@@ -112,6 +112,9 @@ func run(logger *slog.Logger) error {
 	}
 
 	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, efbProvider, logger)
+	if devMode {
+		syncEngine.DisableSleep()
+	}
 
 	// ── Create server ──
 

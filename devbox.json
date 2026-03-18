@@ -15,10 +15,9 @@
       "pip install -q -r requirements.txt 2>/dev/null || true"
     ],
     "scripts": {
-      "build": "go build -o gpx-uploader ./cmd",
-      "test": "go test ./...",
-      "sync": "source .venv/bin/activate && ./gpx-uploader sync",
-      "list": "source .venv/bin/activate && ./gpx-uploader list"
+      "dev": "make dev",
+      "build": "make build",
+      "test": "make test"
     }
   }
 }
