@@ -51,8 +51,8 @@ func (s *SyncEngine) DisableSleep() {
 // date range (e.g. start after end, range too large).
 var ErrInvalidDateRange = errors.New("sync: invalid date range")
 
-// maxCustomRangeDays is the maximum span allowed for a custom date range sync.
-const maxCustomRangeDays = 365
+// MaxCustomRangeDays is the maximum span allowed for a custom date range sync.
+const MaxCustomRangeDays = 365
 
 // SyncOptions configures a single sync run. Zero-valued fields fall back to
 // the user's default SyncDays setting.
@@ -148,8 +148,8 @@ func (s *SyncEngine) resolveTimeWindow(userID int64, opts SyncOptions) (time.Tim
 		if end.After(now) {
 			end = now
 		}
-		if end.Sub(opts.Start).Hours()/24 > float64(maxCustomRangeDays) {
-			return time.Time{}, time.Time{}, fmt.Errorf("%w: range exceeds %d days", ErrInvalidDateRange, maxCustomRangeDays)
+		if end.Sub(opts.Start).Hours()/24 > float64(MaxCustomRangeDays) {
+			return time.Time{}, time.Time{}, fmt.Errorf("%w: range exceeds %d days", ErrInvalidDateRange, MaxCustomRangeDays)
 		}
 		return opts.Start, end, nil
 	}

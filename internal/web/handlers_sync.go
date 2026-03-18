@@ -2,7 +2,7 @@ package web
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -50,8 +50,20 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Include the full end day.
-		opts = sync.SyncOptions{Start: startDate, End: endDate.AddDate(0, 0, 1)}
+		endWithFullDay := endDate.AddDate(0, 0, 1)
+		opts = sync.SyncOptions{Start: startDate, End: endWithFullDay}
 		trigger = "manual_custom"
+
+		// Validate date range synchronously before launching goroutine,
+		// so the user gets immediate feedback and doesn't burn rate limit.
+		if !startDate.Before(endWithFullDay) {
+			s.syncError(w, r, "Start date must be before end date.")
+			return
+		}
+		if endWithFullDay.Sub(startDate).Hours()/24 > float64(sync.MaxCustomRangeDays) {
+			s.syncError(w, r, fmt.Sprintf("Date range cannot exceed %d days.", sync.MaxCustomRangeDays))
+			return
+		}
 	}
 
 	// Launch the sync in a background goroutine.
@@ -61,11 +73,7 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 
 		runID, err := s.syncEngine.SyncUserWithOptions(context.Background(), userID, trigger, opts)
 		if err != nil {
-			if errors.Is(err, sync.ErrInvalidDateRange) {
-				log.Warn("invalid date range", "error", err)
-			} else {
-				log.Error("manual sync failed", "run_id", runID, "error", err)
-			}
+			log.Error("manual sync failed", "run_id", runID, "error", err)
 		} else {
 			log.Info("manual sync completed", "run_id", runID)
 		}
