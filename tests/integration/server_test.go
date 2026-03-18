@@ -61,6 +61,7 @@ func newTestServer(t *testing.T) *testServer {
 		BaseURL:        "",
 		Logger:         logger,
 		TemplatesDir:   "../../templates",
+		Version:        "test",
 	})
 	if err != nil {
 		t.Fatalf("create server: %v", err)

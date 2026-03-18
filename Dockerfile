@@ -1,9 +1,10 @@
 FROM golang:1.25-alpine AS builder
+ARG VERSION=dev
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o efb-connector ./cmd/server
+RUN CGO_ENABLED=0 go build -ldflags="-X main.version=${VERSION}" -o efb-connector ./cmd/server
 
 FROM python:3.12-alpine
 WORKDIR /app

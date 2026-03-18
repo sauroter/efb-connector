@@ -1,0 +1,5 @@
+{{define "footer"}}
+<footer class="container" style="text-align: center; padding: 2rem 0; color: var(--pico-muted-color);">
+  <small>&copy; 2025–2026 EFB Connector &middot; <a href="/impressum">Impressum</a> &middot; <a href="/privacy">Datenschutz</a> &middot; <a href="https://github.com/sauroter/efb-connector">GitHub</a> &middot; {{if eq (version) "dev"}}{{version}}{{else}}<a href="https://github.com/sauroter/efb-connector/releases/tag/{{version}}">{{version}}</a>{{end}}</small>
+</footer>
+{{end}}
