@@ -28,18 +28,47 @@ A multi-tenant web service that automatically syncs water sport activities from 
 
 - Go 1.25+
 - Python 3.12+ with `garminconnect` package
+- GNU Make (included in devbox)
+
+Or use [devbox](https://www.jetify.com/devbox) to get everything automatically:
+
+```bash
+devbox shell
+```
+
+### Local development
+
+The fastest way to run the server locally uses **dev mode**, which substitutes mock implementations for Garmin Connect and Kanu-EFB so no external accounts are needed:
+
+```bash
+make dev
+```
+
+This starts the server on `http://localhost:8080` with mock providers. Magic link emails are printed to stdout instead of being sent.
 
 ### Build
 
 ```bash
-# Build the web server
-go build -o efb-connector ./cmd/server
-
-# Build the legacy CLI tool
-go build -o gpx-uploader ./cmd/cli
+make build
 ```
 
-### Run locally
+### Run tests
+
+```bash
+make test
+```
+
+### All Make targets
+
+| Target | Description |
+|---|---|
+| `make dev` | Run server in dev mode (mock EFB + Garmin, auto-generated encryption key) |
+| `make build` | Build the `efb-connector` binary |
+| `make test` | Run all tests (unit + integration) |
+| `make lint` | Run `go vet` |
+| `make clean` | Remove built binaries and local dev database |
+
+### Running with real providers
 
 ```bash
 ENCRYPTION_KEY=<base64-encoded-32-byte-key> \
@@ -47,12 +76,6 @@ RESEND_API_KEY=<resend-api-key> \
 INTERNAL_SECRET=<secret> \
 BASE_URL=http://localhost:8080 \
 go run ./cmd/server
-```
-
-### Run tests
-
-```bash
-go test ./...
 ```
 
 ## Configuration
@@ -67,6 +90,7 @@ The server is configured via environment variables:
 | `BASE_URL` | Public base URL (e.g. `https://efb-connector.sauroter.de`) |
 | `PORT` | HTTP listen port (default: `8080`) |
 | `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
+| `DEV_MODE` | Set to `true` for local dev (mock EFB + Garmin, relaxed env requirements) |
 
 ## Deployment
 

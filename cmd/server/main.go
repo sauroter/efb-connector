@@ -46,6 +46,8 @@ func main() {
 func run(logger *slog.Logger) error {
 	// ── Parse environment variables ──
 
+	devMode := os.Getenv("DEV_MODE") == "true"
+
 	port := envOr("PORT", "8080")
 	dbPath := envOr("DB_PATH", "/data/efb-connector.db")
 	baseURL := envOr("BASE_URL", "")
@@ -64,13 +66,26 @@ func run(logger *slog.Logger) error {
 	}
 
 	resendAPIKey := os.Getenv("RESEND_API_KEY")
-	if resendAPIKey == "" {
-		return fmt.Errorf("RESEND_API_KEY environment variable is required")
-	}
-
 	internalSecret := os.Getenv("INTERNAL_SECRET")
-	if internalSecret == "" {
-		return fmt.Errorf("INTERNAL_SECRET environment variable is required")
+
+	if devMode {
+		logger.Warn("DEV_MODE is active — using mock EFB and Garmin providers")
+		if resendAPIKey == "" {
+			resendAPIKey = "placeholder"
+		}
+		if internalSecret == "" {
+			internalSecret = "dev-secret"
+		}
+		if dbPath == "/data/efb-connector.db" {
+			dbPath = "efb-connector.db"
+		}
+	} else {
+		if resendAPIKey == "" {
+			return fmt.Errorf("RESEND_API_KEY environment variable is required")
+		}
+		if internalSecret == "" {
+			return fmt.Errorf("INTERNAL_SECRET environment variable is required")
+		}
 	}
 
 	// ── Initialize dependencies ──
@@ -85,9 +100,21 @@ func run(logger *slog.Logger) error {
 	authService := auth.NewAuthService(db, resendAPIKey, baseURL, emailFrom, encryptionKey)
 	rateLimiter := auth.NewRateLimiter()
 
-	garminProvider := garmin.NewPythonGarminProvider("scripts/garmin_fetch.py")
-	efbClient := efb.NewEFBClient(efb.DefaultBaseURL)
-	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, efbClient, logger)
+	var garminProvider garmin.GarminProvider
+	var efbProvider efb.EFBProvider
+
+	if devMode {
+		garminProvider = garmin.NewMockGarminProvider()
+		efbProvider = efb.NewMockEFBProvider(logger)
+	} else {
+		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py")
+		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
+	}
+
+	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, efbProvider, logger)
+	if devMode {
+		syncEngine.DisableSleep()
+	}
 
 	// ── Create server ──
 
@@ -96,7 +123,7 @@ func run(logger *slog.Logger) error {
 		Auth:           authService,
 		SyncEngine:     syncEngine,
 		Garmin:         garminProvider,
-		EFB:            efbClient,
+		EFB:            efbProvider,
 		RateLimiter:    rateLimiter,
 		InternalSecret: internalSecret,
 		BaseURL:        baseURL,

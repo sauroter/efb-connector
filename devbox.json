@@ -4,7 +4,8 @@
     "go@1.23",
     "nodejs@22",
     "python@3.12",
-    "python312Packages.pip"
+    "python312Packages.pip",
+    "gnumake"
   ],
   "shell": {
     "init_hook": [
@@ -14,10 +15,9 @@
       "pip install -q -r requirements.txt 2>/dev/null || true"
     ],
     "scripts": {
-      "build": "go build -o gpx-uploader ./cmd",
-      "test": "go test ./...",
-      "sync": "source .venv/bin/activate && ./gpx-uploader sync",
-      "list": "source .venv/bin/activate && ./gpx-uploader list"
+      "dev": "make dev",
+      "build": "make build",
+      "test": "make test"
     }
   }
 }
