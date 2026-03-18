@@ -30,6 +30,8 @@ import (
 	"efb-connector/internal/web"
 )
 
+var version = "dev"
+
 func main() {
 	// Structured JSON logging for production.
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -129,6 +131,7 @@ func run(logger *slog.Logger) error {
 		BaseURL:        baseURL,
 		Logger:         logger,
 		TemplatesDir:   "templates",
+		Version:        version,
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -166,7 +169,7 @@ func run(logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("server starting", "addr", httpServer.Addr)
+		logger.Info("server starting", "addr", httpServer.Addr, "version", version)
 		errCh <- httpServer.ListenAndServe()
 	}()
 

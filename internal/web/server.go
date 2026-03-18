@@ -32,6 +32,7 @@ type Server struct {
 	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
 	logger         *slog.Logger
 	templates      *template.Template
+	version        string
 }
 
 // ServerDeps bundles the dependencies required to construct a Server.
@@ -46,12 +47,13 @@ type ServerDeps struct {
 	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
 	Logger         *slog.Logger
 	TemplatesDir   string // path to the templates/ directory
+	Version        string // build version (set via ldflags)
 }
 
 // NewServer creates a Server with the given dependencies and parses all
 // templates from the templates directory.
 func NewServer(deps ServerDeps) (*Server, error) {
-	tmpl, err := parseTemplates(deps.TemplatesDir)
+	tmpl, err := parseTemplates(deps.TemplatesDir, deps.Version)
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
@@ -69,6 +71,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		configBaseURL:  deps.BaseURL,
 		logger:         deps.Logger,
 		templates:      tmpl,
+		version:        deps.Version,
 	}, nil
 }
 
@@ -179,8 +182,10 @@ func (s *Server) garminTokenStorePath(userID int64) string {
 }
 
 // parseTemplates loads all templates from the given directory.
-func parseTemplates(dir string) (*template.Template, error) {
-	tmpl := template.New("")
+func parseTemplates(dir string, version string) (*template.Template, error) {
+	tmpl := template.New("").Funcs(template.FuncMap{
+		"version": func() string { return version },
+	})
 
 	// Parse partials first so they are available to top-level templates.
 	partials := filepath.Join(dir, "partials", "*.html")
