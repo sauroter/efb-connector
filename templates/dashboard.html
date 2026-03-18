@@ -116,7 +116,33 @@
           Sync now
         </button>
       </form>
-      <p><small style="color: var(--pico-muted-color);">Next automatic sync: ~04:00 UTC daily</small></p>
+      <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
+
+      <details style="margin-top: 1rem;">
+        <summary>Sync a custom date range</summary>
+        <form method="POST" action="/sync/trigger"
+              hx-post="/sync/trigger"
+              hx-target="#sync-status"
+              hx-swap="outerHTML"
+              hx-indicator="#custom-sync-spinner">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div class="grid">
+            <label>
+              Start date
+              <input type="date" name="start_date" required max="{{.Today}}">
+            </label>
+            <label>
+              End date
+              <input type="date" name="end_date" required max="{{.Today}}">
+            </label>
+          </div>
+          <button type="submit" class="outline">
+            <span id="custom-sync-spinner" class="spinner htmx-indicator"></span>
+            Sync date range
+          </button>
+        </form>
+        <p><small style="color: var(--pico-muted-color);">Max range: 1 year. Larger date ranges may take a long time to sync. Same rate limit applies (1 sync per hour).</small></p>
+      </details>
       {{else}}
       <p><small style="color: var(--pico-muted-color);">Connect both Garmin and EFB to enable sync.</small></p>
       {{end}}

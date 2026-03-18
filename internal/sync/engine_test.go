@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,9 +42,13 @@ type mockGarminProvider struct {
 	gpxData       map[string][]byte // activityID → GPX bytes
 	downloadErr   map[string]error  // activityID → error
 	validateErr   error
+	lastListStart time.Time
+	lastListEnd   time.Time
 }
 
-func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCredentials, _, _ time.Time) ([]garmin.Activity, error) {
+func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCredentials, start, end time.Time) ([]garmin.Activity, error) {
+	m.lastListStart = start
+	m.lastListEnd = end
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -685,6 +690,107 @@ func TestSyncUser_UserNotFound(t *testing.T) {
 	_, err := engine.SyncUser(context.Background(), 99999, "manual")
 	if err == nil {
 		t.Fatal("expected error for non-existent user")
+	}
+}
+
+func TestSyncUserWithOptions_CustomRange(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	start := time.Date(2025, 1, 10, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 20, 0, 0, 0, 0, time.UTC)
+
+	runID, err := engine.SyncUserWithOptions(context.Background(), user.ID, "manual_custom", SyncOptions{
+		Start: start,
+		End:   end,
+	})
+	if err != nil {
+		t.Fatalf("SyncUserWithOptions: %v", err)
+	}
+
+	run, _ := db.GetSyncRun(runID)
+	if run.Status != "completed" {
+		t.Errorf("status = %q, want completed", run.Status)
+	}
+
+	// Verify the custom range was passed to the Garmin provider.
+	if !gp.lastListStart.Equal(start) {
+		t.Errorf("ListActivities start = %v, want %v", gp.lastListStart, start)
+	}
+	if !gp.lastListEnd.Equal(end) {
+		t.Errorf("ListActivities end = %v, want %v", gp.lastListEnd, end)
+	}
+}
+
+func TestSyncUserWithOptions_DefaultFallback(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{activities: nil}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	before := time.Now()
+	_, err := engine.SyncUserWithOptions(context.Background(), user.ID, "manual", SyncOptions{})
+	if err != nil {
+		t.Fatalf("SyncUserWithOptions: %v", err)
+	}
+
+	// Default SyncDays is 3. The start should be ~3 days before now.
+	expectedStart := before.AddDate(0, 0, -user.SyncDays)
+	diff := gp.lastListStart.Sub(expectedStart)
+	if diff < -time.Second || diff > time.Second {
+		t.Errorf("ListActivities start = %v, expected ~%v (diff=%v)", gp.lastListStart, expectedStart, diff)
+	}
+}
+
+func TestSyncUserWithOptions_InvalidRange(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	// Start after end.
+	_, err := engine.SyncUserWithOptions(context.Background(), user.ID, "manual_custom", SyncOptions{
+		Start: time.Date(2025, 3, 15, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2025, 3, 10, 0, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error for start > end")
+	}
+	if !errors.Is(err, ErrInvalidDateRange) {
+		t.Errorf("error = %v, want ErrInvalidDateRange", err)
+	}
+}
+
+func TestSyncUserWithOptions_RangeTooLarge(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	// Range of ~400 days exceeds the 365-day limit.
+	_, err := engine.SyncUserWithOptions(context.Background(), user.ID, "manual_custom", SyncOptions{
+		Start: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2025, 2, 5, 0, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error for range > 365 days")
+	}
+	if !errors.Is(err, ErrInvalidDateRange) {
+		t.Errorf("error = %v, want ErrInvalidDateRange", err)
 	}
 }
 

@@ -57,7 +57,7 @@
           {{range .Runs}}
           <tr>
             <td><small>{{.StartedAt.Format "2006-01-02 15:04 UTC"}}</small></td>
-            <td>{{.Trigger}}</td>
+            <td>{{if eq .Trigger "manual_custom"}}manual (custom){{else}}{{.Trigger}}{{end}}</td>
             <td>
               <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{else if eq .Status "running"}}status-running{{else}}{{end}}">
                 {{.Status}}
