@@ -38,6 +38,43 @@
       <p>Signed in as <strong>{{.User.Email}}</strong></p>
     </hgroup>
 
+    {{if .ShowGettingStarted}}
+    <section>
+      <h2>Getting Started</h2>
+      <p>Set up your account in three steps:</p>
+      <div class="getting-started-steps">
+        <div class="getting-started-step {{if .GarminConnected}}step-done{{else if eq .SetupStep 1}}step-active{{else}}step-pending{{end}}">
+          {{if .GarminConnected}}
+            <span class="step-icon">&#10003;</span> Connect Garmin Connect
+          {{else if eq .SetupStep 1}}
+            <span class="step-icon">1</span> <a href="/settings/garmin">Connect Garmin Connect</a>
+          {{else}}
+            <span class="step-icon">1</span> Connect Garmin Connect
+          {{end}}
+        </div>
+        <div class="getting-started-step {{if .EFBConnected}}step-done{{else if eq .SetupStep 2}}step-active{{else}}step-pending{{end}}">
+          {{if .EFBConnected}}
+            <span class="step-icon">&#10003;</span> Connect Kanu-EFB
+          {{else if eq .SetupStep 2}}
+            <span class="step-icon">2</span> <a href="/settings/efb">Connect Kanu-EFB</a>
+          {{else}}
+            <span class="step-icon">2</span> Connect Kanu-EFB
+          {{end}}
+        </div>
+        <div class="getting-started-step {{if and .GarminConnected .EFBConnected (not (eq .SetupStep 3))}}step-done{{else if eq .SetupStep 3}}step-active{{else}}step-pending{{end}}">
+          {{if eq .SetupStep 3}}
+            <span class="step-icon">3</span> Run your first sync &mdash;
+            <form method="POST" action="/sync/trigger" style="display: inline;">
+              <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+              <button type="submit" class="outline" style="display: inline; padding: 0.2em 0.8em; margin: 0;">Sync now</button>
+            </form>
+          {{else}}
+            <span class="step-icon">3</span> Run your first sync
+          {{end}}
+        </div>
+      </div>
+    </section>
+    {{else}}
     <section class="card-grid">
       <!-- Garmin connection card -->
       <article>
@@ -77,6 +114,7 @@
         {{end}}
       </article>
     </section>
+    {{end}}
 
     <!-- Sync section -->
     <section>

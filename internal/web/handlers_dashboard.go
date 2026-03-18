@@ -47,6 +47,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var lastSync map[string]any
+	hasSynced := false
 	if len(syncRuns) > 0 {
 		run := syncRuns[0]
 		lastSync = map[string]any{
@@ -60,17 +61,35 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"ActivitiesFailed":  run.ActivitiesFailed,
 			"ErrorMessage":      run.ErrorMessage,
 		}
+		hasSynced = run.Status == "success" || run.Status == "completed" || run.Status == "partial"
+	}
+
+	// Compute getting-started state.
+	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync, 0=all done.
+	setupStep := 0
+	showGettingStarted := false
+	if !garminConnected {
+		setupStep = 1
+		showGettingStarted = true
+	} else if !efbConnected {
+		setupStep = 2
+		showGettingStarted = true
+	} else if !hasSynced {
+		setupStep = 3
+		showGettingStarted = true
 	}
 
 	s.render(w, "dashboard.html", map[string]any{
-		"Flash":           flash(w, r),
-		"CSRFToken":       s.auth.CSRFToken(r),
-		"User":            user,
-		"GarminConnected": garminConnected,
-		"EFBConnected":    efbConnected,
-		"LastSync":        lastSync,
-		"SyncDays":        user.SyncDays,
-		"Today":           time.Now().Format("2006-01-02"),
+		"Flash":              flash(w, r),
+		"CSRFToken":          s.auth.CSRFToken(r),
+		"User":               user,
+		"GarminConnected":    garminConnected,
+		"EFBConnected":       efbConnected,
+		"LastSync":           lastSync,
+		"SyncDays":           user.SyncDays,
+		"Today":              time.Now().Format("2006-01-02"),
+		"ShowGettingStarted": showGettingStarted,
+		"SetupStep":          setupStep,
 	})
 }
 
@@ -144,7 +163,7 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 
 	s.logger.Info("garmin credentials saved", "user_id", userID)
 	setFlash(w, "Garmin credentials saved successfully.")
-	http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 // handleGarminSettingsDelete removes the user's Garmin credentials.
@@ -229,7 +248,7 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("efb credentials saved", "user_id", userID)
 	setFlash(w, "EFB credentials saved successfully.")
-	http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 // handleEFBSettingsDelete removes the user's EFB credentials.

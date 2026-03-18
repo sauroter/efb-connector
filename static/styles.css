@@ -19,3 +19,14 @@
 
 /* Flash messages */
 .flash-message { padding: 1rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius); background: var(--pico-primary-background); border: 1px solid var(--pico-muted-border-color); }
+
+/* Getting started steps */
+.getting-started-steps { padding: 0; margin: 1rem 0; }
+.getting-started-steps .getting-started-step { padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: var(--pico-border-radius); display: flex; align-items: center; gap: 0.75rem; }
+.getting-started-steps .step-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.8em; height: 1.8em; border-radius: 50%; font-weight: 700; font-size: 0.9em; flex-shrink: 0; }
+.getting-started-steps .step-done { color: #065f46; background: #d1fae5; }
+.getting-started-steps .step-done .step-icon { background: #065f46; color: #fff; }
+.getting-started-steps .step-active { background: #dbeafe; border: 2px solid var(--pico-primary); }
+.getting-started-steps .step-active .step-icon { background: var(--pico-primary); color: #fff; }
+.getting-started-steps .step-pending { color: var(--pico-muted-color); background: var(--pico-card-background-color); }
+.getting-started-steps .step-pending .step-icon { background: var(--pico-muted-border-color); color: var(--pico-muted-color); }

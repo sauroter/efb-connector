@@ -121,6 +121,14 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.logger.Info("user logged in", "user_id", userID)
+
+	// Show a welcome message for new users who haven't connected any services yet.
+	_, _, garminErr := s.db.GetGarminCredentials(userID)
+	_, _, efbErr := s.db.GetEFBCredentials(userID)
+	if garminErr != nil && efbErr != nil {
+		setFlash(w, "Welcome! Let's get your accounts connected.")
+	}
+
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
