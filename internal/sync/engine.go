@@ -47,6 +47,20 @@ func (s *SyncEngine) DisableSleep() {
 	s.sleepFunc = func(_, _ time.Duration) {}
 }
 
+// ErrInvalidDateRange is returned when the caller provides an invalid custom
+// date range (e.g. start after end, range too large).
+var ErrInvalidDateRange = errors.New("sync: invalid date range")
+
+// maxCustomRangeDays is the maximum span allowed for a custom date range sync.
+const maxCustomRangeDays = 365
+
+// SyncOptions configures a single sync run. Zero-valued fields fall back to
+// the user's default SyncDays setting.
+type SyncOptions struct {
+	Start time.Time
+	End   time.Time
+}
+
 // activityToSync holds either a new activity from Garmin or a previously failed
 // activity being retried.
 type activityToSync struct {
@@ -57,9 +71,24 @@ type activityToSync struct {
 	isRetry  bool
 }
 
-// SyncUser runs a full sync for one user. Returns the sync_run ID.
+// SyncUser runs a full sync for one user using the default time window.
+// Returns the sync_run ID.
 func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string) (int64, error) {
+	return s.SyncUserWithOptions(ctx, userID, trigger, SyncOptions{})
+}
+
+// SyncUserWithOptions runs a sync for one user. If opts specifies a custom
+// date range it is validated and used; otherwise the user's SyncDays default
+// is applied. Returns the sync_run ID.
+func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trigger string, opts SyncOptions) (int64, error) {
 	log := s.logger.With("user_id", userID, "trigger", trigger)
+
+	// Resolve time window.
+	start, end, err := s.resolveTimeWindow(userID, opts)
+	if err != nil {
+		return 0, err
+	}
+	log.Info("sync time window", "start", start.Format("2006-01-02"), "end", end.Format("2006-01-02"))
 
 	// 1. Create sync_run record.
 	runID, err := s.db.CreateSyncRun(userID, trigger)
@@ -71,7 +100,7 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log)
+	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log, start, end)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -107,18 +136,39 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 	return runID, syncErr
 }
 
-// doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger) (found, synced, skipped, failed int, err error) {
-	// 2. Get user from DB.
-	user, err := s.db.GetUserByID(userID)
-	if err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("sync: get user: %w", err)
-	}
-	if user == nil {
-		return 0, 0, 0, 0, fmt.Errorf("sync: user %d not found", userID)
+// resolveTimeWindow returns the start/end for a sync run. Custom ranges are
+// validated; zero-valued opts fall back to the user's SyncDays default.
+func (s *SyncEngine) resolveTimeWindow(userID int64, opts SyncOptions) (time.Time, time.Time, error) {
+	if !opts.Start.IsZero() && !opts.End.IsZero() {
+		if !opts.Start.Before(opts.End) {
+			return time.Time{}, time.Time{}, fmt.Errorf("%w: start must be before end", ErrInvalidDateRange)
+		}
+		now := time.Now()
+		end := opts.End
+		if end.After(now) {
+			end = now
+		}
+		if end.Sub(opts.Start).Hours()/24 > float64(maxCustomRangeDays) {
+			return time.Time{}, time.Time{}, fmt.Errorf("%w: range exceeds %d days", ErrInvalidDateRange, maxCustomRangeDays)
+		}
+		return opts.Start, end, nil
 	}
 
-	// 3. Get Garmin credentials.
+	user, err := s.db.GetUserByID(userID)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sync: get user: %w", err)
+	}
+	if user == nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sync: user %d not found", userID)
+	}
+	end := time.Now()
+	start := end.AddDate(0, 0, -user.SyncDays)
+	return start, end, nil
+}
+
+// doSync performs the actual sync work and returns counters.
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time) (found, synced, skipped, failed int, err error) {
+	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("sync: get garmin credentials: %w", err)
@@ -128,10 +178,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		Password: garminPass,
 	}
 
-	// 4. List activities from Garmin.
-	end := time.Now()
-	start := end.AddDate(0, 0, -user.SyncDays)
-
+	// 3. List activities from Garmin.
 	activities, err := s.garmin.ListActivities(ctx, garminCreds, start, end)
 	if err != nil {
 		// On auth failure: mark credentials invalid.

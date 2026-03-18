@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"efb-connector/internal/auth"
 	"efb-connector/internal/garmin"
@@ -68,6 +69,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"GarminConnected": garminConnected,
 		"EFBConnected":    efbConnected,
 		"LastSync":        lastSync,
+		"SyncDays":        user.SyncDays,
+		"Today":           time.Now().Format("2006-01-02"),
 	})
 }
 

@@ -2,10 +2,13 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/sync"
 )
 
 // handleSyncTrigger launches a manual sync in a background goroutine and
@@ -28,15 +31,41 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Launch the sync in a background goroutine. SyncUser creates its own
-	// sync_run record internally.
+	_ = r.ParseForm()
+
+	trigger := "manual"
+	var opts sync.SyncOptions
+
+	startStr := r.FormValue("start_date")
+	endStr := r.FormValue("end_date")
+	if startStr != "" && endStr != "" {
+		startDate, err := time.Parse("2006-01-02", startStr)
+		if err != nil {
+			s.syncError(w, r, "Invalid start date format.")
+			return
+		}
+		endDate, err := time.Parse("2006-01-02", endStr)
+		if err != nil {
+			s.syncError(w, r, "Invalid end date format.")
+			return
+		}
+		// Include the full end day.
+		opts = sync.SyncOptions{Start: startDate, End: endDate.AddDate(0, 0, 1)}
+		trigger = "manual_custom"
+	}
+
+	// Launch the sync in a background goroutine.
 	go func() {
-		log := s.logger.With("user_id", userID, "trigger", "manual")
+		log := s.logger.With("user_id", userID, "trigger", trigger)
 		log.Info("manual sync started")
 
-		runID, err := s.syncEngine.SyncUser(context.Background(), userID, "manual")
+		runID, err := s.syncEngine.SyncUserWithOptions(context.Background(), userID, trigger, opts)
 		if err != nil {
-			log.Error("manual sync failed", "run_id", runID, "error", err)
+			if errors.Is(err, sync.ErrInvalidDateRange) {
+				log.Warn("invalid date range", "error", err)
+			} else {
+				log.Error("manual sync failed", "run_id", runID, "error", err)
+			}
 		} else {
 			log.Info("manual sync completed", "run_id", runID)
 		}
@@ -125,4 +154,15 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Runs":      runs,
 	})
+}
+
+// syncError returns an error message for sync form submissions.
+func (s *Server) syncError(w http.ResponseWriter, r *http.Request, msg string) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + msg + `</p></div>`))
+		return
+	}
+	setFlash(w, msg)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
