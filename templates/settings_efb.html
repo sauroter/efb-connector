@@ -57,9 +57,7 @@
     <article class="settings-card">
       <header><strong>{{if .Connected}}Update credentials{{else}}Connect Kanu-EFB{{end}}</strong></header>
       <p>Enter your Kanu-EFB username and password. Credentials will be validated against the portal and stored encrypted.</p>
-      <form method="POST" action="/settings/efb"
-            hx-post="/settings/efb"
-            hx-indicator="#save-spinner">
+      <form method="POST" action="/settings/efb">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <label for="username">Username
           <input type="text" id="username" name="username" placeholder="your-efb-username"
@@ -68,10 +66,7 @@
         <label for="password">Password
           <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
         </label>
-        <button type="submit">
-          <span id="save-spinner" class="spinner htmx-indicator"></span>
-          Test &amp; Save
-        </button>
+        <button type="submit">Test &amp; Save</button>
       </form>
     </article>
 

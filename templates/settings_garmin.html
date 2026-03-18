@@ -57,9 +57,7 @@
     <article class="settings-card">
       <header><strong>{{if .Connected}}Update credentials{{else}}Connect Garmin{{end}}</strong></header>
       <p>Enter your Garmin Connect email and password. Credentials will be validated and stored encrypted.</p>
-      <form method="POST" action="/settings/garmin"
-            hx-post="/settings/garmin"
-            hx-indicator="#save-spinner">
+      <form method="POST" action="/settings/garmin">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <label for="email">Email address
           <input type="email" id="email" name="email" placeholder="you@garmin.com"
@@ -68,10 +66,7 @@
         <label for="password">Password
           <input type="password" id="password" name="password" placeholder="••••••••" required>
         </label>
-        <button type="submit">
-          <span id="save-spinner" class="spinner htmx-indicator"></span>
-          Test &amp; Save
-        </button>
+        <button type="submit">Test &amp; Save</button>
       </form>
     </article>
 
