@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /settings/efb", protect(s.handleEFBSettingsForm))
 	mux.Handle("POST /settings/efb", protect(s.handleEFBSettingsSave))
 	mux.Handle("POST /settings/efb/delete", protect(s.handleEFBSettingsDelete))
+	mux.Handle("POST /settings/auto-create-trips", protect(s.handleAutoCreateTripsSave))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
 	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))

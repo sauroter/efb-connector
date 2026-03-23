@@ -156,6 +156,14 @@
       </form>
       <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
 
+      <form method="post" action="/settings/auto-create-trips" style="margin-top: 0.75rem;">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label>
+          <input type="checkbox" name="enabled" value="1" {{if .AutoCreateTrips}}checked{{end}} onchange="this.form.submit()">
+          Automatically create EFB trip entries from synced tracks
+        </label>
+      </form>
+
       <details style="margin-top: 1rem;">
         <summary>Sync a custom date range</summary>
         <form method="POST" action="/sync/trigger"
