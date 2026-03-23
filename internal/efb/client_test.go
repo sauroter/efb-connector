@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -563,25 +564,14 @@ func TestCreateTripFromTrack_TimesFilledCorrectly(t *testing.T) {
 // assertFormValue checks that the URL-encoded body contains name=expectedValue.
 func assertFormValue(t *testing.T, body, name, expectedValue string) {
 	t.Helper()
-	// Parse the URL-encoded body to get the value.
-	// We need to handle URL encoding properly.
-	pairs := strings.Split(body, "&")
-	for _, pair := range pairs {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		// URL-decode key and value.
-		key := strings.ReplaceAll(parts[0], "+", " ")
-		val := strings.ReplaceAll(parts[1], "+", " ")
-		if key == name {
-			if val != expectedValue {
-				t.Errorf("form field %q: expected %q, got %q", name, expectedValue, val)
-			}
-			return
-		}
+	vals, err := url.ParseQuery(body)
+	if err != nil {
+		t.Fatalf("failed to parse form body: %v", err)
 	}
-	t.Errorf("form field %q not found in body", name)
+	got := vals.Get(name)
+	if got != expectedValue {
+		t.Errorf("form field %q: expected %q, got %q", name, expectedValue, got)
+	}
 }
 
 func TestCreateTripFromTrack_SubmitFailure(t *testing.T) {

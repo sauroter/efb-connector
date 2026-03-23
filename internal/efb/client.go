@@ -22,6 +22,22 @@ import (
 // DefaultBaseURL is the base URL for the Kanu-EFB portal.
 const DefaultBaseURL = "https://efb.kanu-efb.de"
 
+// Compiled regular expressions used by parseUnassociatedTrack and
+// parseFormFields. Defined at package level to avoid recompilation on each
+// call (and within loops).
+var (
+	trackIDRe        = regexp.MustCompile(`name="track_id:(\d+)"`)
+	editRe           = regexp.MustCompile(`name="edit:(\d+)"`)
+	inputRe          = regexp.MustCompile(`<input\b[^>]*>`)
+	nameRe           = regexp.MustCompile(`name="([^"]*)"`)
+	valueRe          = regexp.MustCompile(`value="([^"]*)"`)
+	typeRe           = regexp.MustCompile(`type="([^"]*)"`)
+	selectRe         = regexp.MustCompile(`(?s)<select\b[^>]*name="([^"]*)"[^>]*>(.*?)</select>`)
+	selectedOptionRe = regexp.MustCompile(`<option\b[^>]*selected[^>]*value="([^"]*)"`)
+	firstOptionRe    = regexp.MustCompile(`<option\b[^>]*value="([^"]*)"`)
+	textareaRe       = regexp.MustCompile(`(?s)<textarea\b[^>]*name="([^"]*)"[^>]*>(.*?)</textarea>`)
+)
+
 const (
 	defaultLoginPath      = "/login"
 	defaultUploadPath     = "/interpretation/usersmap"
@@ -272,13 +288,13 @@ func parseUnassociatedTrack(html, gpxFilename string) string {
 		chunk := html[start:end]
 
 		// Look for track_id:NNN pattern — means no trip yet.
-		trackIDMatch := regexp.MustCompile(`name="track_id:(\d+)"`).FindStringSubmatch(chunk)
+		trackIDMatch := trackIDRe.FindStringSubmatch(chunk)
 		if trackIDMatch != nil {
 			return trackIDMatch[1]
 		}
 
 		// Look for edit:NNN pattern — means trip already exists.
-		editMatch := regexp.MustCompile(`name="edit:(\d+)"`).FindStringSubmatch(chunk)
+		editMatch := editRe.FindStringSubmatch(chunk)
 		if editMatch != nil {
 			return ""
 		}
@@ -320,6 +336,10 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("efb: trip form returned status %d: %s",
 			resp.StatusCode, truncateBody(body))
+	}
+
+	if !strings.Contains(string(body), "begdate") {
+		return fmt.Errorf("efb: trip creation form not found after track click (status %d)", resp.StatusCode)
 	}
 
 	// Step 2: Parse the form HTML to extract all field values.
@@ -374,11 +394,6 @@ func parseFormFields(html string) url.Values {
 	vals := url.Values{}
 
 	// Parse <input> elements.
-	inputRe := regexp.MustCompile(`<input\b[^>]*>`)
-	nameRe := regexp.MustCompile(`name="([^"]*)"`)
-	valueRe := regexp.MustCompile(`value="([^"]*)"`)
-	typeRe := regexp.MustCompile(`type="([^"]*)"`)
-
 	for _, match := range inputRe.FindAllString(html, -1) {
 		nameMatch := nameRe.FindStringSubmatch(match)
 		if nameMatch == nil {
@@ -410,9 +425,6 @@ func parseFormFields(html string) url.Values {
 	}
 
 	// Parse <select> elements with their selected options.
-	selectRe := regexp.MustCompile(`(?s)<select\b[^>]*name="([^"]*)"[^>]*>(.*?)</select>`)
-	selectedOptionRe := regexp.MustCompile(`<option\b[^>]*selected[^>]*value="([^"]*)"`)
-
 	for _, match := range selectRe.FindAllStringSubmatch(html, -1) {
 		name := match[1]
 		body := match[2]
@@ -422,7 +434,7 @@ func parseFormFields(html string) url.Values {
 			vals.Add(name, optionMatch[1])
 		} else {
 			// No selected option; try the first option's value.
-			firstOption := regexp.MustCompile(`<option\b[^>]*value="([^"]*)"`).FindStringSubmatch(body)
+			firstOption := firstOptionRe.FindStringSubmatch(body)
 			if firstOption != nil {
 				vals.Add(name, firstOption[1])
 			}
@@ -430,7 +442,6 @@ func parseFormFields(html string) url.Values {
 	}
 
 	// Parse <textarea> elements.
-	textareaRe := regexp.MustCompile(`(?s)<textarea\b[^>]*name="([^"]*)"[^>]*>(.*?)</textarea>`)
 	for _, match := range textareaRe.FindAllStringSubmatch(html, -1) {
 		vals.Add(match[1], match[2])
 	}
