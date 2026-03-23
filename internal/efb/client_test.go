@@ -513,7 +513,7 @@ func TestCreateTripFromTrack_Success(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestCreateTripFromTrack_TimesFilledCorrectly(t *testing.T) {
 
 	// Start: 14:30, Duration: 5400s (1h30m) -> End: 16:00
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 5400)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 5400, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -604,7 +604,7 @@ func TestCreateTripFromTrack_SubmitFailure(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err == nil {
 		t.Fatal("expected error for server 500, got nil")
 	}
@@ -734,12 +734,77 @@ func TestCreateTripFromTrack_ErrorIndicatorInResponse(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err == nil {
 		t.Fatal("expected error when response contains 'Fehler', got nil")
 	}
 	if !strings.Contains(err.Error(), "error indicator") {
 		t.Errorf("expected 'error indicator' in error message, got: %v", err)
+	}
+}
+
+func TestCreateTripFromTrack_WithEnrichment(t *testing.T) {
+	var capturedBody string
+
+	srv := newTripServer(t, func(r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		capturedBody = string(bodyBytes)
+		r.Body = io.NopCloser(strings.NewReader(capturedBody))
+	})
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	enrichment := &TripEnrichment{
+		SectionName:  "Saalach [Lofer - Scheffsnoth]",
+		Grade:        "III-IV",
+		SpotGrades:   []string{"V", "VI"},
+		GaugeName:    "Lofer",
+		GaugeReading: "47 cm",
+		GaugeFlow:    "12.3 m\u00b3/s",
+		WaterLevel:   "Medium water",
+	}
+
+	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, enrichment)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if capturedBody == "" {
+		t.Fatal("no POST body was captured")
+	}
+
+	// Parse the submitted form to extract the comment field.
+	vals, err := url.ParseQuery(capturedBody)
+	if err != nil {
+		t.Fatalf("failed to parse form body: %v", err)
+	}
+	comment := vals.Get("comment")
+
+	// The comment should contain the enrichment block.
+	if !strings.Contains(comment, "---") {
+		t.Error("comment should contain enrichment separator '---'")
+	}
+	if !strings.Contains(comment, "Rivermap: Saalach [Lofer - Scheffsnoth] (III-IV)") {
+		t.Error("comment should contain rivermap section info")
+	}
+	if !strings.Contains(comment, "Gauge: Lofer") {
+		t.Error("comment should contain gauge name")
+	}
+	if !strings.Contains(comment, "47 cm") {
+		t.Error("comment should contain gauge reading")
+	}
+	if !strings.Contains(comment, "Medium water") {
+		t.Error("comment should contain water level")
+	}
+	if !strings.Contains(comment, "Spot grades: V, VI") {
+		t.Error("comment should contain spot grades")
+	}
+	if !strings.Contains(comment, "Data: rivermap.org (CC BY-SA 4.0)") {
+		t.Error("comment should contain attribution")
 	}
 }
 

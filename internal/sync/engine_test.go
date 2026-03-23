@@ -835,7 +835,7 @@ func (m *mockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return m.findTrackResult, m.findTrackErr
 }
 
-func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64) error {
+func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64, _ *efb.TripEnrichment) error {
 	m.createTripCalled = true
 	m.createTripTrackID = trackID
 	return m.createTripErr

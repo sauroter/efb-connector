@@ -370,7 +370,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
 			} else if trackID != "" {
-				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs); tripErr != nil {
+				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, nil); tripErr != nil {
 					log.Warn("failed to create trip from track", "error", tripErr)
 				} else {
 					log.Info("trip created from track", "track_id", trackID)
