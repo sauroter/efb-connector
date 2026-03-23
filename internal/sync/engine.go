@@ -17,6 +17,7 @@ import (
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
 	"efb-connector/internal/metrics"
+	"efb-connector/internal/rivermap"
 )
 
 // SyncEngine orchestrates the per-user sync flow.
@@ -28,6 +29,9 @@ type SyncEngine struct {
 
 	// tokenStoreBase is the base directory for per-user Garmin token stores.
 	tokenStoreBase string
+
+	// rivermap is the optional Rivermap client for trip enrichment. nil if not configured.
+	rivermap *rivermap.Client
 
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
 	sleepFunc func(min, max time.Duration)
@@ -60,6 +64,11 @@ func (s *SyncEngine) DisableSleep() {
 	s.sleepFunc = func(_, _ time.Duration) {}
 }
 
+// SetRivermapClient sets the optional Rivermap client used for trip enrichment.
+func (s *SyncEngine) SetRivermapClient(c *rivermap.Client) {
+	s.rivermap = c
+}
+
 // ErrInvalidDateRange is returned when the caller provides an invalid custom
 // date range (e.g. start after end, range too large).
 var ErrInvalidDateRange = errors.New("sync: invalid date range")
@@ -83,6 +92,8 @@ type activityToSync struct {
 	date         string
 	startTime    time.Time
 	durationSecs float64
+	startLat     float64
+	startLng     float64
 	isRetry      bool
 }
 
@@ -268,6 +279,8 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			date:         act.Date.Format("2006-01-02"),
 			startTime:    act.StartTime,
 			durationSecs: act.DurationSecs,
+			startLat:     act.StartLat,
+			startLng:     act.StartLng,
 			isRetry:      failedSet[act.ProviderID],
 		})
 		queued[act.ProviderID] = true
@@ -370,7 +383,12 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
 			} else if trackID != "" {
-				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, nil); tripErr != nil {
+				// Build enrichment from Rivermap if available.
+				var enrichment *efb.TripEnrichment
+				if s.rivermap != nil {
+					enrichment = s.buildEnrichment(ctx, act, log)
+				}
+				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment); tripErr != nil {
 					log.Warn("failed to create trip from track", "error", tripErr)
 				} else {
 					log.Info("trip created from track", "track_id", trackID)
@@ -408,6 +426,41 @@ func (s *SyncEngine) checkAndMarkPermanentFailure(userID int64, garminID string,
 	if err := s.db.MarkPermanentFailure(userID, garminID); err != nil {
 		log.Error("failed to mark permanent failure", "error", err)
 	}
+}
+
+// buildEnrichment queries the Rivermap client for section and gauge data
+// matching the activity's start coordinates and time. Returns nil if no
+// matching section is found or if the rivermap client is unavailable.
+func (s *SyncEngine) buildEnrichment(ctx context.Context, act activityToSync, log *slog.Logger) *efb.TripEnrichment {
+	section := s.rivermap.FindSection(act.startLat, act.startLng)
+	if section == nil {
+		log.Debug("no rivermap section found for activity", "lat", act.startLat, "lng", act.startLng)
+		return nil
+	}
+
+	enrichment := &efb.TripEnrichment{
+		SectionName: section.DisplayName(),
+		Grade:       section.Grade,
+		SpotGrades:  section.SpotGrades,
+	}
+
+	if section.Calibration != nil {
+		level, flow, err := s.rivermap.GetReadingsAt(ctx, section.Calibration.StationID, act.startTime)
+		if err != nil {
+			log.Warn("failed to fetch gauge readings", "station", section.Calibration.StationID, "error", err)
+		} else {
+			enrichment.GaugeName = section.Calibration.StationID
+			if level != nil {
+				enrichment.GaugeReading = fmt.Sprintf("%.0f %s", level.Value, level.Unit)
+				enrichment.WaterLevel = rivermap.ClassifyLevel(level.Value, section.Calibration)
+			}
+			if flow != nil {
+				enrichment.GaugeFlow = fmt.Sprintf("%.1f %s", flow.Value, flow.Unit)
+			}
+		}
+	}
+
+	return enrichment
 }
 
 // SyncAllUsers syncs all eligible users with staggered delays.

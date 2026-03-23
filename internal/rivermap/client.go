@@ -78,6 +78,20 @@ type Station struct {
 	LatLng [2]float64
 }
 
+// DisplayName produces a human-readable name for the section, e.g.
+// "Saalach [Lofer - Scheffsnoth]". Falls back to the river name alone
+// when section from/to are not available.
+func (s *Section) DisplayName() string {
+	river := s.River["de"]
+	if river == "" {
+		river = s.River["en"]
+	}
+	if s.SectionFrom != "" && s.SectionTo != "" {
+		return fmt.Sprintf("%s [%s - %s]", river, s.SectionFrom, s.SectionTo)
+	}
+	return river
+}
+
 // NewClient returns a new Rivermap API client. Pass DefaultBaseURL for
 // production use. The logger is used for structured logging of cache
 // refreshes and API calls.

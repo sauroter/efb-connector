@@ -26,6 +26,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/rivermap"
 	syncsvc "efb-connector/internal/sync"
 	"efb-connector/internal/web"
 )
@@ -113,7 +114,22 @@ func run(logger *slog.Logger) error {
 		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
 	}
 
+	// Optional: Rivermap enrichment
+	var rivermapClient *rivermap.Client
+	if rivermapKey := os.Getenv("RIVERMAP_API_KEY"); rivermapKey != "" {
+		rivermapClient = rivermap.NewClient(rivermapKey, rivermap.DefaultBaseURL, logger)
+		if err := rivermapClient.RefreshCache(context.Background()); err != nil {
+			logger.Warn("failed to load rivermap data (enrichment will be unavailable)", "error", err)
+			rivermapClient = nil
+		} else {
+			logger.Info("rivermap data loaded")
+		}
+	}
+
 	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, efbProvider, logger)
+	if rivermapClient != nil {
+		syncEngine.SetRivermapClient(rivermapClient)
+	}
 	if devMode {
 		syncEngine.DisableSleep()
 	}
