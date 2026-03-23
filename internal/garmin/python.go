@@ -42,12 +42,13 @@ type stdinCreds struct {
 // listActivityJSON mirrors the JSON objects emitted by `garmin_fetch.py list
 // --json`.
 type listActivityJSON struct {
-	ID       interface{} `json:"id"`       // Garmin returns a number; use interface{} for robustness
-	Name     string      `json:"name"`
-	Type     string      `json:"type"`
-	Date     string      `json:"date"`     // "YYYY-MM-DD"
-	Duration float64     `json:"duration"` // seconds
-	Distance float64     `json:"distance"` // metres
+	ID           interface{} `json:"id"`             // Garmin returns a number; use interface{} for robustness
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID
+	Date         string      `json:"date"`           // "YYYY-MM-DD"
+	Duration     float64     `json:"duration"`       // seconds
+	Distance     float64     `json:"distance"`       // metres
 }
 
 // ListActivities runs `python <script> list --days <N> --json`, writes the

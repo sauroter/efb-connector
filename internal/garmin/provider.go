@@ -47,8 +47,9 @@ type Activity struct {
 	// Name is the human-readable name of the activity.
 	Name string
 
-	// Type is the normalised activity type.  Expected values include:
-	// kayaking, sup, canoeing, rowing, paddling, rafting.
+	// Type is the Garmin activity type key (e.g. kayaking_v2, paddling_v2,
+	// rowing_v2).  Filtering is done by parentTypeId in the Python script,
+	// so any water_sports subtype (parentTypeId 228) may appear here.
 	Type string
 
 	// Date is the local start time of the activity.
