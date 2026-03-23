@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -119,7 +120,7 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 	)
 
 	srv := newSectionsServer(t, body)
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 
 	if err := c.RefreshCache(context.Background()); err != nil {
 		t.Fatalf("RefreshCache failed: %v", err)
@@ -192,7 +193,7 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFindSection_ProximityMatch(t *testing.T) {
-	c := NewClient("test-key", "http://unused", testLogger())
+	c := NewClient("test-key", "http://unused", "", testLogger())
 
 	// Pre-populate cache with two sections.
 	c.mu.Lock()
@@ -219,7 +220,7 @@ func TestFindSection_ProximityMatch(t *testing.T) {
 }
 
 func TestFindSection_TooFar(t *testing.T) {
-	c := NewClient("test-key", "http://unused", testLogger())
+	c := NewClient("test-key", "http://unused", "", testLogger())
 
 	// Pre-populate cache with one section in Austria.
 	c.mu.Lock()
@@ -239,7 +240,7 @@ func TestFindSection_TooFar(t *testing.T) {
 }
 
 func TestFindSection_EmptyCache(t *testing.T) {
-	c := NewClient("test-key", "http://unused", testLogger())
+	c := NewClient("test-key", "http://unused", "", testLogger())
 
 	found := c.FindSection(47.583, 12.703)
 	if found != nil {
@@ -272,7 +273,7 @@ func TestGetReadingsAt_FindsClosest(t *testing.T) {
 	})
 
 	srv := newReadingsServer(t, "station-1", readingsBody)
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 
 	level, flow, err := c.GetReadingsAt(context.Background(), "station-1", targetTime)
 	if err != nil {
@@ -315,7 +316,7 @@ func TestGetReadingsAt_NoReadings(t *testing.T) {
 	})
 
 	srv := newReadingsServer(t, "station-1", readingsBody)
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 
 	level, flow, err := c.GetReadingsAt(context.Background(), "station-1", time.Now())
 	if err != nil {
@@ -342,7 +343,7 @@ func TestGetReadingsAt_OnlyLevel(t *testing.T) {
 	})
 
 	srv := newReadingsServer(t, "station-1", readingsBody)
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 
 	level, flow, err := c.GetReadingsAt(context.Background(), "station-1", time.Unix(1711018800, 0))
 	if err != nil {
@@ -450,7 +451,7 @@ func TestRefreshCache_SendsAPIKey(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := NewClient("my-secret-key", srv.URL, testLogger())
+	c := NewClient("my-secret-key", srv.URL, "", testLogger())
 	if err := c.RefreshCache(context.Background()); err != nil {
 		t.Fatalf("RefreshCache failed: %v", err)
 	}
@@ -472,7 +473,7 @@ func TestRefreshCache_ServerError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 	err := c.RefreshCache(context.Background())
 	if err == nil {
 		t.Fatal("expected error for server 500, got nil")
@@ -487,9 +488,102 @@ func TestGetReadingsAt_ServerError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := NewClient("test-key", srv.URL, testLogger())
+	c := NewClient("test-key", srv.URL, "", testLogger())
 	_, _, err := c.GetReadingsAt(context.Background(), "station-1", time.Now())
 	if err == nil {
 		t.Fatal("expected error for server 500, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Disk cache tests
+// ---------------------------------------------------------------------------
+
+func TestRefreshCache_WritesDiskCache(t *testing.T) {
+	body := mockSectionsResponse(sectionJSON{
+		ID:          "sec-1",
+		River:       map[string]string{"de": "Saalach"},
+		Grade:       "III",
+		PutInLatLng: [2]float64{47582670, 12702775},
+	})
+	srv := newSectionsServer(t, body)
+	t.Cleanup(srv.Close)
+
+	cacheDir := t.TempDir()
+	c := NewClient("test-key", srv.URL, cacheDir, testLogger())
+
+	if err := c.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache failed: %v", err)
+	}
+
+	// Verify cache file was written.
+	cachePath := c.sectionsCacheFile()
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("cache file not found: %v", err)
+	}
+
+	if len(c.sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(c.sections))
+	}
+}
+
+func TestRefreshCache_LoadsFromDiskCache(t *testing.T) {
+	body := mockSectionsResponse(sectionJSON{
+		ID:          "sec-1",
+		River:       map[string]string{"de": "Saalach"},
+		Grade:       "III",
+		PutInLatLng: [2]float64{47582670, 12702775},
+	})
+
+	// Write a cache file manually.
+	cacheDir := t.TempDir()
+	os.WriteFile(cacheDir+"/sections.json", body, 0600)
+
+	// Create client pointing at a broken server — should not be called.
+	c := NewClient("test-key", "http://127.0.0.1:1", cacheDir, testLogger())
+
+	if err := c.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache from disk cache failed: %v", err)
+	}
+
+	if len(c.sections) != 1 {
+		t.Fatalf("expected 1 section from disk cache, got %d", len(c.sections))
+	}
+	if c.sections[0].Grade != "III" {
+		t.Errorf("expected grade III, got %q", c.sections[0].Grade)
+	}
+}
+
+func TestRefreshCache_ExpiredDiskCacheCallsAPI(t *testing.T) {
+	body := mockSectionsResponse(sectionJSON{
+		ID:          "sec-1",
+		River:       map[string]string{"de": "Saalach"},
+		Grade:       "IV",
+		PutInLatLng: [2]float64{47582670, 12702775},
+	})
+
+	// Write a cache file and backdate it beyond cacheMaxAge.
+	cacheDir := t.TempDir()
+	cachePath := cacheDir + "/sections.json"
+	os.WriteFile(cachePath, []byte(`{"sections":[]}`), 0600)
+	expired := time.Now().Add(-cacheMaxAge - time.Hour)
+	os.Chtimes(cachePath, expired, expired)
+
+	// The API server returns the real data.
+	srv := newSectionsServer(t, body)
+	t.Cleanup(srv.Close)
+
+	c := NewClient("test-key", srv.URL, cacheDir, testLogger())
+
+	if err := c.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache failed: %v", err)
+	}
+
+	// Should have fetched from API (1 section with grade IV, not 0 from expired cache).
+	if len(c.sections) != 1 {
+		t.Fatalf("expected 1 section from API, got %d", len(c.sections))
+	}
+	if c.sections[0].Grade != "IV" {
+		t.Errorf("expected grade IV from API, got %q", c.sections[0].Grade)
 	}
 }

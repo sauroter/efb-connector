@@ -50,3 +50,6 @@ devbox.lock
 
 # Python cache
 __pycache__/
+
+# Rivermap API cache
+rivermap_cache/

@@ -117,7 +117,12 @@ func run(logger *slog.Logger) error {
 	// Optional: Rivermap enrichment
 	var rivermapClient *rivermap.Client
 	if rivermapKey := os.Getenv("RIVERMAP_API_KEY"); rivermapKey != "" {
-		rivermapClient = rivermap.NewClient(rivermapKey, rivermap.DefaultBaseURL, logger)
+		// Use /data/rivermap_cache on Fly.io, local dir otherwise.
+		rivermapCacheDir := "rivermap_cache"
+		if info, err := os.Stat("/data"); err == nil && info.IsDir() {
+			rivermapCacheDir = "/data/rivermap_cache"
+		}
+		rivermapClient = rivermap.NewClient(rivermapKey, rivermap.DefaultBaseURL, rivermapCacheDir, logger)
 		if err := rivermapClient.RefreshCache(context.Background()); err != nil {
 			logger.Warn("failed to load rivermap data (enrichment will be unavailable)", "error", err)
 			rivermapClient = nil

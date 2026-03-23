@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,16 +26,22 @@ const DefaultBaseURL = "https://api.rivermap.org"
 // to be considered a match for a section's put-in point.
 const maxProximityKm = 2.0
 
+// cacheMaxAge is how long a disk cache file is considered fresh before
+// a refresh from the API is attempted. Well within the 2/hour rate limit.
+const cacheMaxAge = 24 * time.Hour
+
 // earthRadiusKm is the mean radius of the Earth in kilometres.
 const earthRadiusKm = 6371.0
 
 // Client is an HTTP client for the Rivermap API. It caches section data
-// in memory and provides GPS proximity matching and gauge reading retrieval.
+// on disk and in memory, and provides GPS proximity matching and gauge
+// reading retrieval.
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	baseURL    string
 	logger     *slog.Logger
+	cacheDir   string // directory for disk cache files (empty = no disk cache)
 
 	mu       sync.RWMutex
 	sections []Section
@@ -93,17 +101,21 @@ func (s *Section) DisplayName() string {
 }
 
 // NewClient returns a new Rivermap API client. Pass DefaultBaseURL for
-// production use. The logger is used for structured logging of cache
-// refreshes and API calls.
-func NewClient(apiKey, baseURL string, logger *slog.Logger) *Client {
+// production use. cacheDir specifies where to persist section data on
+// disk (e.g. "/data/rivermap_cache"); pass "" to disable disk caching.
+func NewClient(apiKey, baseURL, cacheDir string, logger *slog.Logger) *Client {
 	baseURL = strings.TrimRight(baseURL, "/")
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if cacheDir != "" {
+		os.MkdirAll(cacheDir, 0700)
+	}
 	return &Client{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		logger:  logger,
+		apiKey:   apiKey,
+		baseURL:  baseURL,
+		cacheDir: cacheDir,
+		logger:   logger,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -137,34 +149,113 @@ type sectionJSON struct {
 	} `json:"calibration"`
 }
 
-// RefreshCache fetches sections from the Rivermap API and stores them
-// in the client's in-memory cache. Coordinates are converted from
-// integer micro-degrees (value * 1e6) to float64 degrees.
+// RefreshCache loads section data, preferring a fresh disk cache over an
+// API call. The disk cache is used if it exists and is younger than
+// cacheMaxAge (24h). Otherwise the API is called and the result is written
+// to disk for subsequent restarts.
 func (c *Client) RefreshCache(ctx context.Context) error {
+	// 1. Try loading from disk cache.
+	if c.cacheDir != "" {
+		if sections, err := c.loadDiskCache(); err == nil {
+			c.mu.Lock()
+			c.sections = sections
+			c.cachedAt = time.Now()
+			c.mu.Unlock()
+			c.logger.Info("rivermap: loaded sections from disk cache", "count", len(sections))
+			return nil
+		}
+	}
+
+	// 2. Fetch from API.
+	body, err := c.fetchSectionsAPI(ctx)
+	if err != nil {
+		return err
+	}
+
+	sections, err := parseSections(body)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.sections = sections
+	c.cachedAt = time.Now()
+	c.mu.Unlock()
+
+	// 3. Write to disk cache for next restart.
+	if c.cacheDir != "" {
+		if err := c.writeDiskCache(body); err != nil {
+			c.logger.Warn("rivermap: failed to write disk cache", "error", err)
+		}
+	}
+
+	c.logger.Info("rivermap: refreshed section cache from API", "count", len(sections))
+	return nil
+}
+
+// sectionsCacheFile returns the path to the disk cache file.
+func (c *Client) sectionsCacheFile() string {
+	return filepath.Join(c.cacheDir, "sections.json")
+}
+
+// loadDiskCache reads and parses the cached sections file if it exists
+// and is younger than cacheMaxAge.
+func (c *Client) loadDiskCache() ([]Section, error) {
+	path := c.sectionsCacheFile()
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if time.Since(info.ModTime()) > cacheMaxAge {
+		return nil, fmt.Errorf("cache expired")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseSections(data)
+}
+
+// writeDiskCache writes the raw API response to disk for later use.
+func (c *Client) writeDiskCache(data []byte) error {
+	path := c.sectionsCacheFile()
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// fetchSectionsAPI makes the HTTP request to the Rivermap sections endpoint.
+func (c *Client) fetchSectionsAPI(ctx context.Context) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v2/sections", nil)
 	if err != nil {
-		return fmt.Errorf("rivermap: failed to build sections request: %w", err)
+		return nil, fmt.Errorf("rivermap: failed to build sections request: %w", err)
 	}
 	req.Header.Set("X-Key", c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("rivermap: sections request failed: %w", err)
+		return nil, fmt.Errorf("rivermap: sections request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("rivermap: failed to read sections response: %w", err)
+		return nil, fmt.Errorf("rivermap: failed to read sections response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("rivermap: sections returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("rivermap: sections returned status %d", resp.StatusCode)
 	}
+	return body, nil
+}
 
+// parseSections parses the raw JSON from the sections API into Section structs.
+func parseSections(body []byte) ([]Section, error) {
 	var raw sectionsResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return fmt.Errorf("rivermap: failed to parse sections JSON: %w", err)
+		return nil, fmt.Errorf("rivermap: failed to parse sections JSON: %w", err)
 	}
 
 	sections := make([]Section, 0, len(raw.Sections))
@@ -205,14 +296,7 @@ func (c *Client) RefreshCache(ctx context.Context) error {
 
 		sections = append(sections, sec)
 	}
-
-	c.mu.Lock()
-	c.sections = sections
-	c.cachedAt = time.Now()
-	c.mu.Unlock()
-
-	c.logger.Info("rivermap: refreshed section cache", "count", len(sections))
-	return nil
+	return sections, nil
 }
 
 // FindSection returns the cached section whose put-in point is closest

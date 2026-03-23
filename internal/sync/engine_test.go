@@ -1085,7 +1085,7 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 	t.Cleanup(rivermapSrv.Close)
 
 	// Create the Rivermap client and load its cache.
-	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, slog.Default())
+	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, "", slog.Default())
 	if err := rmClient.RefreshCache(context.Background()); err != nil {
 		t.Fatalf("RefreshCache: %v", err)
 	}
@@ -1205,7 +1205,7 @@ func TestSync_RivermapEnrichment_NoSectionMatch(t *testing.T) {
 	rivermapSrv := httptest.NewServer(mux)
 	t.Cleanup(rivermapSrv.Close)
 
-	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, slog.Default())
+	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, "", slog.Default())
 	if err := rmClient.RefreshCache(context.Background()); err != nil {
 		t.Fatalf("RefreshCache: %v", err)
 	}
