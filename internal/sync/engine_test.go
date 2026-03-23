@@ -1064,16 +1064,14 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 			V  float64 `json:"v"`
 		}
 		type readingsResp struct {
-			Readings map[string]map[string][]readingJSON `json:"readings"`
+			Readings map[string][]readingJSON `json:"readings"`
 		}
 		// Use unix timestamp 0 + offset; the actual value doesn't matter much
 		// as long as it's within the query window.
 		resp := readingsResp{
-			Readings: map[string]map[string][]readingJSON{
-				"station-1": {
-					"cm":  {{Ts: time.Now().Unix(), V: 47}},
-					"m3s": {{Ts: time.Now().Unix(), V: 12.3}},
-				},
+			Readings: map[string][]readingJSON{
+				"cm":  {{Ts: time.Now().Unix(), V: 47}},
+				"m3s": {{Ts: time.Now().Unix(), V: 12.3}},
 			},
 		}
 		body, _ := json.Marshal(resp)

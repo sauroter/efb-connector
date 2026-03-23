@@ -452,10 +452,20 @@ func (s *SyncEngine) buildEnrichment(ctx context.Context, act activityToSync, lo
 			enrichment.GaugeName = section.Calibration.StationID
 			if level != nil {
 				enrichment.GaugeReading = fmt.Sprintf("%.0f %s", level.Value, level.Unit)
-				enrichment.WaterLevel = rivermap.ClassifyLevel(level.Value, section.Calibration)
 			}
 			if flow != nil {
 				enrichment.GaugeFlow = fmt.Sprintf("%.1f %s", flow.Value, flow.Unit)
+			}
+			// Classify water level using the reading that matches the calibration unit.
+			switch section.Calibration.Unit {
+			case "m3s", "cfs", "lts":
+				if flow != nil {
+					enrichment.WaterLevel = rivermap.ClassifyLevel(flow.Value, section.Calibration)
+				}
+			default: // "cm", "m", "ft" — level-based
+				if level != nil {
+					enrichment.WaterLevel = rivermap.ClassifyLevel(level.Value, section.Calibration)
+				}
 			}
 		}
 	}

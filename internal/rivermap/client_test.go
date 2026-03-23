@@ -68,6 +68,15 @@ func testLogger() *slog.Logger {
 	return slog.Default()
 }
 
+// rawJSON is a helper that marshals v to json.RawMessage for test data.
+func rawJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
 // ---------------------------------------------------------------------------
 // RefreshCache tests
 // ---------------------------------------------------------------------------
@@ -77,12 +86,8 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 		sectionJSON{
 			ID:    "sec-1",
 			River: map[string]string{"de": "Saalach", "en": "Saalach"},
-			SectionName: map[string]struct {
-				From          string `json:"from"`
-				To            string `json:"to"`
-				FormattedName string `json:"formattedName"`
-			}{
-				"de": {From: "Lofer", To: "Scheffsnoth", FormattedName: "[Lofer - Scheffsnoth]"},
+			SectionName: map[string]json.RawMessage{
+				"de": rawJSON(sectionNameDetail{From: "Lofer", To: "Scheffsnoth", FormattedName: "[Lofer - Scheffsnoth]"}),
 			},
 			Grade:         "III-IV",
 			SpotGrades:    []string{"V"},
@@ -105,12 +110,8 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 		sectionJSON{
 			ID:    "sec-2",
 			River: map[string]string{"de": "Isar", "en": "Isar"},
-			SectionName: map[string]struct {
-				From          string `json:"from"`
-				To            string `json:"to"`
-				FormattedName string `json:"formattedName"`
-			}{
-				"en": {From: "Munich", To: "Freising"},
+			SectionName: map[string]json.RawMessage{
+				"en": rawJSON(sectionNameDetail{From: "Munich", To: "Freising"}),
 			},
 			Grade:         "II",
 			PutInLatLng:   [2]float64{48137154, 11576124},
@@ -257,17 +258,15 @@ func TestGetReadingsAt_FindsClosest(t *testing.T) {
 	targetTime := time.Unix(1711018800, 0).UTC()
 
 	readingsBody, _ := json.Marshal(readingsResponse{
-		Readings: map[string]map[string][]readingJSON{
-			"station-1": {
-				"cm": {
-					{Ts: 1711018800, V: 47},  // exactly at target
-					{Ts: 1711020600, V: 48},   // 30 min later
-					{Ts: 1711015200, V: 45},   // 1 hour before
-				},
-				"m3s": {
-					{Ts: 1711020600, V: 12.3}, // 30 min later
-					{Ts: 1711015200, V: 11.0}, // 1 hour before
-				},
+		Readings: map[string][]readingJSON{
+			"cm": {
+				{Ts: 1711018800, V: 47},  // exactly at target
+				{Ts: 1711020600, V: 48},  // 30 min later
+				{Ts: 1711015200, V: 45},  // 1 hour before
+			},
+			"m3s": {
+				{Ts: 1711020600, V: 12.3}, // 30 min later
+				{Ts: 1711015200, V: 11.0}, // 1 hour before
 			},
 		},
 	})
@@ -312,7 +311,7 @@ func TestGetReadingsAt_FindsClosest(t *testing.T) {
 func TestGetReadingsAt_NoReadings(t *testing.T) {
 	// Empty readings for the station.
 	readingsBody, _ := json.Marshal(readingsResponse{
-		Readings: map[string]map[string][]readingJSON{},
+		Readings: map[string][]readingJSON{},
 	})
 
 	srv := newReadingsServer(t, "station-1", readingsBody)
@@ -333,11 +332,9 @@ func TestGetReadingsAt_NoReadings(t *testing.T) {
 func TestGetReadingsAt_OnlyLevel(t *testing.T) {
 	// Station has cm readings but no m3s.
 	readingsBody, _ := json.Marshal(readingsResponse{
-		Readings: map[string]map[string][]readingJSON{
-			"station-1": {
-				"cm": {
-					{Ts: 1711018800, V: 55},
-				},
+		Readings: map[string][]readingJSON{
+			"cm": {
+				{Ts: 1711018800, V: 55},
 			},
 		},
 	})

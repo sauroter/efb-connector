@@ -127,19 +127,22 @@ type sectionsResponse struct {
 	Sections []sectionJSON `json:"sections"`
 }
 
+// sectionNameDetail holds the structured form of a section name.
+type sectionNameDetail struct {
+	From          string `json:"from"`
+	To            string `json:"to"`
+	FormattedName string `json:"formattedName"`
+}
+
 // sectionJSON mirrors a single section object in the API response.
 type sectionJSON struct {
-	ID            string            `json:"id"`
-	River         map[string]string `json:"river"`
-	SectionName   map[string]struct {
-		From          string `json:"from"`
-		To            string `json:"to"`
-		FormattedName string `json:"formattedName"`
-	} `json:"sectionName"`
-	Grade         string     `json:"grade"`
-	SpotGrades    []string   `json:"spotGrades"`
-	PutInLatLng   [2]float64 `json:"putInLatLng"`
-	TakeOutLatLng [2]float64 `json:"takeOutLatLng"`
+	ID            string                       `json:"id"`
+	River         map[string]string            `json:"river"`
+	SectionName   map[string]json.RawMessage   `json:"sectionName"` // values are either string or sectionNameDetail
+	Grade         string                       `json:"grade"`
+	SpotGrades    []string                     `json:"spotGrades"`
+	PutInLatLng   [2]float64                   `json:"putInLatLng"`
+	TakeOutLatLng [2]float64                   `json:"takeOutLatLng"`
 	Calibration   *struct {
 		StationID string  `json:"stationId"`
 		Unit      string  `json:"unit"`
@@ -276,12 +279,25 @@ func parseSections(body []byte) ([]Section, error) {
 		}
 
 		// Extract display names from sectionName, preferring "de" then "en".
-		if sn, ok := s.SectionName["de"]; ok {
-			sec.SectionFrom = sn.From
-			sec.SectionTo = sn.To
-		} else if sn, ok := s.SectionName["en"]; ok {
-			sec.SectionFrom = sn.From
-			sec.SectionTo = sn.To
+		// Values can be either a plain string or a structured object with from/to.
+		for _, lang := range []string{"de", "en"} {
+			raw, ok := s.SectionName[lang]
+			if !ok {
+				continue
+			}
+			// Try structured form first.
+			var detail sectionNameDetail
+			if err := json.Unmarshal(raw, &detail); err == nil && detail.From != "" {
+				sec.SectionFrom = detail.From
+				sec.SectionTo = detail.To
+				break
+			}
+			// Fall back to plain string (used as the full name).
+			var plain string
+			if err := json.Unmarshal(raw, &plain); err == nil && plain != "" {
+				sec.SectionFrom = plain
+				break
+			}
 		}
 
 		if s.Calibration != nil {
@@ -323,8 +339,10 @@ func (c *Client) FindSection(lat, lng float64) *Section {
 }
 
 // readingsResponse is the top-level JSON envelope from GET /v2/stations/{id}/readings.
+// The single-station endpoint returns readings directly keyed by unit (e.g. "cm", "m3s"),
+// not nested under the station ID.
 type readingsResponse struct {
-	Readings map[string]map[string][]readingJSON `json:"readings"`
+	Readings map[string][]readingJSON `json:"readings"`
 }
 
 // readingJSON mirrors a single reading object in the API response.
@@ -372,15 +390,14 @@ func (c *Client) GetReadingsAt(ctx context.Context, stationID string, at time.Ti
 		return nil, nil, fmt.Errorf("rivermap: failed to parse readings JSON: %w", err)
 	}
 
-	stationReadings, ok := raw.Readings[stationID]
-	if !ok {
+	if len(raw.Readings) == 0 {
 		return nil, nil, nil
 	}
 
 	atUnix := at.Unix()
 
-	level = findClosestReading(stationReadings["cm"], atUnix, "cm")
-	flow = findClosestReading(stationReadings["m3s"], atUnix, "m3s")
+	level = findClosestReading(raw.Readings["cm"], atUnix, "cm")
+	flow = findClosestReading(raw.Readings["m3s"], atUnix, "m3s")
 
 	return level, flow, nil
 }
