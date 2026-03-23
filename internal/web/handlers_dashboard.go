@@ -471,6 +471,8 @@ func (s *Server) handleLanguageSave(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.UpdatePreferredLang(userID, lang); err != nil {
 		s.logger.Error("failed to update preferred_lang", "user_id", userID, "error", err)
 		setFlash(w, "flash.save_setting_failed")
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
 	}
 
 	// Also set cookie so it takes effect immediately on redirect.

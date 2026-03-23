@@ -234,6 +234,9 @@ func (s *Server) garminTokenStorePath(userID int64) string {
 func parseTemplates(dir string, version string) (*template.Template, error) {
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"version": func() string { return version },
+		"tf": func(t func(string) string, key string, args ...any) string {
+			return fmt.Sprintf(t(key), args...)
+		},
 		"formatTime": func(lang string, t time.Time) string {
 			if lang == "de" {
 				return t.Format("02.01.2006 15:04 UTC")

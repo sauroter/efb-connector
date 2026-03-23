@@ -9,7 +9,7 @@
   <p>
     {{if eq .Status "running"}}
     <span class="spinner"></span>
-    Syncing&hellip;
+    {{call .T "sync.syncing"}}
     {{else}}
     {{call .T "sync.last_sync"}}
     <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{end}}">

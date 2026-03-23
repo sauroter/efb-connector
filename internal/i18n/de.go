@@ -13,7 +13,6 @@ var De = map[string]string{
 	// ── Footer ──
 	"footer.impressum":    "Impressum",
 	"footer.privacy":      "Datenschutz",
-	"footer.privacy_de":   "Datenschutz",
 
 	// ── Landing page ──
 	"landing.title":             "EFB Connector — Garmin zu Kanu-EFB synchronisieren",
@@ -99,6 +98,7 @@ var De = map[string]string{
 	"sync.skipped":        "Übersprungen:",
 	"sync.failed":         "Fehlgeschlagen:",
 	"sync.error":          "Fehler:",
+	"sync.syncing":        "Synchronisiere\u2026",
 	"sync.no_runs":        "Noch keine Synchronisierungen.",
 	"sync.now":            "Jetzt synchronisieren",
 	"sync.daily_info":     "Synchronisiert die letzten %d Tage an Aktivitäten. Nächste automatische Synchronisierung: ~04:00 UTC täglich.",
@@ -210,7 +210,4 @@ var De = map[string]string{
 	"flash.date_range_exceeded":     "Der Zeitraum darf 365 Tage nicht überschreiten.",
 	"flash.sync_started":            "Synchronisierung gestartet. Dies kann einige Minuten dauern.",
 
-	// ── Email ──
-	"email.magic_link_subject": "Dein EFB Connector Login-Link",
-	"email.magic_link_body":    "Klicke auf den folgenden Link, um dich bei EFB Connector anzumelden. Der Link ist 15 Minuten gültig.\n\n%s\n\nWenn du dies nicht angefordert hast, kannst du diese E-Mail ignorieren.",
 }

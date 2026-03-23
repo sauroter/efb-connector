@@ -53,17 +53,17 @@ func detect(r *http.Request, provider UserLangProvider) Lang {
 }
 
 // acceptsGerman checks if the Accept-Language header prefers German.
-// Simple heuristic: returns true if "de" appears before "en" or if "de" is
-// present and "en" is not.
+// Parses comma-separated language tags and checks if "de" appears before "en".
 func acceptsGerman(header string) bool {
-	header = strings.ToLower(header)
-	deIdx := strings.Index(header, "de")
-	if deIdx < 0 {
-		return false
+	for _, part := range strings.Split(strings.ToLower(header), ",") {
+		tag := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		// Match exact tag or prefix (e.g. "de", "de-DE", "de-AT").
+		if tag == "de" || strings.HasPrefix(tag, "de-") {
+			return true
+		}
+		if tag == "en" || strings.HasPrefix(tag, "en-") {
+			return false
+		}
 	}
-	enIdx := strings.Index(header, "en")
-	if enIdx < 0 {
-		return true // de present, en not
-	}
-	return deIdx < enIdx
+	return false
 }

@@ -151,7 +151,7 @@
           {{call .T "sync.now"}}
         </button>
       </form>
-      <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
+      <p><small style="color: var(--pico-muted-color);">{{tf .T "sync.daily_info" .SyncDays}}</small></p>
 
       <details style="margin-top: 1rem;">
         <summary>{{call .T "sync.custom_range"}}</summary>

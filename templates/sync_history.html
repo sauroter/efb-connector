@@ -22,7 +22,7 @@
 
     <hgroup>
       <h1>{{call .T "history.heading"}}</h1>
-      <p>Last {{if .Runs}}{{len .Runs}}{{else}}0{{end}} sync runs.</p>
+      <p>{{tf .T "history.count" (len .Runs)}}</p>
     </hgroup>
 
     {{if .Runs}}
