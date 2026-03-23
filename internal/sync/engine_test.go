@@ -245,11 +245,13 @@ func setupUser(t *testing.T, db *database.DB) *database.User {
 func makeActivities(n int) []garmin.Activity {
 	acts := make([]garmin.Activity, n)
 	for i := range n {
+		startTime := time.Now().Add(-time.Duration(i) * time.Hour)
 		acts[i] = garmin.Activity{
 			ProviderID:   fmt.Sprintf("act-%d", i+1),
 			Name:         fmt.Sprintf("Paddling Session %d", i+1),
 			Type:         "kayaking",
-			Date:         time.Now().Add(-time.Duration(i) * time.Hour),
+			Date:         startTime,
+			StartTime:    startTime,
 			DurationSecs: 3600,
 			DistanceM:    5000,
 		}
@@ -791,6 +793,185 @@ func TestSyncUserWithOptions_RangeTooLarge(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidDateRange) {
 		t.Errorf("error = %v, want ErrInvalidDateRange", err)
+	}
+}
+
+// ──────────────────────────────────────────────
+// Mock EFB provider for trip-creation tests
+// ──────────────────────────────────────────────
+
+// mockEFBProvider implements efb.EFBProvider with controllable behaviour.
+type mockEFBProvider struct {
+	loginErr          error
+	uploadErr         error
+	findTrackResult   string
+	findTrackErr      error
+	createTripErr     error
+
+	// Call tracking.
+	findTrackCalled   bool
+	findTrackFilename string
+	createTripCalled  bool
+	createTripTrackID string
+	uploadCount       int
+}
+
+func (m *mockEFBProvider) Login(_ context.Context, _, _ string) error {
+	return m.loginErr
+}
+
+func (m *mockEFBProvider) Upload(_ context.Context, _ []byte, _ string) error {
+	m.uploadCount++
+	return m.uploadErr
+}
+
+func (m *mockEFBProvider) ValidateCredentials(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename string) (string, error) {
+	m.findTrackCalled = true
+	m.findTrackFilename = gpxFilename
+	return m.findTrackResult, m.findTrackErr
+}
+
+func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64) error {
+	m.createTripCalled = true
+	m.createTripTrackID = trackID
+	return m.createTripErr
+}
+
+// newEngineWithProvider creates a SyncEngine with a custom EFB provider and noSleep.
+func newEngineWithProvider(db *database.DB, gp garmin.GarminProvider, ep efb.EFBProvider) *SyncEngine {
+	e := NewSyncEngine(db, gp, ep, discardLogger())
+	e.sleepFunc = noSleep
+	return e
+}
+
+// ──────────────────────────────────────────────
+// Auto-create trip tests
+// ──────────────────────────────────────────────
+
+func TestSync_AutoCreateTrips_Enabled(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+
+	// Enable auto-create trips for this user.
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-123",
+	}
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
+	}
+
+	// Verify FindUnassociatedTrack was called with the correct filename.
+	if !mockEFB.findTrackCalled {
+		t.Error("expected FindUnassociatedTrack to be called")
+	}
+	expectedFilename := "garmin_act-1.gpx"
+	if mockEFB.findTrackFilename != expectedFilename {
+		t.Errorf("FindUnassociatedTrack filename = %q, want %q", mockEFB.findTrackFilename, expectedFilename)
+	}
+
+	// Verify CreateTripFromTrack was called with the correct track ID.
+	if !mockEFB.createTripCalled {
+		t.Error("expected CreateTripFromTrack to be called")
+	}
+	if mockEFB.createTripTrackID != "track-123" {
+		t.Errorf("CreateTripFromTrack trackID = %q, want %q", mockEFB.createTripTrackID, "track-123")
+	}
+}
+
+func TestSync_AutoCreateTrips_Disabled(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	// AutoCreateTrips is false by default — no need to set it.
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-123",
+	}
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
+	}
+
+	// Verify FindUnassociatedTrack was NOT called.
+	if mockEFB.findTrackCalled {
+		t.Error("expected FindUnassociatedTrack NOT to be called when AutoCreateTrips is disabled")
+	}
+	if mockEFB.createTripCalled {
+		t.Error("expected CreateTripFromTrack NOT to be called when AutoCreateTrips is disabled")
+	}
+}
+
+func TestSync_TripCreationFailure_DoesNotFailSync(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+
+	// Enable auto-create trips.
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-456",
+		createTripErr:   fmt.Errorf("efb: trip form submission failed"),
+	}
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v (trip creation failure should not fail sync)", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+
+	// Both activities should be reported as successfully synced (uploaded),
+	// even though trip creation failed.
+	if run.Status != "completed" {
+		t.Errorf("status = %q, want completed", run.Status)
+	}
+	if run.ActivitiesSynced != 2 {
+		t.Errorf("synced = %d, want 2", run.ActivitiesSynced)
+	}
+	if run.ActivitiesFailed != 0 {
+		t.Errorf("failed = %d, want 0", run.ActivitiesFailed)
+	}
+
+	// Verify trip creation was attempted.
+	if !mockEFB.createTripCalled {
+		t.Error("expected CreateTripFromTrack to be called")
 	}
 }
 

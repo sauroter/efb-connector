@@ -63,6 +63,19 @@ func (d *DB) GetUserByID(id int64) (*User, error) {
 	return u, err
 }
 
+// UpdateAutoCreateTrips sets the auto_create_trips flag for the given user.
+func (d *DB) UpdateAutoCreateTrips(userID int64, enabled bool) error {
+	val := 0
+	if enabled {
+		val = 1
+	}
+	_, err := d.db.Exec(`UPDATE users SET auto_create_trips = ? WHERE id = ?`, val, userID)
+	if err != nil {
+		return fmt.Errorf("database: update auto_create_trips for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // DeleteUser removes the user and all cascaded rows (credentials, activities,
 // sessions, sync_runs).
 func (d *DB) DeleteUser(id int64) error {

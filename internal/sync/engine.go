@@ -77,11 +77,13 @@ type SyncOptions struct {
 // activityToSync holds either a new activity from Garmin or a previously failed
 // activity being retried.
 type activityToSync struct {
-	garminID string
-	name     string
-	actType  string
-	date     string
-	isRetry  bool
+	garminID     string
+	name         string
+	actType      string
+	date         string
+	startTime    time.Time
+	durationSecs float64
+	isRetry      bool
 }
 
 // SyncUser runs a full sync for one user using the default time window.
@@ -96,8 +98,17 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trigger string, opts SyncOptions) (int64, error) {
 	log := s.logger.With("user_id", userID, "trigger", trigger)
 
+	// Load the user once, used for both time window resolution and feature flags.
+	user, err := s.db.GetUserByID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("sync: get user: %w", err)
+	}
+	if user == nil {
+		return 0, fmt.Errorf("sync: user %d not found", userID)
+	}
+
 	// Resolve time window.
-	start, end, err := s.resolveTimeWindow(userID, opts)
+	start, end, err := s.resolveTimeWindowFromUser(user, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -113,7 +124,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log, start, end)
+	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -149,9 +160,10 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	return runID, syncErr
 }
 
-// resolveTimeWindow returns the start/end for a sync run. Custom ranges are
-// validated; zero-valued opts fall back to the user's SyncDays default.
-func (s *SyncEngine) resolveTimeWindow(userID int64, opts SyncOptions) (time.Time, time.Time, error) {
+// resolveTimeWindowFromUser returns the start/end for a sync run given an
+// already-loaded user. Custom ranges are validated; zero-valued opts fall back
+// to the user's SyncDays default.
+func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOptions) (time.Time, time.Time, error) {
 	if !opts.Start.IsZero() && !opts.End.IsZero() {
 		if !opts.Start.Before(opts.End) {
 			return time.Time{}, time.Time{}, fmt.Errorf("%w: start must be before end", ErrInvalidDateRange)
@@ -167,20 +179,13 @@ func (s *SyncEngine) resolveTimeWindow(userID int64, opts SyncOptions) (time.Tim
 		return opts.Start, end, nil
 	}
 
-	user, err := s.db.GetUserByID(userID)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("sync: get user: %w", err)
-	}
-	if user == nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("sync: user %d not found", userID)
-	}
 	end := time.Now()
 	start := end.AddDate(0, 0, -user.SyncDays)
 	return start, end, nil
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time) (found, synced, skipped, failed int, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips bool) (found, synced, skipped, failed int, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -256,11 +261,13 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 
 		toSync = append(toSync, activityToSync{
-			garminID: act.ProviderID,
-			name:     act.Name,
-			actType:  act.Type,
-			date:     act.Date.Format("2006-01-02"),
-			isRetry:  failedSet[act.ProviderID],
+			garminID:     act.ProviderID,
+			name:         act.Name,
+			actType:      act.Type,
+			date:         act.Date.Format("2006-01-02"),
+			startTime:    act.StartTime,
+			durationSecs: act.DurationSecs,
+			isRetry:      failedSet[act.ProviderID],
 		})
 		queued[act.ProviderID] = true
 	}
@@ -354,6 +361,21 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		log.Info("activity uploaded successfully")
 		_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "success", "")
 		synced++
+
+		// 7e: Create trip from the uploaded track (if enabled).
+		// Trip creation failure is non-fatal — log and continue.
+		if autoCreateTrips {
+			trackID, findErr := s.efb.FindUnassociatedTrack(ctx, filename)
+			if findErr != nil {
+				log.Warn("failed to find track for trip creation", "error", findErr)
+			} else if trackID != "" {
+				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs); tripErr != nil {
+					log.Warn("failed to create trip from track", "error", tripErr)
+				} else {
+					log.Info("trip created from track", "track_id", trackID)
+				}
+			}
+		}
 
 		// 7f. Sleep between uploads (be gentle with EFB).
 		if i < len(toSync)-1 {
