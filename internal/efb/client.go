@@ -9,7 +9,6 @@ import (
 	"fmt"
 	gohtml "html"
 	"io"
-	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -28,16 +27,16 @@ const DefaultBaseURL = "https://efb.kanu-efb.de"
 // parseFormFields. Defined at package level to avoid recompilation on each
 // call (and within loops).
 var (
-	trackIDRe        = regexp.MustCompile(`name="track_id:(\d+)"`)
-	editRe           = regexp.MustCompile(`name="edit:(\d+)"`)
+	trackIDRe        = regexp.MustCompile(`name=['"]track_id:(\d+)['"]`)
+	editRe           = regexp.MustCompile(`name=['"]edit:(\d+)['"]`)
 	inputRe          = regexp.MustCompile(`<input\b[^>]*>`)
-	nameRe           = regexp.MustCompile(`name="([^"]*)"`)
-	valueRe          = regexp.MustCompile(`value="([^"]*)"`)
-	typeRe           = regexp.MustCompile(`type="([^"]*)"`)
-	selectRe         = regexp.MustCompile(`(?s)<select\b[^>]*name="([^"]*)"[^>]*>(.*?)</select>`)
+	nameRe           = regexp.MustCompile(`name=['"]([^'"]*?)['"]`)
+	valueRe          = regexp.MustCompile(`value=['"]([^'"]*?)['"]`)
+	typeRe           = regexp.MustCompile(`type=['"]([^'"]*?)['"]`)
+	selectRe         = regexp.MustCompile(`(?s)<select\b[^>]*name=['"]([^'"]*?)['"][^>]*>(.*?)</select>`)
 	selectedOptionRe = regexp.MustCompile(`<option\b[^>]*\bselected\b[^>]*>`)
-	firstOptionRe    = regexp.MustCompile(`<option\b[^>]*value="([^"]*)"`)
-	textareaRe       = regexp.MustCompile(`(?s)<textarea\b[^>]*name="([^"]*)"[^>]*>(.*?)</textarea>`)
+	firstOptionRe    = regexp.MustCompile(`<option\b[^>]*value=['"]([^'"]*?)['"]`)
+	textareaRe       = regexp.MustCompile(`(?s)<textarea\b[^>]*name=['"]([^'"]*?)['"][^>]*>(.*?)</textarea>`)
 )
 
 const (
@@ -260,35 +259,7 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 		return "", fmt.Errorf("efb: session expired, got login page instead of tracks")
 	}
 
-	htmlStr := string(body)
-
-	// Debug: dump the row chunk for the matching filename.
-	result := parseUnassociatedTrack(htmlStr, gpxFilename)
-	if result == "" && strings.Contains(htmlStr, gpxFilename) {
-		// Filename is in the page but parser returned empty — extract the row for debugging.
-		const rowDelimiter = `<div style="overflow:auto`
-		pos := strings.Index(htmlStr, gpxFilename)
-		start := strings.LastIndex(htmlStr[:pos], rowDelimiter)
-		if start == -1 {
-			start = 0
-		}
-		end := strings.Index(htmlStr[pos:], rowDelimiter)
-		if end == -1 {
-			end = len(htmlStr) - pos
-		}
-		chunk := htmlStr[start : pos+end]
-		if len(chunk) > 500 {
-			chunk = chunk[:500]
-		}
-		slog.Warn("efb: filename found but track not parsed",
-			"filename", gpxFilename,
-			"hasTrackID", strings.Contains(chunk, "track_id:"),
-			"hasEdit", strings.Contains(chunk, "edit:"),
-			"chunkLen", len(chunk),
-			"chunk", chunk)
-	}
-
-	return result, nil
+	return parseUnassociatedTrack(string(body), gpxFilename), nil
 }
 
 // parseUnassociatedTrack scans the tracks page HTML for a track row containing

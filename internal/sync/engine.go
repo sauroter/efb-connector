@@ -379,9 +379,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		// 7e: Create trip from the uploaded track (if enabled).
 		// Trip creation failure is non-fatal — log and continue.
 		if autoCreateTrips && !act.startTime.IsZero() {
-			log.Info("looking for unassociated track", "filename", filename)
 			trackID, findErr := s.efb.FindUnassociatedTrack(ctx, filename)
-			log.Info("track lookup result", "trackID", trackID, "error", findErr)
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
 			} else if trackID != "" {
