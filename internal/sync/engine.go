@@ -94,6 +94,8 @@ type activityToSync struct {
 	durationSecs float64
 	startLat     float64
 	startLng     float64
+	endLat       float64
+	endLng       float64
 	isRetry      bool
 }
 
@@ -281,6 +283,8 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			durationSecs: act.DurationSecs,
 			startLat:     act.StartLat,
 			startLng:     act.StartLng,
+			endLat:       act.EndLat,
+			endLng:       act.EndLng,
 			isRetry:      failedSet[act.ProviderID],
 		})
 		queued[act.ProviderID] = true
@@ -429,45 +433,68 @@ func (s *SyncEngine) checkAndMarkPermanentFailure(userID int64, garminID string,
 }
 
 // buildEnrichment queries the Rivermap client for section and gauge data
-// matching the activity's start coordinates and time. Returns nil if no
+// matching the activity's start/end coordinates and time. Returns nil if no
 // matching section is found or if the rivermap client is unavailable.
 func (s *SyncEngine) buildEnrichment(ctx context.Context, act activityToSync, log *slog.Logger) *efb.TripEnrichment {
-	section := s.rivermap.FindSection(act.startLat, act.startLng)
-	if section == nil {
+	sections := s.rivermap.FindSections(act.startLat, act.startLng, act.endLat, act.endLng)
+	if len(sections) == 0 {
 		log.Debug("no rivermap section found for activity", "lat", act.startLat, "lng", act.startLng)
 		return nil
 	}
 
-	enrichment := &efb.TripEnrichment{
-		SectionName: section.DisplayName(),
-		Grade:       section.Grade,
-		SpotGrades:  section.SpotGrades,
+	// Fetch gauge readings per unique station (deduplicate).
+	type gaugeData struct {
+		name  string
+		level *rivermap.Reading
+		flow  *rivermap.Reading
 	}
+	gaugeCache := map[string]*gaugeData{}
 
-	if section.Calibration != nil {
-		level, flow, err := s.rivermap.GetReadingsAt(ctx, section.Calibration.StationID, act.startTime)
-		if err != nil {
-			log.Warn("failed to fetch gauge readings", "station", section.Calibration.StationID, "error", err)
-		} else {
-			enrichment.GaugeName = s.rivermap.StationName(section.Calibration.StationID)
-			if level != nil {
-				enrichment.GaugeReading = fmt.Sprintf("%.0f %s", level.Value, level.Unit)
+	enrichment := &efb.TripEnrichment{}
+	for _, section := range sections {
+		se := efb.SectionEnrichment{
+			SectionName: section.DisplayName(),
+			Grade:       section.Grade,
+			SpotGrades:  section.SpotGrades,
+		}
+
+		if section.Calibration != nil {
+			stationID := section.Calibration.StationID
+			if _, ok := gaugeCache[stationID]; !ok {
+				level, flow, err := s.rivermap.GetReadingsAt(ctx, stationID, act.startTime)
+				if err != nil {
+					log.Warn("failed to fetch gauge readings", "station", stationID, "error", err)
+					gaugeCache[stationID] = &gaugeData{name: s.rivermap.StationName(stationID)}
+				} else {
+					gaugeCache[stationID] = &gaugeData{
+						name:  s.rivermap.StationName(stationID),
+						level: level,
+						flow:  flow,
+					}
+				}
 			}
-			if flow != nil {
-				enrichment.GaugeFlow = fmt.Sprintf("%.1f %s", flow.Value, flow.Unit)
+
+			gd := gaugeCache[stationID]
+			se.GaugeName = gd.name
+			if gd.level != nil {
+				se.GaugeReading = fmt.Sprintf("%.0f %s", gd.level.Value, gd.level.Unit)
 			}
-			// Classify water level using the reading that matches the calibration unit.
+			if gd.flow != nil {
+				se.GaugeFlow = fmt.Sprintf("%.1f %s", gd.flow.Value, gd.flow.Unit)
+			}
 			switch section.Calibration.Unit {
 			case "m3s", "cfs", "lts":
-				if flow != nil {
-					enrichment.WaterLevel = rivermap.ClassifyLevel(flow.Value, section.Calibration)
+				if gd.flow != nil {
+					se.WaterLevel = rivermap.ClassifyLevel(gd.flow.Value, section.Calibration)
 				}
-			default: // "cm", "m", "ft" — level-based
-				if level != nil {
-					enrichment.WaterLevel = rivermap.ClassifyLevel(level.Value, section.Calibration)
+			default:
+				if gd.level != nil {
+					se.WaterLevel = rivermap.ClassifyLevel(gd.level.Value, section.Calibration)
 				}
 			}
 		}
+
+		enrichment.Sections = append(enrichment.Sections, se)
 	}
 
 	return enrichment

@@ -199,6 +199,8 @@ def list_activities(client, days=30):
             "start_time": activity.get("startTimeLocal", ""),
             "start_lat": activity.get("startLatitude", 0),
             "start_lng": activity.get("startLongitude", 0),
+            "end_lat": activity.get("endLatitude", 0),
+            "end_lng": activity.get("endLongitude", 0),
             "duration": activity.get("duration", 0),
             "distance": activity.get("distance", 0),
         })

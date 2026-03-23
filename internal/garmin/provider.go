@@ -63,6 +63,11 @@ type Activity struct {
 	// StartLng is the longitude of the activity starting point (WGS-84 degrees).
 	StartLng float64
 
+	// EndLat is the latitude of the activity ending point (WGS-84 degrees).
+	EndLat float64
+	// EndLng is the longitude of the activity ending point (WGS-84 degrees).
+	EndLng float64
+
 	// DurationSecs is the total elapsed duration of the activity in seconds.
 	DurationSecs float64
 

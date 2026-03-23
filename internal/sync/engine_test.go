@@ -986,11 +986,11 @@ func TestSync_TripCreationFailure_DoesNotFailSync(t *testing.T) {
 }
 
 func TestSync_RivermapEnrichment(t *testing.T) {
-	// Set up a mock Rivermap server that returns a section matching
-	// the test activity's start coordinates, plus gauge readings.
+	// Set up a mock Rivermap server that returns two sections on the same
+	// river matching the test activity's start/end coordinates, plus gauge readings.
 	mux := http.NewServeMux()
 
-	// Sections endpoint: return one section near the test activity coords.
+	// Sections endpoint: return two sections near the test activity coords.
 	type sectionJSON struct {
 		ID          string            `json:"id"`
 		River       map[string]string `json:"river"`
@@ -1031,6 +1031,33 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 				// Coordinates in micro-degrees (value * 1e6).
 				// 47.58 => 47580000, 12.70 => 12700000
 				PutInLatLng:   [2]float64{47580000, 12700000},
+				TakeOutLatLng: [2]float64{47590000, 12705000},
+				Calibration: &struct {
+					StationID string  `json:"stationId"`
+					Unit      string  `json:"unit"`
+					LW        float64 `json:"lw"`
+					MW        float64 `json:"mw"`
+					HW        float64 `json:"hw"`
+				}{
+					StationID: "station-1",
+					Unit:      "cm",
+					LW:        30,
+					MW:        60,
+					HW:        120,
+				},
+			},
+			{
+				ID:    "test-sec-2",
+				River: map[string]string{"de": "Saalach", "en": "Saalach"},
+				SectionName: map[string]struct {
+					From          string `json:"from"`
+					To            string `json:"to"`
+					FormattedName string `json:"formattedName"`
+				}{
+					"de": {From: "Scheffsnoth", To: "Au"},
+				},
+				Grade:         "II-III",
+				PutInLatLng:   [2]float64{47590000, 12705000},
 				TakeOutLatLng: [2]float64{47600000, 12710000},
 				Calibration: &struct {
 					StationID string  `json:"stationId"`
@@ -1095,7 +1122,8 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 		t.Fatalf("UpdateAutoCreateTrips: %v", err)
 	}
 
-	// Create activities with coordinates matching the Rivermap section.
+	// Create activities with coordinates matching the Rivermap sections.
+	// Start near test-sec-1's put-in, end near test-sec-2's take-out.
 	acts := []garmin.Activity{
 		{
 			ProviderID:   "act-rm-1",
@@ -1107,6 +1135,8 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 			DistanceM:    5000,
 			StartLat:     47.58,
 			StartLng:     12.70,
+			EndLat:       47.60,
+			EndLng:       12.71,
 		},
 	}
 
@@ -1133,7 +1163,7 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 		t.Errorf("trips_created = %d, want 1", run.TripsCreated)
 	}
 
-	// Verify enrichment was passed.
+	// Verify enrichment was passed with multiple sections.
 	if !mockEFB.createTripCalled {
 		t.Fatal("expected CreateTripFromTrack to be called")
 	}
@@ -1142,26 +1172,43 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 	}
 
 	en := mockEFB.lastEnrichment
-	if en.SectionName != "Saalach [Lofer - Scheffsnoth]" {
-		t.Errorf("SectionName = %q, want %q", en.SectionName, "Saalach [Lofer - Scheffsnoth]")
+	if len(en.Sections) != 2 {
+		t.Fatalf("expected 2 sections in enrichment, got %d", len(en.Sections))
 	}
-	if en.Grade != "III-IV" {
-		t.Errorf("Grade = %q, want %q", en.Grade, "III-IV")
+
+	sec0 := en.Sections[0]
+	if sec0.SectionName != "Saalach [Lofer - Scheffsnoth]" {
+		t.Errorf("Sections[0].SectionName = %q, want %q", sec0.SectionName, "Saalach [Lofer - Scheffsnoth]")
 	}
-	if len(en.SpotGrades) != 1 || en.SpotGrades[0] != "V" {
-		t.Errorf("SpotGrades = %v, want [V]", en.SpotGrades)
+	if sec0.Grade != "III-IV" {
+		t.Errorf("Sections[0].Grade = %q, want %q", sec0.Grade, "III-IV")
 	}
-	if en.GaugeName != "station-1" {
-		t.Errorf("GaugeName = %q, want %q", en.GaugeName, "station-1")
+	if len(sec0.SpotGrades) != 1 || sec0.SpotGrades[0] != "V" {
+		t.Errorf("Sections[0].SpotGrades = %v, want [V]", sec0.SpotGrades)
 	}
-	if en.GaugeReading != "47 cm" {
-		t.Errorf("GaugeReading = %q, want %q", en.GaugeReading, "47 cm")
+	if sec0.GaugeName != "station-1" {
+		t.Errorf("Sections[0].GaugeName = %q, want %q", sec0.GaugeName, "station-1")
 	}
-	if en.GaugeFlow != "12.3 m3s" {
-		t.Errorf("GaugeFlow = %q, want %q", en.GaugeFlow, "12.3 m3s")
+	if sec0.GaugeReading != "47 cm" {
+		t.Errorf("Sections[0].GaugeReading = %q, want %q", sec0.GaugeReading, "47 cm")
 	}
-	if en.WaterLevel != "Low water" {
-		t.Errorf("WaterLevel = %q, want %q", en.WaterLevel, "Low water")
+	if sec0.GaugeFlow != "12.3 m3s" {
+		t.Errorf("Sections[0].GaugeFlow = %q, want %q", sec0.GaugeFlow, "12.3 m3s")
+	}
+	if sec0.WaterLevel != "Low water" {
+		t.Errorf("Sections[0].WaterLevel = %q, want %q", sec0.WaterLevel, "Low water")
+	}
+
+	sec1 := en.Sections[1]
+	if sec1.SectionName != "Saalach [Scheffsnoth - Au]" {
+		t.Errorf("Sections[1].SectionName = %q, want %q", sec1.SectionName, "Saalach [Scheffsnoth - Au]")
+	}
+	if sec1.Grade != "II-III" {
+		t.Errorf("Sections[1].Grade = %q, want %q", sec1.Grade, "II-III")
+	}
+	// Same gauge station, readings should be the same (deduplicated).
+	if sec1.GaugeReading != "47 cm" {
+		t.Errorf("Sections[1].GaugeReading = %q, want %q", sec1.GaugeReading, "47 cm")
 	}
 }
 
@@ -1226,6 +1273,8 @@ func TestSync_RivermapEnrichment_NoSectionMatch(t *testing.T) {
 			DistanceM:    5000,
 			StartLat:     47.58,
 			StartLng:     12.70,
+			EndLat:       47.60,
+			EndLng:       12.71,
 		},
 	}
 

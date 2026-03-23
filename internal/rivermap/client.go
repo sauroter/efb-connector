@@ -440,6 +440,146 @@ func (c *Client) FindSection(lat, lng float64) *Section {
 	return best
 }
 
+// findNearestByTakeOut returns the cached section whose take-out point is
+// closest to the given GPS coordinate, or nil if no section is within maxProximityKm.
+func (c *Client) findNearestByTakeOut(lat, lng float64) *Section {
+	var best *Section
+	bestDist := math.MaxFloat64
+
+	for i := range c.sections {
+		d := haversineKm(lat, lng, c.sections[i].TakeOutLatLng[0], c.sections[i].TakeOutLatLng[1])
+		if d < bestDist {
+			bestDist = d
+			best = &c.sections[i]
+		}
+	}
+
+	if best == nil || bestDist > maxProximityKm {
+		return nil
+	}
+	return best
+}
+
+// sectionRiverName returns the river name for a section, preferring "de" then "en".
+func sectionRiverName(s *Section) string {
+	if name := s.River["de"]; name != "" {
+		return name
+	}
+	return s.River["en"]
+}
+
+// FindSections returns all sections the track passes through, ordered
+// downstream. It finds the start section (nearest put-in to track start)
+// and end section (nearest take-out to track end), then returns all
+// sections on the same river between them.
+func (c *Client) FindSections(startLat, startLng, endLat, endLng float64) []Section {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// 1. Find start section: closest put-in to (startLat, startLng).
+	startSection := c.findNearestPutIn(startLat, startLng)
+
+	// 2. Find end section: closest take-out to (endLat, endLng).
+	endSection := c.findNearestByTakeOut(endLat, endLng)
+
+	// 3. If neither found: return nil.
+	if startSection == nil && endSection == nil {
+		return nil
+	}
+
+	// 4. If only start found (no end match): return just [startSection].
+	if startSection == nil {
+		return nil
+	}
+	if endSection == nil {
+		return []Section{*startSection}
+	}
+
+	// 5. If same section: return just one.
+	if startSection.ID == endSection.ID {
+		return []Section{*startSection}
+	}
+
+	// 6. If both found and same river: collect all sections on that river,
+	//    sort by put-in latitude, and return the contiguous slice.
+	startRiver := sectionRiverName(startSection)
+	endRiver := sectionRiverName(endSection)
+	if startRiver == "" || endRiver == "" || startRiver != endRiver {
+		return []Section{*startSection}
+	}
+
+	// Collect all sections on this river.
+	var riverSections []Section
+	for i := range c.sections {
+		if sectionRiverName(&c.sections[i]) == startRiver {
+			riverSections = append(riverSections, c.sections[i])
+		}
+	}
+
+	// Sort by put-in latitude descending (higher lat = further upstream in
+	// typical European rivers flowing roughly north/south or west).
+	// Use haversine distance from start section's put-in as the sort key
+	// for a more robust ordering.
+	sortByDistFromStart(riverSections, startSection.PutInLatLng[0], startSection.PutInLatLng[1])
+
+	// Find indices of start and end sections in sorted list.
+	startIdx := -1
+	endIdx := -1
+	for i, s := range riverSections {
+		if s.ID == startSection.ID {
+			startIdx = i
+		}
+		if s.ID == endSection.ID {
+			endIdx = i
+		}
+	}
+
+	if startIdx == -1 || endIdx == -1 {
+		return []Section{*startSection}
+	}
+
+	// Ensure correct order (start first).
+	if startIdx > endIdx {
+		startIdx, endIdx = endIdx, startIdx
+	}
+
+	return riverSections[startIdx : endIdx+1]
+}
+
+// findNearestPutIn is an internal version of FindSection that does NOT
+// acquire the read lock (caller must hold it).
+func (c *Client) findNearestPutIn(lat, lng float64) *Section {
+	var best *Section
+	bestDist := math.MaxFloat64
+
+	for i := range c.sections {
+		d := haversineKm(lat, lng, c.sections[i].PutInLatLng[0], c.sections[i].PutInLatLng[1])
+		if d < bestDist {
+			bestDist = d
+			best = &c.sections[i]
+		}
+	}
+
+	if best == nil || bestDist > maxProximityKm {
+		return nil
+	}
+	return best
+}
+
+// sortByDistFromStart sorts sections by haversine distance from a reference
+// point (the start section's put-in).
+func sortByDistFromStart(sections []Section, refLat, refLng float64) {
+	for i := 0; i < len(sections); i++ {
+		for j := i + 1; j < len(sections); j++ {
+			di := haversineKm(refLat, refLng, sections[i].PutInLatLng[0], sections[i].PutInLatLng[1])
+			dj := haversineKm(refLat, refLng, sections[j].PutInLatLng[0], sections[j].PutInLatLng[1])
+			if di > dj {
+				sections[i], sections[j] = sections[j], sections[i]
+			}
+		}
+	}
+}
+
 // readingsResponse is the top-level JSON envelope from GET /v2/stations/{id}/readings.
 // The single-station endpoint returns readings directly keyed by unit (e.g. "cm", "m3s"),
 // not nested under the station ID.

@@ -702,3 +702,133 @@ func TestRefreshCache_ExpiredDiskCacheCallsAPI(t *testing.T) {
 		t.Errorf("expected station name 'FromAPI', got %q", c.stations["s1"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// FindSections tests
+// ---------------------------------------------------------------------------
+
+func TestFindSections_MultipleSectionsOnSameRiver(t *testing.T) {
+	c := NewClient("test-key", "http://unused", "", testLogger())
+
+	// Three sections on "Saalach" at different positions along the river.
+	// Ordered upstream to downstream (higher lat to lower lat).
+	c.mu.Lock()
+	c.sections = []Section{
+		{
+			ID:            "saalach-1",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.590, 12.700},
+			TakeOutLatLng: [2]float64{47.585, 12.703},
+			Grade:         "II",
+		},
+		{
+			ID:            "saalach-2",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.585, 12.703},
+			TakeOutLatLng: [2]float64{47.580, 12.705},
+			Grade:         "III",
+		},
+		{
+			ID:            "saalach-3",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.580, 12.705},
+			TakeOutLatLng: [2]float64{47.575, 12.708},
+			Grade:         "III-IV",
+		},
+	}
+	c.mu.Unlock()
+
+	// Track starts near first section's put-in and ends near third section's take-out.
+	sections := c.FindSections(47.590, 12.700, 47.575, 12.708)
+	if len(sections) != 3 {
+		t.Fatalf("expected 3 sections, got %d", len(sections))
+	}
+	if sections[0].ID != "saalach-1" {
+		t.Errorf("sections[0].ID = %q, want saalach-1", sections[0].ID)
+	}
+	if sections[1].ID != "saalach-2" {
+		t.Errorf("sections[1].ID = %q, want saalach-2", sections[1].ID)
+	}
+	if sections[2].ID != "saalach-3" {
+		t.Errorf("sections[2].ID = %q, want saalach-3", sections[2].ID)
+	}
+}
+
+func TestFindSections_SingleSection(t *testing.T) {
+	c := NewClient("test-key", "http://unused", "", testLogger())
+
+	c.mu.Lock()
+	c.sections = []Section{
+		{
+			ID:            "saalach-1",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.590, 12.700},
+			TakeOutLatLng: [2]float64{47.585, 12.703},
+			Grade:         "III",
+		},
+	}
+	c.mu.Unlock()
+
+	// Track start and end both near same section.
+	sections := c.FindSections(47.590, 12.700, 47.585, 12.703)
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	if sections[0].ID != "saalach-1" {
+		t.Errorf("sections[0].ID = %q, want saalach-1", sections[0].ID)
+	}
+}
+
+func TestFindSections_DifferentRivers(t *testing.T) {
+	c := NewClient("test-key", "http://unused", "", testLogger())
+
+	c.mu.Lock()
+	c.sections = []Section{
+		{
+			ID:            "saalach-1",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.590, 12.700},
+			TakeOutLatLng: [2]float64{47.585, 12.703},
+			Grade:         "III",
+		},
+		{
+			ID:            "isar-1",
+			River:         map[string]string{"de": "Isar"},
+			PutInLatLng:   [2]float64{48.137, 11.576},
+			TakeOutLatLng: [2]float64{48.140, 11.580},
+			Grade:         "II",
+		},
+	}
+	c.mu.Unlock()
+
+	// Start on Saalach, end on Isar -> returns just start section.
+	sections := c.FindSections(47.590, 12.700, 48.140, 11.580)
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	if sections[0].ID != "saalach-1" {
+		t.Errorf("sections[0].ID = %q, want saalach-1", sections[0].ID)
+	}
+}
+
+func TestFindSections_NoMatch(t *testing.T) {
+	c := NewClient("test-key", "http://unused", "", testLogger())
+
+	c.mu.Lock()
+	c.sections = []Section{
+		{
+			ID:            "saalach-1",
+			River:         map[string]string{"de": "Saalach"},
+			PutInLatLng:   [2]float64{47.590, 12.700},
+			TakeOutLatLng: [2]float64{47.585, 12.703},
+			Grade:         "III",
+		},
+	}
+	c.mu.Unlock()
+
+	// Both start and end are far away (Berlin).
+	sections := c.FindSections(52.520, 13.405, 52.530, 13.410)
+	if sections != nil {
+		t.Errorf("expected nil for no match, got %d sections", len(sections))
+	}
+}

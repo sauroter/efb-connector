@@ -65,9 +65,9 @@ func (m *MockGarminProvider) ValidateCredentials(_ context.Context, _ GarminCred
 func defaultActivities() []Activity {
 	now := time.Now()
 	return []Activity{
-		{ProviderID: "mock-1", Name: "Morning Paddle", Type: "kayaking", Date: now.Add(-2 * time.Hour), StartTime: now.Add(-2 * time.Hour), StartLat: 47.58, StartLng: 12.70, DurationSecs: 3600, DistanceM: 5000},
-		{ProviderID: "mock-2", Name: "Evening SUP", Type: "sup", Date: now.Add(-26 * time.Hour), StartTime: now.Add(-26 * time.Hour), StartLat: 47.59, StartLng: 12.71, DurationSecs: 2700, DistanceM: 3500},
-		{ProviderID: "mock-3", Name: "Weekend Canoe Trip", Type: "canoeing", Date: now.Add(-50 * time.Hour), StartTime: now.Add(-50 * time.Hour), StartLat: 47.60, StartLng: 12.72, DurationSecs: 7200, DistanceM: 12000},
+		{ProviderID: "mock-1", Name: "Morning Paddle", Type: "kayaking", Date: now.Add(-2 * time.Hour), StartTime: now.Add(-2 * time.Hour), StartLat: 47.58, StartLng: 12.70, EndLat: 47.60, EndLng: 12.71, DurationSecs: 3600, DistanceM: 5000},
+		{ProviderID: "mock-2", Name: "Evening SUP", Type: "sup", Date: now.Add(-26 * time.Hour), StartTime: now.Add(-26 * time.Hour), StartLat: 47.59, StartLng: 12.71, EndLat: 47.61, EndLng: 12.72, DurationSecs: 2700, DistanceM: 3500},
+		{ProviderID: "mock-3", Name: "Weekend Canoe Trip", Type: "canoeing", Date: now.Add(-50 * time.Hour), StartTime: now.Add(-50 * time.Hour), StartLat: 47.60, StartLng: 12.72, EndLat: 47.62, EndLng: 12.73, DurationSecs: 7200, DistanceM: 12000},
 	}
 }
 

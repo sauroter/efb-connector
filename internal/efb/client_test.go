@@ -758,13 +758,17 @@ func TestCreateTripFromTrack_WithEnrichment(t *testing.T) {
 	}
 
 	enrichment := &TripEnrichment{
-		SectionName:  "Saalach [Lofer - Scheffsnoth]",
-		Grade:        "III-IV",
-		SpotGrades:   []string{"V", "VI"},
-		GaugeName:    "Lofer",
-		GaugeReading: "47 cm",
-		GaugeFlow:    "12.3 m\u00b3/s",
-		WaterLevel:   "Medium water",
+		Sections: []SectionEnrichment{
+			{
+				SectionName:  "Saalach [Lofer - Scheffsnoth]",
+				Grade:        "III-IV",
+				SpotGrades:   []string{"V", "VI"},
+				GaugeName:    "Lofer",
+				GaugeReading: "47 cm",
+				GaugeFlow:    "12.3 m\u00b3/s",
+				WaterLevel:   "Medium water",
+			},
+		},
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
@@ -788,20 +792,20 @@ func TestCreateTripFromTrack_WithEnrichment(t *testing.T) {
 	if !strings.Contains(comment, "---") {
 		t.Error("comment should contain enrichment separator '---'")
 	}
-	if !strings.Contains(comment, "Rivermap: Saalach [Lofer - Scheffsnoth] (III-IV)") {
-		t.Error("comment should contain rivermap section info")
+	if !strings.Contains(comment, "Rivermap:") {
+		t.Error("comment should contain 'Rivermap:' header")
 	}
-	if !strings.Contains(comment, "Gauge: Lofer") {
+	if !strings.Contains(comment, "Saalach [Lofer - Scheffsnoth] (III-IV)") {
+		t.Error("comment should contain section info")
+	}
+	if !strings.Contains(comment, "Lofer:") {
 		t.Error("comment should contain gauge name")
 	}
-	if !strings.Contains(comment, "47 cm") {
-		t.Error("comment should contain gauge reading")
+	if !strings.Contains(comment, "12.3 m\u00b3/s") {
+		t.Error("comment should contain gauge flow")
 	}
 	if !strings.Contains(comment, "Medium water") {
 		t.Error("comment should contain water level")
-	}
-	if !strings.Contains(comment, "Spot grades: V, VI") {
-		t.Error("comment should contain spot grades")
 	}
 	if !strings.Contains(comment, "Data: rivermap.org (CC BY-SA 4.0)") {
 		t.Error("comment should contain attribution")

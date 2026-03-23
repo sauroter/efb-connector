@@ -59,6 +59,8 @@ type listActivityJSON struct {
 	StartTime    string      `json:"start_time"`     // "YYYY-MM-DD HH:MM:SS"
 	StartLat     float64     `json:"start_lat"`
 	StartLng     float64     `json:"start_lng"`
+	EndLat       float64     `json:"end_lat"`
+	EndLng       float64     `json:"end_lng"`
 	Duration     float64     `json:"duration"`       // seconds
 	Distance     float64     `json:"distance"`       // metres
 }
@@ -116,6 +118,8 @@ func (p *PythonGarminProvider) ListActivities(
 			StartTime:    startTime,
 			StartLat:     r.StartLat,
 			StartLng:     r.StartLng,
+			EndLat:       r.EndLat,
+			EndLng:       r.EndLng,
 			DurationSecs: r.Duration,
 			DistanceM:    r.Distance,
 		})

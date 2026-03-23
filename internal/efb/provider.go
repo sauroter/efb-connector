@@ -31,69 +31,50 @@ type EFBProvider interface {
 	CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error
 }
 
-// TripEnrichment contains river condition data to append to the trip comment.
-type TripEnrichment struct {
-	SectionName  string   // e.g., "Saalach [Lofer - Scheffsnoth]"
+// SectionEnrichment contains river condition data for a single river section.
+type SectionEnrichment struct {
+	SectionName  string   // e.g., "Saalach — Slalom Lofer"
 	Grade        string   // e.g., "III-IV"
 	SpotGrades   []string // e.g., ["V", "VI"]
-	GaugeName    string   // e.g., "Lofer"
-	GaugeReading string   // e.g., "47 cm"
-	GaugeFlow    string   // e.g., "12.3 m³/s"
-	WaterLevel   string   // e.g., "Medium water"
+	GaugeName    string   // e.g., "Unterjettenberg"
+	GaugeReading string   // e.g., "16 cm"
+	GaugeFlow    string   // e.g., "14.6 m³/s"
+	WaterLevel   string   // e.g., "Low water"
+}
+
+// TripEnrichment contains river condition data to append to the trip comment.
+type TripEnrichment struct {
+	Sections []SectionEnrichment
 }
 
 // FormatComment produces the enrichment text block to append to a trip comment.
-// Only lines with data are included.
+// Each section gets its own indented line. Only shown if Sections is non-empty.
 func (e *TripEnrichment) FormatComment() string {
-	if e == nil {
+	if e == nil || len(e.Sections) == 0 {
 		return ""
 	}
 
 	var lines []string
+	lines = append(lines, "Rivermap:")
 
-	// Rivermap line: "Rivermap: SectionName (Grade)"
-	if e.SectionName != "" {
-		rm := "Rivermap: " + e.SectionName
-		if e.Grade != "" {
-			rm += " (" + e.Grade + ")"
+	for _, se := range e.Sections {
+		line := "  " + se.SectionName
+		if se.Grade != "" {
+			line += " (" + se.Grade + ")"
 		}
-		lines = append(lines, rm)
+		// Append gauge info if available.
+		if se.GaugeName != "" {
+			line += " | " + se.GaugeName + ":"
+			if se.GaugeFlow != "" {
+				line += " " + se.GaugeFlow
+			}
+			if se.WaterLevel != "" {
+				line += " \u2014 " + se.WaterLevel
+			}
+		}
+		lines = append(lines, line)
 	}
 
-	// Gauge line: "Gauge: GaugeName (Reading / Flow) — WaterLevel"
-	if e.GaugeName != "" || e.GaugeReading != "" || e.GaugeFlow != "" || e.WaterLevel != "" {
-		var gauge string
-		if e.GaugeName != "" {
-			gauge = "Gauge: " + e.GaugeName
-		} else {
-			gauge = "Gauge:"
-		}
-		var parts []string
-		if e.GaugeReading != "" {
-			parts = append(parts, e.GaugeReading)
-		}
-		if e.GaugeFlow != "" {
-			parts = append(parts, e.GaugeFlow)
-		}
-		if len(parts) > 0 {
-			gauge += " (" + strings.Join(parts, " / ") + ")"
-		}
-		if e.WaterLevel != "" {
-			gauge += " \u2014 " + e.WaterLevel
-		}
-		lines = append(lines, gauge)
-	}
-
-	// Spot grades line.
-	if len(e.SpotGrades) > 0 {
-		lines = append(lines, "Spot grades: "+strings.Join(e.SpotGrades, ", "))
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	// Attribution line is always included when there is enrichment data.
 	lines = append(lines, "Data: rivermap.org (CC BY-SA 4.0)")
 
 	return "---\n" + strings.Join(lines, "\n")

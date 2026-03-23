@@ -63,10 +63,12 @@ activities = [
     {"id": 123456, "name": "Morning Paddle", "type": "kayaking_v2",
      "parent_type_id": 228, "date": "2026-03-10", "start_time": "2026-03-10 14:30:00",
      "start_lat": 47.58, "start_lng": 12.70,
+     "end_lat": 47.60, "end_lng": 12.71,
      "duration": 3600.0, "distance": 5000.0},
     {"id": 789012, "name": "River Run", "type": "canoeing",
      "parent_type_id": 228, "date": "2026-03-12", "start_time": "2026-03-12 09:15:00",
      "start_lat": 47.58, "start_lng": 12.70,
+     "end_lat": 47.61, "end_lng": 12.72,
      "duration": 7200.0, "distance": 12000.0},
 ]
 print(json.dumps(activities))
@@ -117,6 +119,12 @@ print(json.dumps(activities))
 	}
 	if a0.StartLng != 12.70 {
 		t.Errorf("a0.StartLng = %v, want 12.70", a0.StartLng)
+	}
+	if a0.EndLat != 47.60 {
+		t.Errorf("a0.EndLat = %v, want 47.60", a0.EndLat)
+	}
+	if a0.EndLng != 12.71 {
+		t.Errorf("a0.EndLng = %v, want 12.71", a0.EndLng)
 	}
 
 	// Second activity
