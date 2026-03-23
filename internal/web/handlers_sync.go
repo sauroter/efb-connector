@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"time"
@@ -169,7 +170,7 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 func (s *Server) syncError(w http.ResponseWriter, r *http.Request, msg string) {
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + msg + `</p></div>`))
+		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + html.EscapeString(msg) + `</p></div>`))
 		return
 	}
 	setFlash(w, msg)

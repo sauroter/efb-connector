@@ -120,7 +120,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireInternalAuth(w, r) {
+			return
+		}
+		promhttp.Handler().ServeHTTP(w, r)
+	})
 
 	// Wrap the entire mux in logging + recovery middleware.
 	return s.recovery(s.logging(mux))
