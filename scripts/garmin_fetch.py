@@ -56,6 +56,7 @@ def get_credentials_from_stdin():
 # Water sport activity types to filter
 WATER_SPORT_TYPES = [
     "kayaking",
+    "kayaking_v2",
     "whitewater_rafting_v2",
     "stand_up_paddleboarding",
     "paddling",

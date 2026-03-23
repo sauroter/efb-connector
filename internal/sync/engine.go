@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,17 +26,28 @@ type SyncEngine struct {
 	efb    efb.EFBProvider
 	logger *slog.Logger
 
+	// tokenStoreBase is the base directory for per-user Garmin token stores.
+	tokenStoreBase string
+
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
 	sleepFunc func(min, max time.Duration)
 }
 
 // NewSyncEngine creates a SyncEngine with the given dependencies.
 func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec efb.EFBProvider, logger *slog.Logger) *SyncEngine {
+	var tokenBase string
+	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
+		tokenBase = "/data/garmin_tokens"
+	} else {
+		home, _ := os.UserHomeDir()
+		tokenBase = filepath.Join(home, ".config", "efb-connector", "garmin_tokens")
+	}
 	return &SyncEngine{
-		db:     db,
-		garmin: gp,
-		efb:    ec,
-		logger: logger,
+		db:             db,
+		garmin:         gp,
+		efb:            ec,
+		logger:         logger,
+		tokenStoreBase: tokenBase,
 		sleepFunc: func(min, max time.Duration) {
 			jitter := min + time.Duration(rand.Int64N(int64(max-min)))
 			time.Sleep(jitter)
@@ -173,9 +186,14 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("sync: get garmin credentials: %w", err)
 	}
+	tokenDir := filepath.Join(s.tokenStoreBase, fmt.Sprintf("%d", userID))
+	if err := os.MkdirAll(tokenDir, 0700); err != nil {
+		log.Error("failed to create garmin token store", "error", err)
+	}
 	garminCreds := garmin.GarminCredentials{
-		Email:    garminEmail,
-		Password: garminPass,
+		Email:          garminEmail,
+		Password:       garminPass,
+		TokenStorePath: tokenDir,
 	}
 
 	// 3. List activities from Garmin.
