@@ -449,7 +449,7 @@ func (s *SyncEngine) buildEnrichment(ctx context.Context, act activityToSync, lo
 		if err != nil {
 			log.Warn("failed to fetch gauge readings", "station", section.Calibration.StationID, "error", err)
 		} else {
-			enrichment.GaugeName = section.Calibration.StationID
+			enrichment.GaugeName = s.rivermap.StationName(section.Calibration.StationID)
 			if level != nil {
 				enrichment.GaugeReading = fmt.Sprintf("%.0f %s", level.Value, level.Unit)
 			}

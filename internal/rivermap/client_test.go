@@ -25,9 +25,26 @@ func mockSectionsResponse(sections ...sectionJSON) []byte {
 	return b
 }
 
+// mockStationsResponse returns a JSON response with the given stations.
+func mockStationsResponse(stations ...stationJSON) []byte {
+	resp := stationsResponse{Stations: stations}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
 // newSectionsServer creates a test server that returns the given response
-// body for GET /v2/sections.
+// body for GET /v2/sections and an empty stations response for GET /v2/stations.
 func newSectionsServer(t *testing.T, body []byte) *httptest.Server {
+	t.Helper()
+	return newSectionsAndStationsServer(t, body, []byte(`{"stations":[]}`))
+}
+
+// newSectionsAndStationsServer creates a test server that returns the given
+// response bodies for GET /v2/sections and GET /v2/stations.
+func newSectionsAndStationsServer(t *testing.T, sectionsBody, stationsBody []byte) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/sections", func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +54,16 @@ func newSectionsServer(t *testing.T, body []byte) *httptest.Server {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write(body) //nolint:errcheck
+		w.Write(sectionsBody) //nolint:errcheck
+	})
+	mux.HandleFunc("/v2/stations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(stationsBody) //nolint:errcheck
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -82,7 +108,7 @@ func rawJSON(v any) json.RawMessage {
 // ---------------------------------------------------------------------------
 
 func TestRefreshCache_ParsesSections(t *testing.T) {
-	body := mockSectionsResponse(
+	sectionsBody := mockSectionsResponse(
 		sectionJSON{
 			ID:    "sec-1",
 			River: map[string]string{"de": "Saalach", "en": "Saalach"},
@@ -118,9 +144,23 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 			TakeOutLatLng: [2]float64{48400000, 11750000},
 			Calibration:   nil,
 		},
+		sectionJSON{
+			ID:    "sec-3",
+			River: map[string]string{"de": "Saalach"},
+			SectionName: map[string]json.RawMessage{
+				"de": rawJSON("Slalom Lofer"),
+			},
+			Grade:       "III",
+			PutInLatLng: [2]float64{47585000, 12705000},
+		},
 	)
 
-	srv := newSectionsServer(t, body)
+	stationsBody := mockStationsResponse(
+		stationJSON{ID: "station-1", Name: "Unterjettenberg"},
+		stationJSON{ID: "station-2", Name: "Bad Reichenhall"},
+	)
+
+	srv := newSectionsAndStationsServer(t, sectionsBody, stationsBody)
 	c := NewClient("test-key", srv.URL, "", testLogger())
 
 	if err := c.RefreshCache(context.Background()); err != nil {
@@ -130,8 +170,8 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.sections) != 2 {
-		t.Fatalf("expected 2 sections, got %d", len(c.sections))
+	if len(c.sections) != 3 {
+		t.Fatalf("expected 3 sections, got %d", len(c.sections))
 	}
 
 	// Verify first section.
@@ -169,10 +209,13 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 			s1.Calibration.LW, s1.Calibration.MW, s1.Calibration.HW)
 	}
 
-	// Verify display names.
+	// Verify display names (structured from/to).
 	if s1.SectionFrom != "Lofer" || s1.SectionTo != "Scheffsnoth" {
 		t.Errorf("section 0 display names: expected 'Lofer'/'Scheffsnoth', got %q/%q",
 			s1.SectionFrom, s1.SectionTo)
+	}
+	if dn := s1.DisplayName(); dn != "Saalach [Lofer - Scheffsnoth]" {
+		t.Errorf("section 0 DisplayName: expected 'Saalach [Lofer - Scheffsnoth]', got %q", dn)
 	}
 
 	// Verify second section (no calibration, English fallback).
@@ -186,6 +229,54 @@ func TestRefreshCache_ParsesSections(t *testing.T) {
 	if s2.SectionFrom != "Munich" || s2.SectionTo != "Freising" {
 		t.Errorf("section 1 display names: expected 'Munich'/'Freising', got %q/%q",
 			s2.SectionFrom, s2.SectionTo)
+	}
+
+	// Verify third section (plain string sectionName).
+	s3 := c.sections[2]
+	if s3.SectionFrom != "Slalom Lofer" {
+		t.Errorf("section 2 SectionFrom: expected 'Slalom Lofer', got %q", s3.SectionFrom)
+	}
+	if s3.SectionTo != "" {
+		t.Errorf("section 2 SectionTo: expected empty, got %q", s3.SectionTo)
+	}
+	if dn := s3.DisplayName(); dn != "Saalach \u2014 Slalom Lofer" {
+		t.Errorf("section 2 DisplayName: expected 'Saalach — Slalom Lofer', got %q", dn)
+	}
+
+	// Verify station names were loaded.
+	if len(c.stations) != 2 {
+		t.Fatalf("expected 2 stations, got %d", len(c.stations))
+	}
+	if c.stations["station-1"] != "Unterjettenberg" {
+		t.Errorf("station-1 name: expected 'Unterjettenberg', got %q", c.stations["station-1"])
+	}
+	if c.stations["station-2"] != "Bad Reichenhall" {
+		t.Errorf("station-2 name: expected 'Bad Reichenhall', got %q", c.stations["station-2"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StationName tests
+// ---------------------------------------------------------------------------
+
+func TestStationName_Lookup(t *testing.T) {
+	c := NewClient("test-key", "http://unused", "", testLogger())
+
+	c.mu.Lock()
+	c.stations = map[string]string{
+		"station-1": "Unterjettenberg",
+		"station-2": "Bad Reichenhall",
+	}
+	c.mu.Unlock()
+
+	// Known station returns human-readable name.
+	if name := c.StationName("station-1"); name != "Unterjettenberg" {
+		t.Errorf("expected 'Unterjettenberg', got %q", name)
+	}
+
+	// Unknown station falls back to the raw ID.
+	if name := c.StationName("unknown-uuid"); name != "unknown-uuid" {
+		t.Errorf("expected 'unknown-uuid', got %q", name)
 	}
 }
 
@@ -446,6 +537,11 @@ func TestRefreshCache_SendsAPIKey(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"sections":[]}`)) //nolint:errcheck
 	})
+	mux.HandleFunc("/v2/stations", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"stations":[]}`)) //nolint:errcheck
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -504,7 +600,8 @@ func TestRefreshCache_WritesDiskCache(t *testing.T) {
 		Grade:       "III",
 		PutInLatLng: [2]float64{47582670, 12702775},
 	})
-	srv := newSectionsServer(t, body)
+	stBody := mockStationsResponse(stationJSON{ID: "s1", Name: "TestStation"})
+	srv := newSectionsAndStationsServer(t, body, stBody)
 	t.Cleanup(srv.Close)
 
 	cacheDir := t.TempDir()
@@ -514,10 +611,16 @@ func TestRefreshCache_WritesDiskCache(t *testing.T) {
 		t.Fatalf("RefreshCache failed: %v", err)
 	}
 
-	// Verify cache file was written.
-	cachePath := c.sectionsCacheFile()
-	if _, err := os.Stat(cachePath); err != nil {
-		t.Fatalf("cache file not found: %v", err)
+	// Verify sections cache file was written.
+	sectionsCachePath := c.cacheFilePath("sections.json")
+	if _, err := os.Stat(sectionsCachePath); err != nil {
+		t.Fatalf("sections cache file not found: %v", err)
+	}
+
+	// Verify stations cache file was written.
+	stationsCachePath := c.cacheFilePath("stations.json")
+	if _, err := os.Stat(stationsCachePath); err != nil {
+		t.Fatalf("stations cache file not found: %v", err)
 	}
 
 	if len(c.sections) != 1 {
@@ -532,10 +635,12 @@ func TestRefreshCache_LoadsFromDiskCache(t *testing.T) {
 		Grade:       "III",
 		PutInLatLng: [2]float64{47582670, 12702775},
 	})
+	stBody := mockStationsResponse(stationJSON{ID: "s1", Name: "CachedStation"})
 
-	// Write a cache file manually.
+	// Write cache files manually.
 	cacheDir := t.TempDir()
 	os.WriteFile(cacheDir+"/sections.json", body, 0600)
+	os.WriteFile(cacheDir+"/stations.json", stBody, 0600)
 
 	// Create client pointing at a broken server — should not be called.
 	c := NewClient("test-key", "http://127.0.0.1:1", cacheDir, testLogger())
@@ -550,6 +655,9 @@ func TestRefreshCache_LoadsFromDiskCache(t *testing.T) {
 	if c.sections[0].Grade != "III" {
 		t.Errorf("expected grade III, got %q", c.sections[0].Grade)
 	}
+	if c.stations["s1"] != "CachedStation" {
+		t.Errorf("expected station name 'CachedStation', got %q", c.stations["s1"])
+	}
 }
 
 func TestRefreshCache_ExpiredDiskCacheCallsAPI(t *testing.T) {
@@ -559,16 +667,22 @@ func TestRefreshCache_ExpiredDiskCacheCallsAPI(t *testing.T) {
 		Grade:       "IV",
 		PutInLatLng: [2]float64{47582670, 12702775},
 	})
+	stBody := mockStationsResponse(stationJSON{ID: "s1", Name: "FromAPI"})
 
-	// Write a cache file and backdate it beyond cacheMaxAge.
+	// Write cache files and backdate them beyond cacheMaxAge.
 	cacheDir := t.TempDir()
-	cachePath := cacheDir + "/sections.json"
-	os.WriteFile(cachePath, []byte(`{"sections":[]}`), 0600)
 	expired := time.Now().Add(-cacheMaxAge - time.Hour)
-	os.Chtimes(cachePath, expired, expired)
+
+	sectionsPath := cacheDir + "/sections.json"
+	os.WriteFile(sectionsPath, []byte(`{"sections":[]}`), 0600)
+	os.Chtimes(sectionsPath, expired, expired)
+
+	stationsPath := cacheDir + "/stations.json"
+	os.WriteFile(stationsPath, []byte(`{"stations":[]}`), 0600)
+	os.Chtimes(stationsPath, expired, expired)
 
 	// The API server returns the real data.
-	srv := newSectionsServer(t, body)
+	srv := newSectionsAndStationsServer(t, body, stBody)
 	t.Cleanup(srv.Close)
 
 	c := NewClient("test-key", srv.URL, cacheDir, testLogger())
@@ -583,5 +697,8 @@ func TestRefreshCache_ExpiredDiskCacheCallsAPI(t *testing.T) {
 	}
 	if c.sections[0].Grade != "IV" {
 		t.Errorf("expected grade IV from API, got %q", c.sections[0].Grade)
+	}
+	if c.stations["s1"] != "FromAPI" {
+		t.Errorf("expected station name 'FromAPI', got %q", c.stations["s1"])
 	}
 }

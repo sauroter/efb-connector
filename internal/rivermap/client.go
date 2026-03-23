@@ -45,6 +45,7 @@ type Client struct {
 
 	mu       sync.RWMutex
 	sections []Section
+	stations map[string]string // station ID -> human-readable name
 	cachedAt time.Time
 }
 
@@ -97,7 +98,21 @@ func (s *Section) DisplayName() string {
 	if s.SectionFrom != "" && s.SectionTo != "" {
 		return fmt.Sprintf("%s [%s - %s]", river, s.SectionFrom, s.SectionTo)
 	}
+	if s.SectionFrom != "" {
+		return fmt.Sprintf("%s — %s", river, s.SectionFrom)
+	}
 	return river
+}
+
+// StationName returns the human-readable name for a gauge station ID.
+// If the station is not in the cache, the raw ID is returned as a fallback.
+func (c *Client) StationName(id string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if name, ok := c.stations[id]; ok {
+		return name
+	}
+	return id
 }
 
 // NewClient returns a new Rivermap API client. Pass DefaultBaseURL for
@@ -125,6 +140,17 @@ func NewClient(apiKey, baseURL, cacheDir string, logger *slog.Logger) *Client {
 // sectionsResponse is the top-level JSON envelope from GET /v2/sections.
 type sectionsResponse struct {
 	Sections []sectionJSON `json:"sections"`
+}
+
+// stationsResponse is the top-level JSON envelope from GET /v2/stations.
+type stationsResponse struct {
+	Stations []stationJSON `json:"stations"`
+}
+
+// stationJSON mirrors a single station object in the API response.
+type stationJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // sectionNameDetail holds the structured form of a section name.
@@ -157,54 +183,58 @@ type sectionJSON struct {
 // cacheMaxAge (24h). Otherwise the API is called and the result is written
 // to disk for subsequent restarts.
 func (c *Client) RefreshCache(ctx context.Context) error {
-	// 1. Try loading from disk cache.
+	// --- Sections ---
+	// 1. Try loading sections from disk cache.
+	var sections []Section
 	if c.cacheDir != "" {
-		if sections, err := c.loadDiskCache(); err == nil {
-			c.mu.Lock()
-			c.sections = sections
-			c.cachedAt = time.Now()
-			c.mu.Unlock()
-			c.logger.Info("rivermap: loaded sections from disk cache", "count", len(sections))
-			return nil
+		if data, err := c.loadDiskCacheRaw("sections.json"); err == nil {
+			if s, err := parseSections(data); err == nil {
+				sections = s
+				c.logger.Info("rivermap: loaded sections from disk cache", "count", len(sections))
+			}
 		}
 	}
 
-	// 2. Fetch from API.
-	body, err := c.fetchSectionsAPI(ctx)
-	if err != nil {
-		return err
+	// 2. Fetch sections from API if disk cache miss.
+	if sections == nil {
+		body, err := c.fetchSectionsAPI(ctx)
+		if err != nil {
+			return err
+		}
+		s, err := parseSections(body)
+		if err != nil {
+			return err
+		}
+		sections = s
+		if c.cacheDir != "" {
+			if err := c.writeDiskCache("sections.json", body); err != nil {
+				c.logger.Warn("rivermap: failed to write sections disk cache", "error", err)
+			}
+		}
+		c.logger.Info("rivermap: refreshed section cache from API", "count", len(sections))
 	}
 
-	sections, err := parseSections(body)
-	if err != nil {
-		return err
-	}
+	// --- Stations ---
+	stations := c.loadStations(ctx)
 
 	c.mu.Lock()
 	c.sections = sections
+	c.stations = stations
 	c.cachedAt = time.Now()
 	c.mu.Unlock()
 
-	// 3. Write to disk cache for next restart.
-	if c.cacheDir != "" {
-		if err := c.writeDiskCache(body); err != nil {
-			c.logger.Warn("rivermap: failed to write disk cache", "error", err)
-		}
-	}
-
-	c.logger.Info("rivermap: refreshed section cache from API", "count", len(sections))
 	return nil
 }
 
-// sectionsCacheFile returns the path to the disk cache file.
-func (c *Client) sectionsCacheFile() string {
-	return filepath.Join(c.cacheDir, "sections.json")
+// cacheFilePath returns the path to a named disk cache file.
+func (c *Client) cacheFilePath(filename string) string {
+	return filepath.Join(c.cacheDir, filename)
 }
 
-// loadDiskCache reads and parses the cached sections file if it exists
-// and is younger than cacheMaxAge.
-func (c *Client) loadDiskCache() ([]Section, error) {
-	path := c.sectionsCacheFile()
+// loadDiskCacheRaw reads a named cache file if it exists and is younger
+// than cacheMaxAge. Returns the raw bytes.
+func (c *Client) loadDiskCacheRaw(filename string) ([]byte, error) {
+	path := c.cacheFilePath(filename)
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -212,16 +242,12 @@ func (c *Client) loadDiskCache() ([]Section, error) {
 	if time.Since(info.ModTime()) > cacheMaxAge {
 		return nil, fmt.Errorf("cache expired")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return parseSections(data)
+	return os.ReadFile(path)
 }
 
-// writeDiskCache writes the raw API response to disk for later use.
-func (c *Client) writeDiskCache(data []byte) error {
-	path := c.sectionsCacheFile()
+// writeDiskCache writes raw data to a named cache file atomically.
+func (c *Client) writeDiskCache(filename string, data []byte) error {
+	path := c.cacheFilePath(filename)
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return err
@@ -252,6 +278,82 @@ func (c *Client) fetchSectionsAPI(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("rivermap: sections returned status %d", resp.StatusCode)
 	}
 	return body, nil
+}
+
+// loadStations loads station names from disk cache or API. Returns a map of
+// station ID to name. Failures are logged but non-fatal (returns empty map).
+func (c *Client) loadStations(ctx context.Context) map[string]string {
+	// Try disk cache first.
+	if c.cacheDir != "" {
+		if data, err := c.loadDiskCacheRaw("stations.json"); err == nil {
+			if m, err := parseStations(data); err == nil {
+				c.logger.Info("rivermap: loaded stations from disk cache", "count", len(m))
+				return m
+			}
+		}
+	}
+
+	// Fetch from API.
+	body, err := c.fetchStationsAPI(ctx)
+	if err != nil {
+		c.logger.Warn("rivermap: failed to fetch stations", "error", err)
+		return make(map[string]string)
+	}
+
+	m, err := parseStations(body)
+	if err != nil {
+		c.logger.Warn("rivermap: failed to parse stations", "error", err)
+		return make(map[string]string)
+	}
+
+	if c.cacheDir != "" {
+		if err := c.writeDiskCache("stations.json", body); err != nil {
+			c.logger.Warn("rivermap: failed to write stations disk cache", "error", err)
+		}
+	}
+
+	c.logger.Info("rivermap: refreshed station cache from API", "count", len(m))
+	return m
+}
+
+// fetchStationsAPI makes the HTTP request to the Rivermap stations endpoint.
+func (c *Client) fetchStationsAPI(ctx context.Context) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v2/stations", nil)
+	if err != nil {
+		return nil, fmt.Errorf("rivermap: failed to build stations request: %w", err)
+	}
+	req.Header.Set("X-Key", c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("rivermap: stations request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("rivermap: failed to read stations response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rivermap: stations returned status %d", resp.StatusCode)
+	}
+	return body, nil
+}
+
+// parseStations parses the raw JSON from the stations API into a map of ID -> name.
+func parseStations(body []byte) (map[string]string, error) {
+	var raw stationsResponse
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("rivermap: failed to parse stations JSON: %w", err)
+	}
+	m := make(map[string]string, len(raw.Stations))
+	for _, s := range raw.Stations {
+		if s.ID != "" && s.Name != "" {
+			m[s.ID] = s.Name
+		}
+	}
+	return m, nil
 }
 
 // parseSections parses the raw JSON from the sections API into Section structs.
