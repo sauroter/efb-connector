@@ -86,6 +86,9 @@ func TestCreateUser(t *testing.T) {
 	if u.SyncDays != 3 {
 		t.Errorf("sync_days = %d, want 3", u.SyncDays)
 	}
+	if u.AutoCreateTrips {
+		t.Error("expected auto_create_trips = false by default")
+	}
 }
 
 func TestCreateUser_DuplicateEmail(t *testing.T) {
@@ -96,6 +99,35 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 	}
 	if _, err := db.CreateUser("dup@example.com"); err == nil {
 		t.Fatal("expected error on duplicate email, got nil")
+	}
+}
+
+func TestUser_AutoCreateTrips_ReadWrite(t *testing.T) {
+	db := openTestDB(t)
+
+	u, err := db.CreateUser("autotrips@example.com")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.AutoCreateTrips {
+		t.Fatal("expected AutoCreateTrips = false after creation")
+	}
+
+	// Enable auto_create_trips via direct SQL UPDATE.
+	if _, err := db.db.Exec(`UPDATE users SET auto_create_trips = 1 WHERE id = ?`, u.ID); err != nil {
+		t.Fatalf("UPDATE auto_create_trips: %v", err)
+	}
+
+	// Re-read the user and verify the field is now true.
+	got, err := db.GetUserByID(u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected user, got nil")
+	}
+	if !got.AutoCreateTrips {
+		t.Error("expected AutoCreateTrips = true after UPDATE")
 	}
 }
 
