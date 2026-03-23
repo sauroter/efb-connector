@@ -73,6 +73,23 @@
           {{end}}
         </div>
       </div>
+      {{if eq .SetupStep 3}}
+      <article style="margin-top: 1.5rem;">
+        <header><strong>Auto-create trip entries?</strong></header>
+        <p>EFB Connector can automatically create logbook entries (Fahrten) in your Kanu-EFB from synced tracks. Start and end times are filled in from your Garmin activity data. You can always change this later on the dashboard.</p>
+        <footer style="display: flex; gap: 0.5rem;">
+          <form method="post" action="/settings/auto-create-trips">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="enabled" value="1">
+            <button type="submit">Yes, create trips automatically</button>
+          </form>
+          <form method="post" action="/settings/auto-create-trips">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary">No thanks, I'll do it manually</button>
+          </form>
+        </footer>
+      </article>
+      {{end}}
     </section>
     {{else}}
     <section class="card-grid">

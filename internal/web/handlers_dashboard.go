@@ -66,7 +66,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compute getting-started state.
-	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync, 0=all done.
+	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync (also shows trip config), 0=all done.
 	setupStep := 0
 	showGettingStarted := false
 	if !garminConnected {
