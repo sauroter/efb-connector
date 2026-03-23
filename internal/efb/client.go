@@ -254,6 +254,11 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 		return "", fmt.Errorf("efb: tracks page returned status %d", resp.StatusCode)
 	}
 
+	// Detect if we were redirected to the login page.
+	if strings.Contains(string(body), "Benutzername hier eingeben") {
+		return "", fmt.Errorf("efb: session expired, got login page instead of tracks")
+	}
+
 	return parseUnassociatedTrack(string(body), gpxFilename), nil
 }
 
