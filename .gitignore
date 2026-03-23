@@ -10,6 +10,8 @@ config.json
 
 # SQLite databases
 *.db
+*.db-shm
+*.db-wal
 
 # macOS
 .DS_Store
