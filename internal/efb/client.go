@@ -366,10 +366,10 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 	formValues.Set("endminute", fmt.Sprintf("%d", endTime.Minute()))
 	formValues.Set("save", "speichern")
 
-	// Append enrichment data to the comment field if provided.
+	// Prepend enrichment data to the comment field if provided.
 	if enrichment != nil {
 		existing := formValues.Get("comment")
-		formValues.Set("comment", existing+"\n"+enrichment.FormatComment())
+		formValues.Set("comment", enrichment.FormatComment()+"\n"+existing)
 	}
 
 	// Step 4: POST the completed form.
