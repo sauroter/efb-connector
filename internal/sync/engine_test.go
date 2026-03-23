@@ -1160,8 +1160,8 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 	if en.GaugeFlow != "12.3 m3s" {
 		t.Errorf("GaugeFlow = %q, want %q", en.GaugeFlow, "12.3 m3s")
 	}
-	if en.WaterLevel != "Medium water" {
-		t.Errorf("WaterLevel = %q, want %q", en.WaterLevel, "Medium water")
+	if en.WaterLevel != "Low water" {
+		t.Errorf("WaterLevel = %q, want %q", en.WaterLevel, "Low water")
 	}
 }
 

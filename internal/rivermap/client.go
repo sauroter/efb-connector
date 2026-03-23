@@ -431,25 +431,24 @@ func findClosestReading(readings []readingJSON, targetUnix int64, unit string) *
 }
 
 // ClassifyLevel categorises a gauge reading value according to the
-// calibration thresholds for the associated section.
+// calibration thresholds: below LW is too low to paddle, LW–MW is low
+// water, MW–HW is medium water, above HW is high water.
 func ClassifyLevel(value float64, cal *Calibration) string {
 	if cal == nil {
 		return "Unknown"
 	}
-	// Handle zero thresholds: if all thresholds are zero, we cannot
-	// classify meaningfully.
 	if cal.LW == 0 && cal.MW == 0 && cal.HW == 0 {
 		return "Unknown"
 	}
 	switch {
-	case value <= cal.LW:
-		return "Low water"
+	case value < cal.LW:
+		return "Too low"
 	case value <= cal.MW:
-		return "Medium water"
+		return "Low water"
 	case value <= cal.HW:
-		return "High water"
+		return "Medium water"
 	default:
-		return "Very high water"
+		return "High water"
 	}
 }
 

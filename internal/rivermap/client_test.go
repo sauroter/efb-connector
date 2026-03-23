@@ -374,14 +374,15 @@ func TestClassifyLevel(t *testing.T) {
 		value    float64
 		expected string
 	}{
-		{10, "Low water"},
+		{10, "Too low"},         // below LW
+		{29, "Too low"},         // just below LW
 		{30, "Low water"},       // exactly at LW threshold
-		{31, "Medium water"},
-		{60, "Medium water"},    // exactly at MW threshold
-		{61, "High water"},
-		{120, "High water"},     // exactly at HW threshold
-		{121, "Very high water"},
-		{200, "Very high water"},
+		{45, "Low water"},       // between LW and MW
+		{60, "Low water"},       // exactly at MW threshold
+		{61, "Medium water"},    // between MW and HW
+		{120, "Medium water"},   // exactly at HW threshold
+		{121, "High water"},     // above HW
+		{200, "High water"},
 	}
 
 	for _, tc := range tests {
