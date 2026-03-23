@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"efb-connector/internal/crypto"
 )
 
 // PythonGarminProvider implements GarminProvider by shelling out to the
@@ -24,12 +27,18 @@ import (
 type PythonGarminProvider struct {
 	// scriptPath is the absolute or relative path to garmin_fetch.py.
 	scriptPath string
+
+	// encryptionKey is the AES-256 key used to encrypt/decrypt Garmin
+	// OAuth token files at rest.  When nil, token encryption is disabled
+	// (useful for tests).
+	encryptionKey []byte
 }
 
 // NewPythonGarminProvider returns a PythonGarminProvider that invokes the
-// Python script at scriptPath.
-func NewPythonGarminProvider(scriptPath string) *PythonGarminProvider {
-	return &PythonGarminProvider{scriptPath: scriptPath}
+// Python script at scriptPath.  encryptionKey is the AES-256 key used to
+// encrypt Garmin OAuth tokens at rest; pass nil to disable token encryption.
+func NewPythonGarminProvider(scriptPath string, encryptionKey []byte) *PythonGarminProvider {
+	return &PythonGarminProvider{scriptPath: scriptPath, encryptionKey: encryptionKey}
 }
 
 // stdinCreds is the JSON envelope written to the subprocess's stdin.
@@ -186,11 +195,35 @@ func (p *PythonGarminProvider) ValidateCredentials(
 
 // run executes `python <scriptPath> <args...>`, writes the credentials JSON to
 // the subprocess stdin, and returns (stdout, stderr, error).
+//
+// When encryption is enabled and the credentials include a TokenStorePath, the
+// method transparently decrypts any existing .enc token files to a temporary
+// directory before the subprocess starts, and re-encrypts them afterwards
+// (removing plaintext copies from the real tokenstore).
 func (p *PythonGarminProvider) run(
 	ctx context.Context,
 	creds GarminCredentials,
 	args ...string,
 ) (stdout, stderr string, err error) {
+	// ── Token encryption: decrypt existing tokens to a temp dir ──
+
+	tokenStoreForSubprocess := creds.TokenStorePath
+	useEncryption := creds.TokenStorePath != "" && p.encryptionKey != nil
+
+	var tmpTokenDir string
+	if useEncryption {
+		tmpTokenDir, err = os.MkdirTemp("", "garmin-tokens-*")
+		if err != nil {
+			return "", "", fmt.Errorf("garmin: create temp token dir: %w", err)
+		}
+		defer os.RemoveAll(tmpTokenDir)
+
+		decryptTokenStore(p.encryptionKey, creds.TokenStorePath, tmpTokenDir)
+		tokenStoreForSubprocess = tmpTokenDir
+	}
+
+	// ── Build and run the subprocess ──
+
 	cmdArgs := append([]string{p.scriptPath}, args...)
 	cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
 
@@ -198,7 +231,7 @@ func (p *PythonGarminProvider) run(
 	credsJSON, err := json.Marshal(stdinCreds{
 		Email:      creds.Email,
 		Password:   creds.Password,
-		TokenStore: creds.TokenStorePath,
+		TokenStore: tokenStoreForSubprocess,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("garmin: failed to marshal credentials: %w", err)
@@ -219,7 +252,73 @@ func (p *PythonGarminProvider) run(
 	cmd.Stderr = &stderrBuf
 
 	runErr := cmd.Run()
+
+	// ── Token encryption: re-encrypt tokens from temp dir back to real tokenstore ──
+
+	if useEncryption {
+		encryptTokenStore(p.encryptionKey, tmpTokenDir, creds.TokenStorePath)
+	}
+
 	return stdoutBuf.String(), stderrBuf.String(), runErr
+}
+
+// tokenFileNames is the set of OAuth token files managed by garth.
+var tokenFileNames = []string{"oauth1_token.json", "oauth2_token.json"}
+
+// decryptTokenStore decrypts .enc files from srcDir to dstDir as plaintext JSON.
+// Missing or corrupted files are silently skipped — a fresh Garmin login will
+// create new tokens.
+func decryptTokenStore(key []byte, srcDir, dstDir string) {
+	for _, name := range tokenFileNames {
+		encPath := filepath.Join(srcDir, name+".enc")
+		data, err := os.ReadFile(encPath)
+		if err != nil {
+			continue // no encrypted file yet
+		}
+		plaintext, err := crypto.Decrypt(data, key)
+		if err != nil {
+			slog.Warn("garmin: failed to decrypt token file, skipping",
+				"file", encPath, "error", err)
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dstDir, name), plaintext, 0600); err != nil {
+			slog.Warn("garmin: failed to write decrypted token file",
+				"file", name, "error", err)
+		}
+	}
+}
+
+// encryptTokenStore encrypts plaintext JSON files from srcDir and writes .enc
+// files to dstDir.  It also removes plaintext copies from dstDir so that tokens
+// are never stored unencrypted at rest.
+func encryptTokenStore(key []byte, srcDir, dstDir string) {
+	// Ensure the destination directory exists (first-time token creation).
+	if err := os.MkdirAll(dstDir, 0700); err != nil {
+		slog.Warn("garmin: failed to create token store dir",
+			"dir", dstDir, "error", err)
+		return
+	}
+
+	for _, name := range tokenFileNames {
+		plainPath := filepath.Join(srcDir, name)
+		data, err := os.ReadFile(plainPath)
+		if err != nil {
+			continue // token file not present in temp dir
+		}
+		encrypted, err := crypto.Encrypt(data, key)
+		if err != nil {
+			slog.Warn("garmin: failed to encrypt token file",
+				"file", name, "error", err)
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dstDir, name+".enc"), encrypted, 0600); err != nil {
+			slog.Warn("garmin: failed to write encrypted token file",
+				"file", name+".enc", "error", err)
+			continue
+		}
+		// Remove any plaintext copy from the real tokenstore.
+		os.Remove(filepath.Join(dstDir, name))
+	}
 }
 
 // classifyError maps subprocess errors and stderr messages to typed sentinel

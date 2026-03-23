@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"efb-connector/internal/crypto"
 )
 
 // writeMockScript writes a Python mock script to dir/garmin_mock.py and
@@ -68,7 +70,7 @@ activities = [
 print(json.dumps(activities))
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	ctx := context.Background()
 
 	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -129,7 +131,7 @@ parser.parse_args()
 print(json.dumps([]))
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	activities, err := p.ListActivities(context.Background(), newCreds(),
 		time.Now().Add(-24*time.Hour), time.Now())
 	if err != nil {
@@ -154,7 +156,7 @@ print("garmin: authentication failed", file=sys.stderr)
 sys.exit(1)
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.ListActivities(context.Background(), newCreds(),
 		time.Now().Add(-24*time.Hour), time.Now())
 	if err == nil {
@@ -179,7 +181,7 @@ print("MFA required by Garmin", file=sys.stderr)
 sys.exit(1)
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.ListActivities(context.Background(), newCreds(),
 		time.Now().Add(-24*time.Hour), time.Now())
 	if err == nil {
@@ -203,7 +205,7 @@ parser.parse_args()
 print("this is not JSON")
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.ListActivities(context.Background(), newCreds(),
 		time.Now().Add(-24*time.Hour), time.Now())
 	if err == nil {
@@ -237,7 +239,7 @@ with open(filepath, "w") as f:
 print(filepath)
 `, wantGPX))
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	got, err := p.DownloadGPX(context.Background(), newCreds(), "99887766")
 	if err != nil {
 		t.Fatalf("DownloadGPX returned error: %v", err)
@@ -269,7 +271,7 @@ print(gpx_path)
 	// Wrap the provider to intercept the temp dir.  Since PythonGarminProvider
 	// creates the temp dir internally we verify by checking that the file
 	// returned is valid and no temp dirs leaking by calling os.ReadDir on os.TempDir.
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	tmpsBefore, _ := filepath.Glob(filepath.Join(os.TempDir(), "garmin-gpx-*"))
 
 	data, err := p.DownloadGPX(context.Background(), newCreds(), "42")
@@ -301,7 +303,7 @@ print("Error fetching GPX", file=sys.stderr)
 sys.exit(1)
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.DownloadGPX(context.Background(), newCreds(), "99")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -324,7 +326,7 @@ parser.parse_args()
 # Print nothing — simulate script that succeeds but gives no path.
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.DownloadGPX(context.Background(), newCreds(), "99")
 	if err == nil {
 		t.Fatal("expected error for empty stdout, got nil")
@@ -348,7 +350,7 @@ parser.parse_args()
 print("/etc/passwd")
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_, err := p.DownloadGPX(context.Background(), newCreds(), "99")
 	if err == nil {
 		t.Fatal("expected path traversal error, got nil")
@@ -371,7 +373,7 @@ parser.parse_args()
 # Exit 0 — credentials are valid.
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	if err := p.ValidateCredentials(context.Background(), newCreds()); err != nil {
 		t.Errorf("ValidateCredentials returned unexpected error: %v", err)
 	}
@@ -389,7 +391,7 @@ print("login failed: invalid credentials", file=sys.stderr)
 sys.exit(1)
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	err := p.ValidateCredentials(context.Background(), newCreds())
 	if err == nil {
 		t.Fatal("expected ErrGarminAuth, got nil")
@@ -411,7 +413,7 @@ print("CAPTCHA required", file=sys.stderr)
 sys.exit(1)
 `)
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	err := p.ValidateCredentials(context.Background(), newCreds())
 	if err == nil {
 		t.Fatal("expected ErrGarminMFARequired, got nil")
@@ -442,7 +444,7 @@ with open(%q, "w") as f:
     f.write(json.dumps(creds))
 `, credsFile))
 
-	p := NewPythonGarminProvider(script)
+	p := NewPythonGarminProvider(script, nil)
 	_ = p.ValidateCredentials(context.Background(), GarminCredentials{
 		Email:          "user@example.com",
 		Password:       "p@ssw0rd",
@@ -514,5 +516,101 @@ func TestToStringID(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("toStringID(%v) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// ---- Token encryption -------------------------------------------------------
+
+func TestTokenEncryptionRoundTrip(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Simulate a tokenstore with plaintext token files.
+	tokenStoreDir := t.TempDir()
+	oauth1 := []byte(`{"oauth_token":"tok1","oauth_token_secret":"sec1"}`)
+	oauth2 := []byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`)
+
+	if err := os.WriteFile(filepath.Join(tokenStoreDir, "oauth1_token.json"), oauth1, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenStoreDir, "oauth2_token.json"), oauth2, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Encrypt the tokens.
+	encryptTokenStore(key, tokenStoreDir, tokenStoreDir)
+
+	// Verify .enc files exist.
+	for _, name := range []string{"oauth1_token.json.enc", "oauth2_token.json.enc"} {
+		if _, err := os.Stat(filepath.Join(tokenStoreDir, name)); err != nil {
+			t.Errorf("expected %s to exist: %v", name, err)
+		}
+	}
+
+	// Verify plaintext files were removed.
+	for _, name := range []string{"oauth1_token.json", "oauth2_token.json"} {
+		if _, err := os.Stat(filepath.Join(tokenStoreDir, name)); err == nil {
+			t.Errorf("expected %s to be removed after encryption", name)
+		}
+	}
+
+	// Decrypt to a new directory and verify contents match.
+	decryptDir := t.TempDir()
+	decryptTokenStore(key, tokenStoreDir, decryptDir)
+
+	got1, err := os.ReadFile(filepath.Join(decryptDir, "oauth1_token.json"))
+	if err != nil {
+		t.Fatalf("failed to read decrypted oauth1_token.json: %v", err)
+	}
+	if string(got1) != string(oauth1) {
+		t.Errorf("oauth1_token.json: got %q, want %q", got1, oauth1)
+	}
+
+	got2, err := os.ReadFile(filepath.Join(decryptDir, "oauth2_token.json"))
+	if err != nil {
+		t.Fatalf("failed to read decrypted oauth2_token.json: %v", err)
+	}
+	if string(got2) != string(oauth2) {
+		t.Errorf("oauth2_token.json: got %q, want %q", got2, oauth2)
+	}
+}
+
+func TestTokenEncryption_MissingFilesSkipped(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Empty directories — nothing to encrypt or decrypt.
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	// Should not panic or error.
+	encryptTokenStore(key, srcDir, dstDir)
+	decryptTokenStore(key, srcDir, dstDir)
+}
+
+func TestTokenEncryption_CorruptedFileSkipped(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	// Write garbage as an encrypted file.
+	if err := os.WriteFile(filepath.Join(srcDir, "oauth1_token.json.enc"), []byte("corrupted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not panic — corrupted files are silently skipped.
+	decryptTokenStore(key, srcDir, dstDir)
+
+	// The decrypted file should not exist.
+	if _, err := os.Stat(filepath.Join(dstDir, "oauth1_token.json")); err == nil {
+		t.Error("expected oauth1_token.json to not be created from corrupted .enc file")
 	}
 }

@@ -247,7 +247,7 @@ func runSync(days int) {
 	}
 
 	scriptPath := getScriptPath()
-	provider := garmin.NewPythonGarminProvider(scriptPath)
+	provider := garmin.NewPythonGarminProvider(scriptPath, nil)
 
 	end := time.Now()
 	start := end.AddDate(0, 0, -days)
