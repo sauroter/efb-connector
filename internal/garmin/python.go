@@ -311,9 +311,20 @@ func encryptTokenStore(key []byte, srcDir, dstDir string) {
 				"file", name, "error", err)
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(dstDir, name+".enc"), encrypted, 0600); err != nil {
+		// Atomic write: write to temp file then rename to prevent corruption
+		// if the process crashes mid-write.
+		encPath := filepath.Join(dstDir, name+".enc")
+		tmpPath := encPath + ".tmp"
+		if err := os.WriteFile(tmpPath, encrypted, 0600); err != nil {
 			slog.Warn("garmin: failed to write encrypted token file",
 				"file", name+".enc", "error", err)
+			os.Remove(tmpPath)
+			continue
+		}
+		if err := os.Rename(tmpPath, encPath); err != nil {
+			slog.Warn("garmin: failed to rename encrypted token file",
+				"file", name+".enc", "error", err)
+			os.Remove(tmpPath)
 			continue
 		}
 		// Remove any plaintext copy from the real tokenstore.
