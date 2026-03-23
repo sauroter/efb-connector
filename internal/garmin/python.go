@@ -47,6 +47,7 @@ type listActivityJSON struct {
 	Type         string      `json:"type"`
 	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; not mapped to Activity (filtering is in Python)
 	Date         string      `json:"date"`           // "YYYY-MM-DD"
+	StartTime    string      `json:"start_time"`     // "YYYY-MM-DD HH:MM:SS"
 	Duration     float64     `json:"duration"`       // seconds
 	Distance     float64     `json:"distance"`       // metres
 }
@@ -89,11 +90,19 @@ func (p *PythonGarminProvider) ListActivities(
 			return nil, fmt.Errorf("garmin: failed to parse activity date %q: %w", r.Date, err)
 		}
 
+		startTime := date // fallback to date-only
+		if r.StartTime != "" {
+			if st, err := time.Parse("2006-01-02 15:04:05", r.StartTime); err == nil {
+				startTime = st
+			}
+		}
+
 		activities = append(activities, Activity{
 			ProviderID:   id,
 			Name:         r.Name,
 			Type:         r.Type,
 			Date:         date,
+			StartTime:    startTime,
 			DurationSecs: r.Duration,
 			DistanceM:    r.Distance,
 		})

@@ -19,6 +19,7 @@ type SyncRun struct {
 	ActivitiesSynced   int
 	ActivitiesSkipped  int
 	ActivitiesFailed   int
+	TripsCreated       int
 	ErrorMessage       string
 }
 
@@ -41,7 +42,7 @@ func (d *DB) CreateSyncRun(userID int64, trigger string) (int64, error) {
 }
 
 // UpdateSyncRun sets finished_at, status and counters on a sync_run row.
-func (d *DB) UpdateSyncRun(id int64, status string, found, synced, skipped, failed int, errMsg string) error {
+func (d *DB) UpdateSyncRun(id int64, status string, found, synced, skipped, failed, tripsCreated int, errMsg string) error {
 	_, err := d.db.Exec(`
 		UPDATE sync_runs
 		   SET finished_at          = datetime('now'),
@@ -50,9 +51,10 @@ func (d *DB) UpdateSyncRun(id int64, status string, found, synced, skipped, fail
 		       activities_synced    = ?,
 		       activities_skipped   = ?,
 		       activities_failed    = ?,
+		       trips_created        = ?,
 		       error_message        = ?
 		 WHERE id = ?
-	`, status, found, synced, skipped, failed, nullableStr(errMsg), id)
+	`, status, found, synced, skipped, failed, tripsCreated, nullableStr(errMsg), id)
 	if err != nil {
 		return fmt.Errorf("database: update sync run %d: %w", id, err)
 	}
@@ -64,7 +66,7 @@ func (d *DB) GetSyncRun(id int64) (*SyncRun, error) {
 	row := d.db.QueryRow(`
 		SELECT id, user_id, trigger, started_at, finished_at, status,
 		       activities_found, activities_synced, activities_skipped,
-		       activities_failed, error_message
+		       activities_failed, trips_created, error_message
 		  FROM sync_runs WHERE id = ?
 	`, id)
 
@@ -80,7 +82,7 @@ func (d *DB) GetSyncHistory(userID int64, limit int) ([]SyncRun, error) {
 	rows, err := d.db.Query(`
 		SELECT id, user_id, trigger, started_at, finished_at, status,
 		       activities_found, activities_synced, activities_skipped,
-		       activities_failed, error_message
+		       activities_failed, trips_created, error_message
 		  FROM sync_runs
 		 WHERE user_id = ?
 		 ORDER BY started_at DESC
@@ -112,7 +114,7 @@ func scanSyncRun(row *sql.Row) (*SyncRun, error) {
 	err := row.Scan(
 		&r.ID, &r.UserID, &r.Trigger, &startedAt, &finishedAt, &r.Status,
 		&r.ActivitiesFound, &r.ActivitiesSynced, &r.ActivitiesSkipped,
-		&r.ActivitiesFailed, &errMsg,
+		&r.ActivitiesFailed, &r.TripsCreated, &errMsg,
 	)
 	if err != nil {
 		return nil, err
@@ -139,7 +141,7 @@ func scanSyncRunRow(rows *sql.Rows) (*SyncRun, error) {
 	err := rows.Scan(
 		&r.ID, &r.UserID, &r.Trigger, &startedAt, &finishedAt, &r.Status,
 		&r.ActivitiesFound, &r.ActivitiesSynced, &r.ActivitiesSkipped,
-		&r.ActivitiesFailed, &errMsg,
+		&r.ActivitiesFailed, &r.TripsCreated, &errMsg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan sync run: %w", err)

@@ -135,7 +135,7 @@ func (d *DB) GetRecentFailedSyncRuns(limit int) ([]SyncRun, error) {
 	rows, err := d.db.Query(`
 		SELECT id, user_id, trigger, started_at, finished_at, status,
 		       activities_found, activities_synced, activities_skipped,
-		       activities_failed, error_message
+		       activities_failed, trips_created, error_message
 		  FROM sync_runs
 		 WHERE status IN ('failed', 'partial')
 		 ORDER BY started_at DESC

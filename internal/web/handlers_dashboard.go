@@ -59,13 +59,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"ActivitiesSynced":  run.ActivitiesSynced,
 			"ActivitiesSkipped": run.ActivitiesSkipped,
 			"ActivitiesFailed":  run.ActivitiesFailed,
+			"TripsCreated":      run.TripsCreated,
 			"ErrorMessage":      run.ErrorMessage,
 		}
 		hasSynced = run.Status == "success" || run.Status == "completed" || run.Status == "partial"
 	}
 
 	// Compute getting-started state.
-	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync, 0=all done.
+	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync (also shows trip config), 0=all done.
 	setupStep := 0
 	showGettingStarted := false
 	if !garminConnected {
@@ -87,6 +88,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"EFBConnected":       efbConnected,
 		"LastSync":           lastSync,
 		"SyncDays":           user.SyncDays,
+		"AutoCreateTrips":    user.AutoCreateTrips,
 		"Today":              time.Now().Format("2006-01-02"),
 		"ShowGettingStarted": showGettingStarted,
 		"SetupStep":          setupStep,
@@ -269,6 +271,33 @@ func (s *Server) handleEFBSettingsDelete(w http.ResponseWriter, r *http.Request)
 	s.logger.Info("efb credentials deleted", "user_id", userID)
 	setFlash(w, "EFB credentials removed.")
 	http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
+}
+
+// handleAutoCreateTripsSave saves the auto_create_trips toggle for the current user.
+func (s *Server) handleAutoCreateTripsSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Standard checkbox behaviour: field is present when checked, absent when not.
+	enabled := r.FormValue("enabled") == "1"
+
+	if err := s.db.UpdateAutoCreateTrips(userID, enabled); err != nil {
+		s.logger.Error("failed to update auto_create_trips", "user_id", userID, "error", err)
+		setFlash(w, "Failed to save setting. Please try again.")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
+	s.logger.Info("auto_create_trips updated", "user_id", userID, "enabled", enabled)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 // handleAccountDelete deletes the user and all associated data, then redirects

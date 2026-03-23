@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	gohtml "html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -21,9 +23,26 @@ import (
 // DefaultBaseURL is the base URL for the Kanu-EFB portal.
 const DefaultBaseURL = "https://efb.kanu-efb.de"
 
+// Compiled regular expressions used by parseUnassociatedTrack and
+// parseFormFields. Defined at package level to avoid recompilation on each
+// call (and within loops).
+var (
+	trackIDRe        = regexp.MustCompile(`name="track_id:(\d+)"`)
+	editRe           = regexp.MustCompile(`name="edit:(\d+)"`)
+	inputRe          = regexp.MustCompile(`<input\b[^>]*>`)
+	nameRe           = regexp.MustCompile(`name="([^"]*)"`)
+	valueRe          = regexp.MustCompile(`value="([^"]*)"`)
+	typeRe           = regexp.MustCompile(`type="([^"]*)"`)
+	selectRe         = regexp.MustCompile(`(?s)<select\b[^>]*name="([^"]*)"[^>]*>(.*?)</select>`)
+	selectedOptionRe = regexp.MustCompile(`<option\b[^>]*\bselected\b[^>]*>`)
+	firstOptionRe    = regexp.MustCompile(`<option\b[^>]*value="([^"]*)"`)
+	textareaRe       = regexp.MustCompile(`(?s)<textarea\b[^>]*name="([^"]*)"[^>]*>(.*?)</textarea>`)
+)
+
 const (
-	defaultLoginPath  = "/login"
-	defaultUploadPath = "/interpretation/usersmap"
+	defaultLoginPath      = "/login"
+	defaultUploadPath     = "/interpretation/usersmap"
+	defaultTripCreatePath = "/trips/create"
 )
 
 // EFBClient is an authenticated HTTP client for the Kanu-EFB portal.
@@ -209,6 +228,239 @@ func (c *EFBClient) IsSessionValid(ctx context.Context) bool {
 
 	// If the server redirected us to the login page the session has expired.
 	return !strings.HasSuffix(resp.Request.URL.Path, defaultLoginPath)
+}
+
+// FindUnassociatedTrack searches the tracks page (/interpretation/usersmap)
+// for a track matching gpxFilename that does not yet have a trip.
+// Returns the EFB track ID or empty string if not found / already associated.
+func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.uploadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("efb: failed to build tracks request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("efb: tracks request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("efb: failed to read tracks response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("efb: tracks page returned status %d", resp.StatusCode)
+	}
+
+	return parseUnassociatedTrack(string(body), gpxFilename), nil
+}
+
+// parseUnassociatedTrack scans the tracks page HTML for a track row containing
+// gpxFilename. If the row has a "track_id:NNN" button (no trip yet), the track
+// ID is returned. If the row has an "edit:NNN" button (trip exists) or the
+// filename is not found, an empty string is returned.
+func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
+	// Each track row is a <div style="overflow:auto;..."> block containing
+	// the filename and either a track_id:NNN or edit:NNN input button.
+	// We find the enclosing row boundaries rather than using a fixed window
+	// to avoid bleeding into adjacent track rows.
+
+	const rowDelimiter = `<div style="overflow:auto`
+
+	idx := 0
+	for {
+		pos := strings.Index(htmlBody[idx:], gpxFilename)
+		if pos == -1 {
+			return ""
+		}
+		pos += idx
+
+		// Search backwards from the match to find the nearest row delimiter.
+		start := strings.LastIndex(htmlBody[:pos], rowDelimiter)
+		if start == -1 {
+			start = 0
+		}
+
+		// Search forwards to find the next row delimiter (or end of string).
+		end := strings.Index(htmlBody[pos:], rowDelimiter)
+		if end == -1 {
+			end = len(htmlBody)
+		} else {
+			end += pos
+		}
+
+		chunk := htmlBody[start:end]
+
+		// Look for track_id:NNN pattern — means no trip yet.
+		trackIDMatch := trackIDRe.FindStringSubmatch(chunk)
+		if trackIDMatch != nil {
+			return trackIDMatch[1]
+		}
+
+		// Look for edit:NNN pattern — means trip already exists.
+		editMatch := editRe.FindStringSubmatch(chunk)
+		if editMatch != nil {
+			return ""
+		}
+
+		idx = pos + len(gpxFilename)
+	}
+}
+
+// CreateTripFromTrack navigates to the trip creation form for the given EFB
+// track ID, fills in start/end times, and submits the form.
+func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64) error {
+	// Step 1: POST to /interpretation/usersmap to simulate clicking the
+	// "Fahrt neu anlegen" image button, which redirects to /trips/create.
+	clickFieldName := fmt.Sprintf("track_id:%s", trackID)
+	formData := url.Values{}
+	formData.Set(clickFieldName+".x", "1")
+	formData.Set(clickFieldName+".y", "1")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.uploadURL,
+		strings.NewReader(formData.Encode()))
+	if err != nil {
+		return fmt.Errorf("efb: failed to build track click request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", c.baseURL)
+	req.Header.Set("Referer", c.uploadURL)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("efb: track click request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("efb: failed to read trip form response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("efb: trip form returned status %d: %s",
+			resp.StatusCode, truncateBody(body))
+	}
+
+	if !strings.Contains(string(body), "begdate") {
+		return fmt.Errorf("efb: trip creation form not found after track click (status %d)", resp.StatusCode)
+	}
+
+	// Step 2: Parse the form HTML to extract all field values.
+	formValues := parseFormFields(string(body))
+
+	// Step 3: Fill in start and end times.
+	endTime := startTime.Add(time.Duration(durationSecs) * time.Second)
+
+	formValues.Set("beghour", fmt.Sprintf("%d", startTime.Hour()))
+	formValues.Set("begminute", fmt.Sprintf("%d", startTime.Minute()))
+	formValues.Set("enddate", endTime.Format("02.01.2006"))
+	formValues.Set("endhour", fmt.Sprintf("%d", endTime.Hour()))
+	formValues.Set("endminute", fmt.Sprintf("%d", endTime.Minute()))
+	formValues.Set("save", "speichern")
+
+	// Step 4: POST the completed form.
+	tripCreateURL := c.baseURL + defaultTripCreatePath
+	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, tripCreateURL,
+		strings.NewReader(formValues.Encode()))
+	if err != nil {
+		return fmt.Errorf("efb: failed to build trip save request: %w", err)
+	}
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Origin", c.baseURL)
+	req2.Header.Set("Referer", tripCreateURL)
+
+	resp2, err := c.httpClient.Do(req2)
+	if err != nil {
+		return fmt.Errorf("efb: trip save request failed: %w", err)
+	}
+	defer resp2.Body.Close()
+
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		return fmt.Errorf("efb: failed to read trip save response: %w", err)
+	}
+
+	// Accept 200 OK or redirect (3xx followed to a success page).
+	if resp2.StatusCode != http.StatusOK {
+		return fmt.Errorf("efb: trip save failed with status %d: %s",
+			resp2.StatusCode, truncateBody(body2))
+	}
+
+	// Verify the response does not contain error indicators.
+	respText := string(body2)
+	if strings.Contains(respText, "Fehler") || strings.Contains(respText, "error") {
+		return fmt.Errorf("efb: trip creation may have failed (response contains error indicator)")
+	}
+
+	return nil
+}
+
+// parseFormFields extracts all <input>, <select>, and <textarea> name/value
+// pairs from the HTML. For <select> elements, the value of the <option> with
+// the "selected" attribute is used. For multi-value fields (e.g. name ending
+// with "[]"), multiple values are preserved via url.Values.Add.
+func parseFormFields(html string) url.Values {
+	vals := url.Values{}
+
+	// Parse <input> elements.
+	for _, match := range inputRe.FindAllString(html, -1) {
+		nameMatch := nameRe.FindStringSubmatch(match)
+		if nameMatch == nil {
+			continue
+		}
+		name := nameMatch[1]
+
+		// Skip submit and image buttons — we set "save" explicitly.
+		typeMatch := typeRe.FindStringSubmatch(match)
+		if typeMatch != nil {
+			t := strings.ToLower(typeMatch[1])
+			if t == "submit" || t == "image" || t == "button" {
+				continue
+			}
+			// For checkboxes/radios, only include if "checked".
+			if t == "checkbox" || t == "radio" {
+				if !strings.Contains(match, "checked") {
+					continue
+				}
+			}
+		}
+
+		value := ""
+		valueMatch := valueRe.FindStringSubmatch(match)
+		if valueMatch != nil {
+			value = gohtml.UnescapeString(valueMatch[1])
+		}
+		vals.Add(name, value)
+	}
+
+	// Parse <select> elements with their selected options.
+	for _, match := range selectRe.FindAllStringSubmatch(html, -1) {
+		name := match[1]
+		opts := match[2]
+
+		// Find the <option> tag with "selected", then extract value from it.
+		if selMatch := selectedOptionRe.FindString(opts); selMatch != "" {
+			if valMatch := valueRe.FindStringSubmatch(selMatch); len(valMatch) > 1 {
+				vals.Add(name, gohtml.UnescapeString(valMatch[1]))
+				continue
+			}
+		}
+		// No selected option; try the first option's value.
+		firstOption := firstOptionRe.FindStringSubmatch(opts)
+		if firstOption != nil {
+			vals.Add(name, gohtml.UnescapeString(firstOption[1]))
+		}
+	}
+
+	// Parse <textarea> elements.
+	for _, match := range textareaRe.FindAllStringSubmatch(html, -1) {
+		vals.Add(match[1], gohtml.UnescapeString(match[2]))
+	}
+
+	return vals
 }
 
 // truncateBody returns up to 500 bytes of body as a string, preventing full

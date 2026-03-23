@@ -52,8 +52,11 @@ type Activity struct {
 	// so any water_sports subtype (parentTypeId 228) may appear here.
 	Type string
 
-	// Date is the local start time of the activity.
+	// Date is the local start date of the activity (date only, no time component).
 	Date time.Time
+
+	// StartTime is the full local start time of the activity (date + time).
+	StartTime time.Time
 
 	// DurationSecs is the total elapsed duration of the activity in seconds.
 	DurationSecs float64

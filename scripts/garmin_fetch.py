@@ -196,6 +196,7 @@ def list_activities(client, days=30):
             "type": activity_type,
             "parent_type_id": activity.get("activityType", {}).get("parentTypeId"),
             "date": activity.get("startTimeLocal", "")[:10],
+            "start_time": activity.get("startTimeLocal", ""),
             "duration": activity.get("duration", 0),
             "distance": activity.get("distance", 0),
         })

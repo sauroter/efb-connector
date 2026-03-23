@@ -82,4 +82,10 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     activities_failed   INTEGER DEFAULT 0,
     error_message       TEXT
 );`,
+
+	// 0002 – add auto_create_trips user preference
+	`ALTER TABLE users ADD COLUMN auto_create_trips INTEGER NOT NULL DEFAULT 0;`,
+
+	// 0003 – track trips created during sync
+	`ALTER TABLE sync_runs ADD COLUMN trips_created INTEGER NOT NULL DEFAULT 0;`,
 }

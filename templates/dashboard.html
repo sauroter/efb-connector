@@ -62,17 +62,30 @@
           {{end}}
         </div>
         <div class="getting-started-step {{if and .GarminConnected .EFBConnected (not (eq .SetupStep 3))}}step-done{{else if eq .SetupStep 3}}step-active{{else}}step-pending{{end}}">
-          {{if eq .SetupStep 3}}
-            <span class="step-icon">3</span> Run your first sync &mdash;
-            <form method="POST" action="/sync/trigger" style="display: inline;">
-              <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-              <button type="submit" class="outline" style="display: inline; padding: 0.2em 0.8em; margin: 0;">Sync now</button>
-            </form>
-          {{else}}
-            <span class="step-icon">3</span> Run your first sync
-          {{end}}
+          <span class="step-icon">3</span> Run your first sync
         </div>
       </div>
+      {{if eq .SetupStep 3}}
+      <article style="margin-top: 1.5rem;">
+        <header><strong>Before you sync: auto-create trip entries?</strong></header>
+        <p>EFB Connector can automatically create logbook entries (Fahrten) in your Kanu-EFB from synced tracks. Start and end times are filled in from your Garmin activity data. You can always change this later on the dashboard.</p>
+        <footer style="display: flex; gap: 0.5rem;">
+          <form method="post" action="/settings/auto-create-trips">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="enabled" value="1">
+            <button type="submit">Yes, create trips automatically</button>
+          </form>
+          <form method="post" action="/settings/auto-create-trips">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary">No thanks, just upload tracks</button>
+          </form>
+        </footer>
+      </article>
+      <form method="POST" action="/sync/trigger" style="margin-top: 1rem;">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit">Run first sync</button>
+      </form>
+      {{end}}
     </section>
     {{else}}
     <section class="card-grid">
@@ -131,6 +144,7 @@
             &mdash;
             Found: {{index .LastSync "ActivitiesFound"}},
             Synced: {{index .LastSync "ActivitiesSynced"}},
+            {{if index .LastSync "TripsCreated"}}Trips: {{index .LastSync "TripsCreated"}},{{end}}
             Skipped: {{index .LastSync "ActivitiesSkipped"}},
             Failed: {{index .LastSync "ActivitiesFailed"}}
           </p>
@@ -155,6 +169,14 @@
         </button>
       </form>
       <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
+
+      <form method="post" action="/settings/auto-create-trips" style="margin-top: 0.75rem;">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label>
+          <input type="checkbox" name="enabled" value="1" {{if .AutoCreateTrips}}checked{{end}} onchange="this.form.submit()">
+          Automatically create EFB trip entries from synced tracks
+        </label>
+      </form>
 
       <details style="margin-top: 1rem;">
         <summary>Sync a custom date range</summary>

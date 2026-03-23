@@ -62,11 +62,12 @@ func ObserveHTTPRequest(method, path string, status int, durationSeconds float64
 }
 
 // ObserveSyncRun records metrics for a completed sync run.
-func ObserveSyncRun(trigger, status string, durationSeconds float64, found, synced, skipped, failed int) {
+func ObserveSyncRun(trigger, status string, durationSeconds float64, found, synced, skipped, failed, tripsCreated int) {
 	SyncRunsTotal.WithLabelValues(trigger, status).Inc()
 	SyncActivitiesTotal.WithLabelValues("synced").Add(float64(synced))
 	SyncActivitiesTotal.WithLabelValues("skipped").Add(float64(skipped))
 	SyncActivitiesTotal.WithLabelValues("failed").Add(float64(failed))
+	SyncActivitiesTotal.WithLabelValues("trips_created").Add(float64(tripsCreated))
 	SyncDuration.WithLabelValues(trigger).Observe(durationSeconds)
 }
 

@@ -9,13 +9,14 @@ import (
 
 // User mirrors the users table.
 type User struct {
-	ID          int64
-	Email       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	IsActive    bool
-	SyncEnabled bool
-	SyncDays    int
+	ID              int64
+	Email           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	IsActive        bool
+	SyncEnabled     bool
+	SyncDays        int
+	AutoCreateTrips bool
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
@@ -40,7 +41,7 @@ func (d *DB) CreateUser(email string) (*User, error) {
 // no such row exists.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips
 		   FROM users WHERE email = ?`, email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -53,13 +54,26 @@ func (d *DB) GetUserByEmail(email string) (*User, error) {
 // found.
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips
 		   FROM users WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return u, err
+}
+
+// UpdateAutoCreateTrips sets the auto_create_trips flag for the given user.
+func (d *DB) UpdateAutoCreateTrips(userID int64, enabled bool) error {
+	val := 0
+	if enabled {
+		val = 1
+	}
+	_, err := d.db.Exec(`UPDATE users SET auto_create_trips = ? WHERE id = ?`, val, userID)
+	if err != nil {
+		return fmt.Errorf("database: update auto_create_trips for user %d: %w", userID, err)
+	}
+	return nil
 }
 
 // DeleteUser removes the user and all cascaded rows (credentials, activities,
@@ -75,7 +89,7 @@ func (d *DB) DeleteUser(id int64) error {
 // both Garmin and EFB credentials marked as valid.
 func (d *DB) GetSyncableUsers() ([]User, error) {
 	rows, err := d.db.Query(`
-		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days
+		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips
 		  FROM users u
 		  JOIN garmin_credentials gc ON gc.user_id = u.id AND gc.is_valid = 1
 		  JOIN efb_credentials    ec ON ec.user_id = u.id AND ec.is_valid = 1
@@ -101,11 +115,11 @@ func (d *DB) GetSyncableUsers() ([]User, error) {
 func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
-	var isActive, syncEnabled int
+	var isActive, syncEnabled, autoCreateTrips int
 
 	err := row.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
-		&isActive, &syncEnabled, &u.SyncDays,
+		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips,
 	)
 	if err != nil {
 		return nil, err
@@ -115,6 +129,7 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	u.UpdatedAt, _ = parseTime(updatedAt)
 	u.IsActive = isActive != 0
 	u.SyncEnabled = syncEnabled != 0
+	u.AutoCreateTrips = autoCreateTrips != 0
 	return &u, nil
 }
 
@@ -122,11 +137,11 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
-	var isActive, syncEnabled int
+	var isActive, syncEnabled, autoCreateTrips int
 
 	err := rows.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
-		&isActive, &syncEnabled, &u.SyncDays,
+		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan user: %w", err)
@@ -136,6 +151,7 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	u.UpdatedAt, _ = parseTime(updatedAt)
 	u.IsActive = isActive != 0
 	u.SyncEnabled = syncEnabled != 0
+	u.AutoCreateTrips = autoCreateTrips != 0
 	return &u, nil
 }
 
