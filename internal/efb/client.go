@@ -260,19 +260,35 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 		return "", fmt.Errorf("efb: session expired, got login page instead of tracks")
 	}
 
-	// Debug: check if the filename appears in the response at all.
 	htmlStr := string(body)
-	if strings.Contains(htmlStr, gpxFilename) {
-		slog.Info("efb: track filename found in tracks page HTML", "filename", gpxFilename)
-	} else {
-		slog.Warn("efb: track filename NOT found in tracks page HTML",
+
+	// Debug: dump the row chunk for the matching filename.
+	result := parseUnassociatedTrack(htmlStr, gpxFilename)
+	if result == "" && strings.Contains(htmlStr, gpxFilename) {
+		// Filename is in the page but parser returned empty — extract the row for debugging.
+		const rowDelimiter = `<div style="overflow:auto`
+		pos := strings.Index(htmlStr, gpxFilename)
+		start := strings.LastIndex(htmlStr[:pos], rowDelimiter)
+		if start == -1 {
+			start = 0
+		}
+		end := strings.Index(htmlStr[pos:], rowDelimiter)
+		if end == -1 {
+			end = len(htmlStr) - pos
+		}
+		chunk := htmlStr[start : pos+end]
+		if len(chunk) > 500 {
+			chunk = chunk[:500]
+		}
+		slog.Warn("efb: filename found but track not parsed",
 			"filename", gpxFilename,
-			"bodyLen", len(body),
-			"hasTrackList", strings.Contains(htmlStr, "Meine Tracks"),
-			"hasOverflowDiv", strings.Contains(htmlStr, `overflow:auto`))
+			"hasTrackID", strings.Contains(chunk, "track_id:"),
+			"hasEdit", strings.Contains(chunk, "edit:"),
+			"chunkLen", len(chunk),
+			"chunk", chunk)
 	}
 
-	return parseUnassociatedTrack(htmlStr, gpxFilename), nil
+	return result, nil
 }
 
 // parseUnassociatedTrack scans the tracks page HTML for a track row containing
