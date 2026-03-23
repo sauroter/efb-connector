@@ -1,10 +1,10 @@
 {{define "sync_history.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Sync History — EFB Connector</title>
+  <title>{{call .T "history.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <style>
@@ -21,7 +21,7 @@
     {{end}}
 
     <hgroup>
-      <h1>Sync History</h1>
+      <h1>{{call .T "history.heading"}}</h1>
       <p>Last {{if .Runs}}{{len .Runs}}{{else}}0{{end}} sync runs.</p>
     </hgroup>
 
@@ -30,21 +30,21 @@
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Trigger</th>
-            <th>Status</th>
-            <th>Found</th>
-            <th>Synced</th>
-            <th>Trips</th>
-            <th>Skipped</th>
-            <th>Failed</th>
+            <th>{{call .T "history.date"}}</th>
+            <th>{{call .T "history.trigger"}}</th>
+            <th>{{call .T "history.status"}}</th>
+            <th>{{call .T "history.found"}}</th>
+            <th>{{call .T "history.synced"}}</th>
+            <th>{{call .T "history.trips"}}</th>
+            <th>{{call .T "history.skipped"}}</th>
+            <th>{{call .T "history.failed"}}</th>
           </tr>
         </thead>
         <tbody>
           {{range .Runs}}
           <tr>
-            <td><small>{{.StartedAt.Format "2006-01-02 15:04 UTC"}}</small></td>
-            <td>{{if eq .Trigger "manual_custom"}}manual (custom){{else}}{{.Trigger}}{{end}}</td>
+            <td><small>{{formatTime $.Lang .StartedAt}}</small></td>
+            <td>{{if eq .Trigger "manual_custom"}}{{call $.T "history.trigger_manual_custom"}}{{else}}{{.Trigger}}{{end}}</td>
             <td>
               <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{else if eq .Status "running"}}status-running{{else}}{{end}}">
                 {{.Status}}
@@ -62,11 +62,11 @@
       </table>
     </div>
     {{else}}
-    <p style="color: var(--pico-muted-color);">No sync runs yet. Go to the dashboard to trigger your first sync.</p>
+    <p style="color: var(--pico-muted-color);">{{call .T "history.no_runs"}}</p>
     {{end}}
 
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

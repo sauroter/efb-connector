@@ -23,7 +23,7 @@ func (s *AuthService) isDevMode() bool {
 		s.resendAPIKey == "placeholder"
 }
 
-func (s *AuthService) SendMagicLinkEmail(to, token, baseURL string) error {
+func (s *AuthService) SendMagicLinkEmail(to, token, baseURL, lang string) error {
 	link := baseURL + "/auth/verify?token=" + token
 
 	if s.isDevMode() {
@@ -34,11 +34,18 @@ func (s *AuthService) SendMagicLinkEmail(to, token, baseURL string) error {
 		return nil
 	}
 
+	subject := "Your EFB Connector Login Link"
+	htmlBody := fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link)
+	if lang == "de" {
+		subject = "Dein EFB Connector Login-Link"
+		htmlBody = fmt.Sprintf(`<p>Klicke hier, um dich anzumelden: <a href="%s">Bei EFB Connector anmelden</a></p><p>Dieser Link ist 15 Minuten gültig.</p>`, link)
+	}
+
 	payload := map[string]interface{}{
 		"from":    s.emailFrom,
 		"to":      []string{to},
-		"subject": "Your login link",
-		"html":    fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link),
+		"subject": subject,
+		"html":    htmlBody,
 	}
 
 	body, err := json.Marshal(payload)

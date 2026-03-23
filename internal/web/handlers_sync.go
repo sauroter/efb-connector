@@ -2,13 +2,13 @@ package web
 
 import (
 	"context"
-	"fmt"
 	"html"
 	"net/http"
 	"strconv"
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/i18n"
 	"efb-connector/internal/sync"
 )
 
@@ -22,13 +22,7 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.rateLimiter.AllowSync(userID) {
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">You can only sync once per hour. Please try again later.</p></div>`))
-			return
-		}
-		setFlash(w, "You can only sync once per hour. Please try again later.")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		s.syncError(w, r, "flash.sync_rate_limited")
 		return
 	}
 
@@ -42,12 +36,12 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	if startStr != "" && endStr != "" {
 		startDate, err := time.Parse("2006-01-02", startStr)
 		if err != nil {
-			s.syncError(w, r, "Invalid start date format.")
+			s.syncError(w, r, "flash.invalid_start_date")
 			return
 		}
 		endDate, err := time.Parse("2006-01-02", endStr)
 		if err != nil {
-			s.syncError(w, r, "Invalid end date format.")
+			s.syncError(w, r, "flash.invalid_end_date")
 			return
 		}
 		// Include the full end day.
@@ -58,11 +52,11 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		// Validate date range synchronously before launching goroutine,
 		// so the user gets immediate feedback and doesn't burn rate limit.
 		if !startDate.Before(endWithFullDay) {
-			s.syncError(w, r, "Start date must be before end date.")
+			s.syncError(w, r, "flash.start_before_end")
 			return
 		}
 		if endWithFullDay.Sub(startDate).Hours()/24 > float64(sync.MaxCustomRangeDays) {
-			s.syncError(w, r, fmt.Sprintf("Date range cannot exceed %d days.", sync.MaxCustomRangeDays))
+			s.syncError(w, r, "flash.date_range_exceeded")
 			return
 		}
 	}
@@ -84,13 +78,13 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 
 	if r.Header.Get("HX-Request") == "true" {
 		// Return a "running" partial that will auto-poll for updates.
-		s.render(w, "sync_status.html", map[string]any{
+		s.render(w, r,"sync_status.html", map[string]any{
 			"HasRun": true,
 			"Status": "running",
 		})
 		return
 	}
-	setFlash(w, "Sync started. This may take a few minutes.")
+	setFlash(w, "flash.sync_started")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
@@ -133,7 +127,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "sync_status.html", data)
+	s.render(w, r,"sync_status.html", data)
 }
 
 // handleSyncHistory renders the full sync history page.
@@ -159,7 +153,7 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, "sync_history.html", map[string]any{
+	s.render(w, r,"sync_history.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Runs":      runs,
@@ -167,10 +161,13 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // syncError returns an error message for sync form submissions.
+// msg is an i18n key (e.g. "flash.sync_rate_limited").
 func (s *Server) syncError(w http.ResponseWriter, r *http.Request, msg string) {
 	if r.Header.Get("HX-Request") == "true" {
+		lang := i18n.FromContext(r.Context())
+		translated := html.EscapeString(i18n.T(lang, msg))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + html.EscapeString(msg) + `</p></div>`))
+		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + translated + `</p></div>`))
 		return
 	}
 	setFlash(w, msg)

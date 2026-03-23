@@ -11,24 +11,24 @@
     <span class="spinner"></span>
     Syncing&hellip;
     {{else}}
-    Last sync:
+    {{call .T "sync.last_sync"}}
     <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{end}}">
       {{.Status}}
     </span>
     &mdash;
-    Found: {{.ActivitiesFound}},
-    Synced: {{.ActivitiesSynced}},
-    {{if .TripsCreated}}Trips: {{.TripsCreated}},{{end}}
-    Skipped: {{.ActivitiesSkipped}},
-    Failed: {{.ActivitiesFailed}}
+    {{call .T "sync.found"}} {{.ActivitiesFound}},
+    {{call .T "sync.synced"}} {{.ActivitiesSynced}},
+    {{if .TripsCreated}}{{call .T "sync.trips"}} {{.TripsCreated}},{{end}}
+    {{call .T "sync.skipped"}} {{.ActivitiesSkipped}},
+    {{call .T "sync.failed"}} {{.ActivitiesFailed}}
     {{end}}
   </p>
   {{if .ErrorMessage}}
-  <p><small style="color: var(--pico-del-color);">Error: {{.ErrorMessage}}</small></p>
+  <p><small style="color: var(--pico-del-color);">{{call .T "sync.error"}} {{.ErrorMessage}}</small></p>
   {{end}}
 </div>
 {{else}}
 <div id="sync-status">
-  <p style="color: var(--pico-muted-color);">No sync runs yet.</p>
+  <p style="color: var(--pico-muted-color);">{{call .T "sync.no_runs"}}</p>
 </div>
 {{end}}{{end}}

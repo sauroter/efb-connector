@@ -1,10 +1,10 @@
 {{define "login_sent.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Check your email — EFB Connector</title>
+  <title>{{call .T "login_sent.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <style>
@@ -14,20 +14,20 @@
 </head>
 <body>
   <nav class="container">
-    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li></ul>
+    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>{{call .T "nav.brand"}}</strong></a></li></ul>
   </nav>
 
   <main class="container">
     <article class="auth-card">
       <div class="email-icon">&#128140;</div>
-      <h1>Check your email</h1>
-      <p>We sent a login link to <strong>{{.Email}}</strong>.</p>
-      <p>Click the link in the email to sign in. The link expires in 15 minutes.</p>
+      <h1>{{call .T "login_sent.heading"}}</h1>
+      <p>{{call .T "login_sent.message"}} <strong>{{.Email}}</strong>.</p>
+      <p>{{call .T "login_sent.expires"}}</p>
       <hr>
-      <p><small>Didn't receive it? Check your spam or junk folder, or <a href="/login">request a new link</a>.</small></p>
+      <p><small>{{call .T "login_sent.spam"}} <a href="/login">{{call .T "login_sent.try_again"}}</a>.</small></p>
     </article>
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

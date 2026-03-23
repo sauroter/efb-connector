@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/i18n"
 )
 
 // handleLanding serves the landing page. If the user is already authenticated
@@ -25,14 +26,14 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "landing.html", map[string]any{
+	s.render(w, r,"landing.html", map[string]any{
 		"Flash": flash(w, r),
 	})
 }
 
 // handleLoginForm renders the email input form for magic link login.
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "login.html", map[string]any{
+	s.render(w, r,"login.html", map[string]any{
 		"Flash": flash(w, r),
 	})
 }
@@ -47,7 +48,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
 	if email == "" {
-		setFlash(w, "Please enter your email address.")
+		setFlash(w, "flash.email_required")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -56,7 +57,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	ip := remoteIP(r)
 	if !s.rateLimiter.AllowLogin(email, ip) {
 		s.logger.Warn("login rate limited", "email", email, "ip", ip)
-		setFlash(w, "Too many login attempts. Please try again later.")
+		setFlash(w, "flash.login_rate_limited")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -65,19 +66,20 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	token, err := s.auth.GenerateMagicLink(email)
 	if err != nil {
 		s.logger.Error("failed to generate magic link", "email", email, "error", err)
-		setFlash(w, "Something went wrong. Please try again.")
+		setFlash(w, "flash.generic_error")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 
 	// Send email with magic link.
-	if err := s.auth.SendMagicLinkEmail(email, token, s.baseURL(r)); err != nil {
+	lang := i18n.FromContext(r.Context())
+	if err := s.auth.SendMagicLinkEmail(email, token, s.baseURL(r), string(lang)); err != nil {
 		s.logger.Error("failed to send magic link email", "email", email, "error", err)
 		// Do not reveal whether the email was sent or not for security reasons.
 	}
 
 	// Always show confirmation regardless of whether the email exists or was sent.
-	s.render(w, "login_sent.html", map[string]any{
+	s.render(w, r,"login_sent.html", map[string]any{
 		"Email": email,
 	})
 }
@@ -87,7 +89,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		setFlash(w, "Invalid or missing login link.")
+		setFlash(w, "flash.invalid_login_link")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -95,7 +97,7 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	userID, err := s.auth.ValidateMagicLink(token)
 	if err != nil {
 		s.logger.Warn("magic link validation failed", "error", err)
-		setFlash(w, "This login link is invalid or has expired. Please request a new one.")
+		setFlash(w, "flash.login_link_expired")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -104,7 +106,7 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	sessionToken, err := s.auth.CreateSession(userID)
 	if err != nil {
 		s.logger.Error("failed to create session", "user_id", userID, "error", err)
-		setFlash(w, "Something went wrong. Please try again.")
+		setFlash(w, "flash.generic_error")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -126,7 +128,7 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	_, _, garminErr := s.db.GetGarminCredentials(userID)
 	_, _, efbErr := s.db.GetEFBCredentials(userID)
 	if garminErr != nil && efbErr != nil {
-		setFlash(w, "Welcome! Let's get your accounts connected.")
+		setFlash(w, "flash.welcome")
 	}
 
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -153,18 +155,26 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	setFlash(w, "You have been logged out.")
+	setFlash(w, "flash.logged_out")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // handleImpressum renders the Impressum (legal notice) page.
 func (s *Server) handleImpressum(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "impressum.html", nil)
+	tmpl := "impressum.html"
+	if i18n.FromContext(r.Context()) == i18n.EN {
+		tmpl = "impressum_en.html"
+	}
+	s.render(w, r, tmpl, nil)
 }
 
 // handlePrivacy renders the privacy policy page.
 func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "privacy.html", nil)
+	tmpl := "privacy.html"
+	if i18n.FromContext(r.Context()) == i18n.EN {
+		tmpl = "privacy_en.html"
+	}
+	s.render(w, r, tmpl, nil)
 }
 
 // baseURL returns the application base URL. It prefers the explicitly

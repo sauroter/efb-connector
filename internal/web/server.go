@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"efb-connector/internal/auth"
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/i18n"
 	"efb-connector/internal/metrics"
 	"efb-connector/internal/sync"
 
@@ -75,6 +77,26 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	}, nil
 }
 
+// GetUserPreferredLang implements i18n.UserLangProvider by resolving the
+// session cookie and returning the user's preferred_lang from the database.
+// This runs in the i18n middleware (before RequireAuth), so it reads the
+// session cookie directly instead of relying on context.
+func (s *Server) GetUserPreferredLang(r *http.Request) string {
+	cookie, err := r.Cookie(auth.SessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	userID, err := s.auth.ValidateSession(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	user, err := s.db.GetUserByID(userID)
+	if err != nil || user == nil {
+		return ""
+	}
+	return user.PreferredLang
+}
+
 // Routes returns the fully-configured HTTP handler with all routes registered
 // and wrapped in logging + recovery middleware.
 func (s *Server) Routes() http.Handler {
@@ -109,6 +131,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /settings/efb/delete", protect(s.handleEFBSettingsDelete))
 	mux.Handle("POST /settings/auto-create-trips", protect(s.handleAutoCreateTripsSave))
 	mux.Handle("POST /settings/enrich-trips", protect(s.handleEnrichTripsSave))
+	mux.Handle("POST /settings/language", protect(s.handleLanguageSave))
 	mux.Handle("POST /setup/configure", protect(s.handleSetupConfigure))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
@@ -130,13 +153,27 @@ func (s *Server) Routes() http.Handler {
 		promhttp.Handler().ServeHTTP(w, r)
 	})
 
-	// Wrap the entire mux in logging + recovery middleware.
-	return s.recovery(s.logging(securityHeaders(mux)))
+	// Wrap the entire mux in middleware: i18n → security → logging → recovery.
+	return s.recovery(s.logging(securityHeaders(i18n.Middleware(s)(mux))))
 }
 
 // render executes the named template with data and writes the result to w.
-// On error it logs the failure and sends a 500 response.
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+// It automatically injects the current language, translation function, and
+// translates flash messages.
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	lang := i18n.FromContext(r.Context())
+	data["Lang"] = string(lang)
+	t := func(key string) string { return i18n.T(lang, key) }
+	data["T"] = t
+
+	// Auto-translate flash messages (stored as i18n keys).
+	if fl, ok := data["Flash"].(string); ok && fl != "" {
+		data["Flash"] = t(fl)
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Error("template render failed", "template", name, "error", err)
@@ -161,7 +198,8 @@ func flash(w http.ResponseWriter, r *http.Request) string {
 	return cookie.Value
 }
 
-// setFlash sets a one-time flash message cookie.
+// setFlash sets a one-time flash message cookie. The value should be an i18n
+// translation key (e.g. "flash.logged_out") which gets translated at render time.
 func setFlash(w http.ResponseWriter, msg string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "flash",
@@ -196,6 +234,12 @@ func (s *Server) garminTokenStorePath(userID int64) string {
 func parseTemplates(dir string, version string) (*template.Template, error) {
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"version": func() string { return version },
+		"formatTime": func(lang string, t time.Time) string {
+			if lang == "de" {
+				return t.Format("02.01.2006 15:04 UTC")
+			}
+			return t.Format("2006-01-02 15:04 UTC")
+		},
 	})
 
 	// Parse partials first so they are available to top-level templates.

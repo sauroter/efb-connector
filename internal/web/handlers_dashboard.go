@@ -83,7 +83,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		showGettingStarted = true
 	}
 
-	s.render(w, "dashboard.html", map[string]any{
+	s.render(w, r,"dashboard.html", map[string]any{
 		"Flash":              flash(w, r),
 		"CSRFToken":          s.auth.CSRFToken(r),
 		"User":               user,
@@ -113,7 +113,7 @@ func (s *Server) handleGarminSettingsForm(w http.ResponseWriter, r *http.Request
 		connected = true
 	}
 
-	s.render(w, "settings_garmin.html", map[string]any{
+	s.render(w, r,"settings_garmin.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Connected": connected,
@@ -139,7 +139,7 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	password := r.FormValue("password")
 
 	if email == "" || password == "" {
-		setFlash(w, "Email and password are required.")
+		setFlash(w, "flash.email_password_required")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}
@@ -153,7 +153,7 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 	if err := s.garmin.ValidateCredentials(context.Background(), creds); err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
-		setFlash(w, "Garmin credentials are invalid. Please check and try again.")
+		setFlash(w, "flash.garmin_invalid")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}
@@ -161,13 +161,13 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	// Save encrypted credentials.
 	if err := s.db.SaveGarminCredentials(userID, email, password); err != nil {
 		s.logger.Error("failed to save garmin credentials", "user_id", userID, "error", err)
-		setFlash(w, "Failed to save credentials. Please try again.")
+		setFlash(w, "flash.save_credentials_failed")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}
 
 	s.logger.Info("garmin credentials saved", "user_id", userID)
-	setFlash(w, "Garmin credentials saved successfully.")
+	setFlash(w, "flash.garmin_saved")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
@@ -181,13 +181,13 @@ func (s *Server) handleGarminSettingsDelete(w http.ResponseWriter, r *http.Reque
 
 	if err := s.db.DeleteGarminCredentials(userID); err != nil {
 		s.logger.Error("failed to delete garmin credentials", "user_id", userID, "error", err)
-		setFlash(w, "Failed to delete credentials.")
+		setFlash(w, "flash.delete_credentials_failed")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}
 
 	s.logger.Info("garmin credentials deleted", "user_id", userID)
-	setFlash(w, "Garmin credentials removed.")
+	setFlash(w, "flash.garmin_removed")
 	http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 }
 
@@ -205,7 +205,7 @@ func (s *Server) handleEFBSettingsForm(w http.ResponseWriter, r *http.Request) {
 		connected = true
 	}
 
-	s.render(w, "settings_efb.html", map[string]any{
+	s.render(w, r,"settings_efb.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Connected": connected,
@@ -230,7 +230,7 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if username == "" || password == "" {
-		setFlash(w, "Username and password are required.")
+		setFlash(w, "flash.username_password_required")
 		http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 		return
 	}
@@ -238,7 +238,7 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// Validate credentials against the EFB portal.
 	if err := s.efb.ValidateCredentials(context.Background(), username, password); err != nil {
 		s.logger.Warn("efb credential validation failed", "user_id", userID, "error", err)
-		setFlash(w, "EFB credentials are invalid. Please check and try again.")
+		setFlash(w, "flash.efb_invalid")
 		http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 		return
 	}
@@ -246,13 +246,13 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// Save encrypted credentials.
 	if err := s.db.SaveEFBCredentials(userID, username, password); err != nil {
 		s.logger.Error("failed to save efb credentials", "user_id", userID, "error", err)
-		setFlash(w, "Failed to save credentials. Please try again.")
+		setFlash(w, "flash.save_credentials_failed")
 		http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 		return
 	}
 
 	s.logger.Info("efb credentials saved", "user_id", userID)
-	setFlash(w, "EFB credentials saved successfully.")
+	setFlash(w, "flash.efb_saved")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
@@ -266,13 +266,13 @@ func (s *Server) handleEFBSettingsDelete(w http.ResponseWriter, r *http.Request)
 
 	if err := s.db.DeleteEFBCredentials(userID); err != nil {
 		s.logger.Error("failed to delete efb credentials", "user_id", userID, "error", err)
-		setFlash(w, "Failed to delete credentials.")
+		setFlash(w, "flash.delete_credentials_failed")
 		http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 		return
 	}
 
 	s.logger.Info("efb credentials deleted", "user_id", userID)
-	setFlash(w, "EFB credentials removed.")
+	setFlash(w, "flash.efb_removed")
 	http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 }
 
@@ -303,7 +303,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		efbConnected = true
 	}
 
-	s.render(w, "settings.html", map[string]any{
+	s.render(w, r,"settings.html", map[string]any{
 		"Flash":           flash(w, r),
 		"CSRFToken":       s.auth.CSRFToken(r),
 		"User":            user,
@@ -335,7 +335,7 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.db.UpdateAutoCreateTrips(userID, autoCreateTrips); err != nil {
 		s.logger.Error("failed to update auto_create_trips", "user_id", userID, "error", err)
-		setFlash(w, "Failed to save preferences. Please try again.")
+		setFlash(w, "flash.save_preferences_failed")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
 	}
@@ -370,7 +370,7 @@ func (s *Server) handleAutoCreateTripsSave(w http.ResponseWriter, r *http.Reques
 
 	if err := s.db.UpdateAutoCreateTrips(userID, enabled); err != nil {
 		s.logger.Error("failed to update auto_create_trips", "user_id", userID, "error", err)
-		setFlash(w, "Failed to save setting. Please try again.")
+		setFlash(w, "flash.save_setting_failed")
 	}
 
 	s.logger.Info("auto_create_trips updated", "user_id", userID, "enabled", enabled)
@@ -400,7 +400,7 @@ func (s *Server) handleEnrichTripsSave(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.db.UpdateEnrichTrips(userID, enabled); err != nil {
 		s.logger.Error("failed to update enrich_trips", "user_id", userID, "error", err)
-		setFlash(w, "Failed to save setting. Please try again.")
+		setFlash(w, "flash.save_setting_failed")
 	}
 
 	s.logger.Info("enrich_trips updated", "user_id", userID, "enabled", enabled)
@@ -429,7 +429,7 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	// Delete user and all cascaded data.
 	if err := s.db.DeleteUser(userID); err != nil {
 		s.logger.Error("failed to delete user", "user_id", userID, "error", err)
-		setFlash(w, "Failed to delete account. Please try again.")
+		setFlash(w, "flash.delete_account_failed")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
 	}
@@ -446,6 +446,44 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.logger.Info("user account deleted", "user_id", userID)
-	setFlash(w, "Your account and all data have been deleted.")
+	setFlash(w, "flash.account_deleted")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleLanguageSave saves the user's language preference and sets the lang cookie.
+func (s *Server) handleLanguageSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	lang := r.FormValue("lang")
+	if lang != "en" && lang != "de" {
+		lang = "en"
+	}
+
+	if err := s.db.UpdatePreferredLang(userID, lang); err != nil {
+		s.logger.Error("failed to update preferred_lang", "user_id", userID, "error", err)
+		setFlash(w, "flash.save_setting_failed")
+	}
+
+	// Also set cookie so it takes effect immediately on redirect.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lang",
+		Value:    lang,
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60,
+		HttpOnly: false,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	s.logger.Info("preferred_lang updated", "user_id", userID, "lang", lang)
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }

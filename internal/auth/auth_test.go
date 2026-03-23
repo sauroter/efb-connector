@@ -498,7 +498,7 @@ func TestSendMagicLinkEmail(t *testing.T) {
 	defer func() { resendEndpoint = oldEndpoint }()
 
 	svc := newTestService(t)
-	err := svc.SendMagicLinkEmail("user@example.com", "test-token-123", "https://example.com")
+	err := svc.SendMagicLinkEmail("user@example.com", "test-token-123", "https://example.com", "en")
 	if err != nil {
 		t.Fatalf("SendMagicLinkEmail: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestSendMagicLinkEmail_APIError(t *testing.T) {
 	defer func() { resendEndpoint = oldEndpoint }()
 
 	svc := newTestService(t)
-	err := svc.SendMagicLinkEmail("user@example.com", "token", "https://example.com")
+	err := svc.SendMagicLinkEmail("user@example.com", "token", "https://example.com", "en")
 	if err == nil {
 		t.Error("expected error for API failure, got nil")
 	}

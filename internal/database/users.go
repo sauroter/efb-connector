@@ -19,6 +19,7 @@ type User struct {
 	AutoCreateTrips bool
 	EnrichTrips     bool
 	SetupCompleted  bool
+	PreferredLang   string
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
@@ -43,7 +44,7 @@ func (d *DB) CreateUser(email string) (*User, error) {
 // no such row exists.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang
 		   FROM users WHERE email = ?`, email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -56,7 +57,7 @@ func (d *DB) GetUserByEmail(email string) (*User, error) {
 // found.
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang
 		   FROM users WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -91,6 +92,15 @@ func (d *DB) UpdateEnrichTrips(userID int64, enabled bool) error {
 	return nil
 }
 
+// UpdatePreferredLang sets the preferred_lang for the given user.
+func (d *DB) UpdatePreferredLang(userID int64, lang string) error {
+	_, err := d.db.Exec(`UPDATE users SET preferred_lang = ? WHERE id = ?`, lang, userID)
+	if err != nil {
+		return fmt.Errorf("database: update preferred_lang for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // UpdateSetupCompleted sets the setup_completed flag for the given user.
 func (d *DB) UpdateSetupCompleted(userID int64, completed bool) error {
 	val := 0
@@ -117,7 +127,7 @@ func (d *DB) DeleteUser(id int64) error {
 // both Garmin and EFB credentials marked as valid.
 func (d *DB) GetSyncableUsers() ([]User, error) {
 	rows, err := d.db.Query(`
-		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed
+		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang
 		  FROM users u
 		  JOIN garmin_credentials gc ON gc.user_id = u.id AND gc.is_valid = 1
 		  JOIN efb_credentials    ec ON ec.user_id = u.id AND ec.is_valid = 1
@@ -148,6 +158,7 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	err := row.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
+		&u.PreferredLang,
 	)
 	if err != nil {
 		return nil, err
@@ -172,6 +183,7 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	err := rows.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
+		&u.PreferredLang,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan user: %w", err)
