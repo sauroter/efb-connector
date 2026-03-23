@@ -124,7 +124,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips)
+	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -143,7 +143,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	}
 
 	// Update sync_run with final counts and status.
-	if updateErr := s.db.UpdateSyncRun(runID, status, found, synced, skipped, failed, errMsg); updateErr != nil {
+	if updateErr := s.db.UpdateSyncRun(runID, status, found, synced, skipped, failed, tripsCreated, errMsg); updateErr != nil {
 		log.Error("failed to update sync run", "error", updateErr)
 	}
 
@@ -153,9 +153,10 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 		"synced", synced,
 		"skipped", skipped,
 		"failed", failed,
+		"trips_created", tripsCreated,
 	)
 
-	metrics.ObserveSyncRun(trigger, status, time.Since(syncStart).Seconds(), found, synced, skipped, failed)
+	metrics.ObserveSyncRun(trigger, status, time.Since(syncStart).Seconds(), found, synced, skipped, failed, tripsCreated)
 
 	return runID, syncErr
 }
@@ -185,11 +186,11 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips bool) (found, synced, skipped, failed int, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips bool) (found, synced, skipped, failed, tripsCreated int, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("sync: get garmin credentials: %w", err)
+		return 0, 0, 0, 0, 0, fmt.Errorf("sync: get garmin credentials: %w", err)
 	}
 	tokenDir := filepath.Join(s.tokenStoreBase, fmt.Sprintf("%d", userID))
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
@@ -211,7 +212,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				log.Error("failed to invalidate garmin credentials", "error", invErr)
 			}
 		}
-		return 0, 0, 0, 0, fmt.Errorf("sync: list activities: %w", err)
+		return 0, 0, 0, 0, 0, fmt.Errorf("sync: list activities: %w", err)
 	}
 
 	log.Info("fetched garmin activities", "count", len(activities))
@@ -292,13 +293,13 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	if len(toSync) == 0 {
 		log.Info("no new activities to sync")
-		return found, 0, skipped, 0, nil
+		return found, 0, skipped, 0, 0, nil
 	}
 
 	// 7b. Decrypt EFB credentials.
 	efbUser, efbPass, err := s.db.GetEFBCredentials(userID)
 	if err != nil {
-		return found, 0, skipped, 0, fmt.Errorf("sync: get efb credentials: %w", err)
+		return found, 0, skipped, 0, 0, fmt.Errorf("sync: get efb credentials: %w", err)
 	}
 
 	// 7c. Login to EFB (once per sync run).
@@ -312,7 +313,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "efb login failed")
 			failed++
 		}
-		return found, 0, skipped, failed, fmt.Errorf("sync: efb login: %w", err)
+		return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login: %w", err)
 	}
 
 	// 7. Process each activity.
@@ -352,7 +353,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 					_ = s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", "skipped due to EFB 5xx")
 					failed++
 				}
-				return found, synced, skipped, failed, fmt.Errorf("sync: EFB 5xx error, aborting: %w", uploadErr)
+				return found, synced, skipped, failed, tripsCreated, fmt.Errorf("sync: EFB 5xx error, aborting: %w", uploadErr)
 			}
 			continue
 		}
@@ -373,6 +374,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 					log.Warn("failed to create trip from track", "error", tripErr)
 				} else {
 					log.Info("trip created from track", "track_id", trackID)
+					tripsCreated++
 				}
 			}
 		}
@@ -383,7 +385,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 	}
 
-	return found, synced, skipped, failed, nil
+	return found, synced, skipped, failed, tripsCreated, nil
 }
 
 // checkAndMarkPermanentFailure increments the retry count check and marks an

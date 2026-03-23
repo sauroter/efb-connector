@@ -123,6 +123,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 			"ActivitiesSynced":  run.ActivitiesSynced,
 			"ActivitiesSkipped": run.ActivitiesSkipped,
 			"ActivitiesFailed":  run.ActivitiesFailed,
+			"TripsCreated":      run.TripsCreated,
 			"ErrorMessage":      run.ErrorMessage,
 		}
 	} else {

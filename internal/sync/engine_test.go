@@ -879,6 +879,9 @@ func TestSync_AutoCreateTrips_Enabled(t *testing.T) {
 	if run.ActivitiesSynced != 1 {
 		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
 	}
+	if run.TripsCreated != 1 {
+		t.Errorf("trips_created = %d, want 1", run.TripsCreated)
+	}
 
 	// Verify FindUnassociatedTrack was called with the correct filename.
 	if !mockEFB.findTrackCalled {
@@ -920,6 +923,9 @@ func TestSync_AutoCreateTrips_Disabled(t *testing.T) {
 	}
 	if run.ActivitiesSynced != 1 {
 		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
+	}
+	if run.TripsCreated != 0 {
+		t.Errorf("trips_created = %d, want 0", run.TripsCreated)
 	}
 
 	// Verify FindUnassociatedTrack was NOT called.

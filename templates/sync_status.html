@@ -18,6 +18,7 @@
     &mdash;
     Found: {{.ActivitiesFound}},
     Synced: {{.ActivitiesSynced}},
+    {{if .TripsCreated}}Trips: {{.TripsCreated}},{{end}}
     Skipped: {{.ActivitiesSkipped}},
     Failed: {{.ActivitiesFailed}}
     {{end}}

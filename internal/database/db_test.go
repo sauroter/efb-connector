@@ -488,7 +488,7 @@ func TestUpdateSyncRun(t *testing.T) {
 	u, _ := db.CreateUser("syncupdate@example.com")
 
 	id, _ := db.CreateSyncRun(u.ID, "manual")
-	err := db.UpdateSyncRun(id, "completed", 10, 8, 1, 1, "")
+	err := db.UpdateSyncRun(id, "completed", 10, 8, 1, 1, 3, "")
 	if err != nil {
 		t.Fatalf("UpdateSyncRun: %v", err)
 	}
@@ -499,6 +499,9 @@ func TestUpdateSyncRun(t *testing.T) {
 	}
 	if run.ActivitiesFound != 10 {
 		t.Errorf("found = %d, want 10", run.ActivitiesFound)
+	}
+	if run.TripsCreated != 3 {
+		t.Errorf("trips_created = %d, want 3", run.TripsCreated)
 	}
 	if run.FinishedAt == nil {
 		t.Error("finished_at should be set")

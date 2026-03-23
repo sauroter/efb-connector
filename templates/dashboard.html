@@ -131,6 +131,7 @@
             &mdash;
             Found: {{index .LastSync "ActivitiesFound"}},
             Synced: {{index .LastSync "ActivitiesSynced"}},
+            {{if index .LastSync "TripsCreated"}}Trips: {{index .LastSync "TripsCreated"}},{{end}}
             Skipped: {{index .LastSync "ActivitiesSkipped"}},
             Failed: {{index .LastSync "ActivitiesFailed"}}
           </p>
