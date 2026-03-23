@@ -94,4 +94,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
 	// 0005 – add enrich_trips user preference (default enabled for existing users)
 	`ALTER TABLE users ADD COLUMN enrich_trips INTEGER NOT NULL DEFAULT 1;`,
+
+	// 0006 – add preferred_lang user preference (empty = auto-detect)
+	`ALTER TABLE users ADD COLUMN preferred_lang TEXT NOT NULL DEFAULT '';`,
 }

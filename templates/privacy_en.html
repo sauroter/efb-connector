@@ -1,0 +1,103 @@
+{{define "privacy_en.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>Privacy Policy — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <nav class="container">
+    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li></ul>
+  </nav>
+
+  <main class="container" style="max-width: 720px;">
+    <h1>Privacy Policy</h1>
+
+    <h2>1. Data Controller</h2>
+    <p>
+      Georg Held<br>
+      Bisamstraße 11a<br>
+      85356 Freising, Germany<br>
+      Email: georg.held@sauroter.de<br>
+      Phone: +49 170 7798944
+    </p>
+
+    <h2>2. Data Collected</h2>
+    <p>EFB Connector processes the following data:</p>
+    <ul>
+      <li><strong>Email address</strong> — for passwordless authentication via magic links</li>
+      <li><strong>Garmin Connect credentials</strong> — username and password, stored encrypted (AES-256-GCM)</li>
+      <li><strong>Kanu-EFB credentials</strong> — username and password, stored encrypted (AES-256-GCM)</li>
+      <li><strong>Garmin activity data</strong> — activity name, type, date, and GPX tracks</li>
+    </ul>
+
+    <h2>3. Purpose of Processing</h2>
+    <p>
+      Data is processed solely for the purpose of automatically syncing paddling activities from Garmin Connect to the Kanu-EFB electronic logbook (<a href="https://efb.kanu-efb.de/">efb.kanu-efb.de</a>).
+    </p>
+
+    <h2>4. Garmin Activity Data</h2>
+    <p>
+      Activity data (including GPX tracks) is downloaded from Garmin Connect, processed temporarily in memory, and uploaded directly to Kanu-EFB. GPX data is not permanently stored on the server. Activity metadata (name, type, date) is stored in the database to track sync history and prevent duplicate uploads (idempotency).
+    </p>
+
+    <h2>5. Data Storage</h2>
+    <p>
+      All data is stored in a SQLite database on the Fly.io hosting platform in the Frankfurt (fra) data center. Credentials (Garmin and EFB) are encrypted with AES-256-GCM. No personal data is shared with third parties beyond the data exchange necessary for the service to function.
+    </p>
+
+    <h2>6. Cookies and Sessions</h2>
+    <p>EFB Connector uses only technically necessary cookies:</p>
+    <ul>
+      <li><strong>Session cookie</strong> — for authentication after login</li>
+      <li><strong>Flash cookie</strong> — for displaying one-time status messages</li>
+      <li><strong>Language cookie</strong> — for storing your language preference</li>
+    </ul>
+    <p>No tracking, analytics, or advertising cookies are used.</p>
+
+    <h2>7. Third Parties</h2>
+    <p>The following third parties are involved in data processing:</p>
+    <ul>
+      <li><strong>Resend</strong> (resend.com) — sending magic link emails</li>
+      <li><strong>Fly.io</strong> (fly.io) — application and database hosting (Frankfurt data center)</li>
+      <li><strong>Garmin Connect API</strong> (connect.garmin.com) — retrieving activity data</li>
+      <li><strong>Kanu-EFB</strong> (efb.kanu-efb.de) — uploading activity data to the logbook</li>
+    </ul>
+
+    <h2>8. Your Rights (GDPR)</h2>
+    <p>Under the GDPR, you have the following rights regarding your personal data:</p>
+    <ul>
+      <li><strong>Access</strong> (Art. 15 GDPR) — you may request information about your stored data.</li>
+      <li><strong>Rectification</strong> (Art. 16 GDPR) — you may request correction of inaccurate data.</li>
+      <li><strong>Erasure</strong> (Art. 17 GDPR) — you may request deletion of your data. Self-service deletion is available via the dashboard.</li>
+      <li><strong>Data Portability</strong> (Art. 20 GDPR) — you may request your data in a structured format.</li>
+      <li><strong>Objection</strong> (Art. 21 GDPR) — you may object to the processing of your data.</li>
+    </ul>
+
+    <h2>9. Data Deletion</h2>
+    <p>
+      You can delete your account and all associated data at any time via Settings (Account section). Upon account deletion, the following data is permanently removed:
+    </p>
+    <ul>
+      <li>Your user account and email address</li>
+      <li>Stored Garmin and EFB credentials</li>
+      <li>Sync history</li>
+      <li>All active sessions</li>
+    </ul>
+
+    <h2>10. Contact</h2>
+    <p>
+      For questions about data protection, please contact:<br>
+      Georg Held<br>
+      Email: georg.held@sauroter.de
+    </p>
+
+    <p><small>Last updated: March 2026</small></p>
+  </main>
+
+  {{template "footer" .}}
+</body>
+</html>{{end}}

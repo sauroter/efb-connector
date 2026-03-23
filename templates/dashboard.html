@@ -1,10 +1,10 @@
 {{define "dashboard.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Dashboard — EFB Connector</title>
+  <title>{{call .T "dashboard.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
@@ -21,75 +21,75 @@
     {{end}}
 
     <hgroup>
-      <h1>Dashboard</h1>
-      <p>Signed in as <strong>{{.User.Email}}</strong></p>
+      <h1>{{call .T "dashboard.heading"}}</h1>
+      <p>{{call .T "dashboard.signed_in_as"}} <strong>{{.User.Email}}</strong></p>
     </hgroup>
 
     {{if .ShowGettingStarted}}
     <section>
-      <h2>Getting Started</h2>
-      <p>Set up your account in four steps:</p>
+      <h2>{{call .T "setup.heading"}}</h2>
+      <p>{{call .T "setup.intro"}}</p>
       <div class="getting-started-steps">
         <div class="getting-started-step {{if .GarminConnected}}step-done{{else if eq .SetupStep 1}}step-active{{else}}step-pending{{end}}">
           {{if .GarminConnected}}
-            <span class="step-icon">&#10003;</span> Connect Garmin Connect
+            <span class="step-icon">&#10003;</span> {{call .T "setup.step1"}}
           {{else if eq .SetupStep 1}}
-            <span class="step-icon">1</span> <a href="/settings/garmin">Connect Garmin Connect</a>
+            <span class="step-icon">1</span> <a href="/settings/garmin">{{call .T "setup.step1"}}</a>
           {{else}}
-            <span class="step-icon">1</span> Connect Garmin Connect
+            <span class="step-icon">1</span> {{call .T "setup.step1"}}
           {{end}}
         </div>
         <div class="getting-started-step {{if .EFBConnected}}step-done{{else if eq .SetupStep 2}}step-active{{else}}step-pending{{end}}">
           {{if .EFBConnected}}
-            <span class="step-icon">&#10003;</span> Connect Kanu-EFB
+            <span class="step-icon">&#10003;</span> {{call .T "setup.step2"}}
           {{else if eq .SetupStep 2}}
-            <span class="step-icon">2</span> <a href="/settings/efb">Connect Kanu-EFB</a>
+            <span class="step-icon">2</span> <a href="/settings/efb">{{call .T "setup.step2"}}</a>
           {{else}}
-            <span class="step-icon">2</span> Connect Kanu-EFB
+            <span class="step-icon">2</span> {{call .T "setup.step2"}}
           {{end}}
         </div>
         <div class="getting-started-step {{if .User.SetupCompleted}}step-done{{else if eq .SetupStep 3}}step-active{{else}}step-pending{{end}}">
           {{if .User.SetupCompleted}}
-            <span class="step-icon">&#10003;</span> Configure preferences
+            <span class="step-icon">&#10003;</span> {{call .T "setup.step3"}}
           {{else if eq .SetupStep 3}}
-            <span class="step-icon">3</span> Configure preferences
+            <span class="step-icon">3</span> {{call .T "setup.step3"}}
           {{else}}
-            <span class="step-icon">3</span> Configure preferences
+            <span class="step-icon">3</span> {{call .T "setup.step3"}}
           {{end}}
         </div>
         <div class="getting-started-step {{if eq .SetupStep 4}}step-active{{else}}step-pending{{end}}">
-          <span class="step-icon">4</span> Run your first sync
+          <span class="step-icon">4</span> {{call .T "setup.step4"}}
         </div>
       </div>
 
       {{if eq .SetupStep 3}}
       <article style="margin-top: 1.5rem;">
-        <header><strong>Configure your preferences</strong></header>
+        <header><strong>{{call .T "setup.configure_heading"}}</strong></header>
         <form method="POST" action="/setup/configure">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
           <label>
             <input type="checkbox" name="auto_create_trips" value="1" {{if .AutoCreateTrips}}checked{{end}}>
-            Automatically create EFB trip entries from synced tracks
+            {{call .T "setup.auto_create_label"}}
           </label>
-          <p><small style="color: var(--pico-muted-color);">Creates logbook entries (Fahrten) in your Kanu-EFB from synced tracks with start and end times from Garmin.</small></p>
+          <p><small style="color: var(--pico-muted-color);">{{call .T "setup.auto_create_desc"}}</small></p>
           <label>
             <input type="checkbox" name="enrich_trips" value="1" checked>
-            Enrich trip entries with river section and gauge data
+            {{call .T "setup.enrich_label"}}
           </label>
-          <p><small style="color: var(--pico-muted-color);">Adds river section name, difficulty grade, and current water level from Rivermap to your trip entries. Only applies when trip creation is enabled.</small></p>
-          <p><small style="color: var(--pico-muted-color);">You can change these anytime in <a href="/settings">Settings</a>.</small></p>
-          <button type="submit">Save &amp; continue</button>
+          <p><small style="color: var(--pico-muted-color);">{{call .T "setup.enrich_desc"}}</small></p>
+          <p><small style="color: var(--pico-muted-color);">{{call .T "setup.change_later"}} <a href="/settings">{{call .T "nav.settings"}}</a>.</small></p>
+          <button type="submit">{{call .T "setup.save_continue"}}</button>
         </form>
       </article>
       {{end}}
 
       {{if eq .SetupStep 4}}
       <article style="margin-top: 1.5rem;">
-        <header><strong>Run your first sync</strong></header>
-        <p>Everything is set up. Sync your recent Garmin activities to Kanu-EFB now.</p>
+        <header><strong>{{call .T "setup.first_sync_heading"}}</strong></header>
+        <p>{{call .T "setup.first_sync_desc"}}</p>
         <form method="POST" action="/sync/trigger">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <button type="submit">Run first sync</button>
+          <button type="submit">{{call .T "setup.first_sync_button"}}</button>
         </form>
       </article>
       {{end}}
@@ -102,16 +102,16 @@
       <div class="connection-status">
         Garmin:
         {{if .GarminConnected}}
-          <span class="status-badge status-connected">Connected</span>
+          <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
         {{else}}
-          <a href="/settings/garmin"><span class="status-badge status-disconnected">Not connected</span></a>
+          <a href="/settings/garmin"><span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span></a>
         {{end}}
         &middot;
         EFB:
         {{if .EFBConnected}}
-          <span class="status-badge status-connected">Connected</span>
+          <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
         {{else}}
-          <a href="/settings/efb"><span class="status-badge status-disconnected">Not connected</span></a>
+          <a href="/settings/efb"><span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span></a>
         {{end}}
       </div>
       {{end}}
@@ -120,22 +120,22 @@
         {{if .LastSync}}
           {{$status := index .LastSync "Status"}}
           <p>
-            Last sync:
+            {{call .T "sync.last_sync"}}
             <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "completed"}}status-completed{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
               {{$status}}
             </span>
             &mdash;
-            Found: {{index .LastSync "ActivitiesFound"}},
-            Synced: {{index .LastSync "ActivitiesSynced"}},
-            {{if index .LastSync "TripsCreated"}}Trips: {{index .LastSync "TripsCreated"}},{{end}}
-            Skipped: {{index .LastSync "ActivitiesSkipped"}},
-            Failed: {{index .LastSync "ActivitiesFailed"}}
+            {{call .T "sync.found"}} {{index .LastSync "ActivitiesFound"}},
+            {{call .T "sync.synced"}} {{index .LastSync "ActivitiesSynced"}},
+            {{if index .LastSync "TripsCreated"}}{{call .T "sync.trips"}} {{index .LastSync "TripsCreated"}},{{end}}
+            {{call .T "sync.skipped"}} {{index .LastSync "ActivitiesSkipped"}},
+            {{call .T "sync.failed"}} {{index .LastSync "ActivitiesFailed"}}
           </p>
           {{if index .LastSync "ErrorMessage"}}
-          <p><small style="color: var(--pico-del-color);">Error: {{index .LastSync "ErrorMessage"}}</small></p>
+          <p><small style="color: var(--pico-del-color);">{{call .T "sync.error"}} {{index .LastSync "ErrorMessage"}}</small></p>
           {{end}}
         {{else}}
-          <p style="color: var(--pico-muted-color);">No sync runs yet.</p>
+          <p style="color: var(--pico-muted-color);">{{call .T "sync.no_runs"}}</p>
         {{end}}
       </div>
 
@@ -148,13 +148,13 @@
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit">
           <span id="sync-spinner" class="spinner htmx-indicator"></span>
-          Sync now
+          {{call .T "sync.now"}}
         </button>
       </form>
-      <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
+      <p><small style="color: var(--pico-muted-color);">{{tf .T "sync.daily_info" .SyncDays}}</small></p>
 
       <details style="margin-top: 1rem;">
-        <summary>Sync a custom date range</summary>
+        <summary>{{call .T "sync.custom_range"}}</summary>
         <form method="POST" action="/sync/trigger"
               hx-post="/sync/trigger"
               hx-target="#sync-status"
@@ -163,27 +163,27 @@
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
           <div class="grid">
             <label>
-              Start date
+              {{call .T "sync.start_date"}}
               <input type="date" name="start_date" required max="{{.Today}}">
             </label>
             <label>
-              End date
+              {{call .T "sync.end_date"}}
               <input type="date" name="end_date" required max="{{.Today}}">
             </label>
           </div>
           <button type="submit" class="outline">
             <span id="custom-sync-spinner" class="spinner htmx-indicator"></span>
-            Sync date range
+            {{call .T "sync.date_range_btn"}}
           </button>
         </form>
-        <p><small style="color: var(--pico-muted-color);">Max range: 1 year. Larger date ranges may take a long time to sync. Same rate limit applies (1 sync per hour).</small></p>
+        <p><small style="color: var(--pico-muted-color);">{{call .T "sync.date_range_info"}}</small></p>
       </details>
       {{else}}
-      <p><small style="color: var(--pico-muted-color);">Connect both Garmin and EFB to enable sync.</small></p>
+      <p><small style="color: var(--pico-muted-color);">{{call .T "sync.connect_both"}}</small></p>
       {{end}}
     </section>
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

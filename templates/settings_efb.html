@@ -1,10 +1,10 @@
 {{define "settings_efb.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>EFB Settings — EFB Connector</title>
+  <title>{{call .T "efb.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
@@ -21,43 +21,43 @@
     {{end}}
 
     <hgroup>
-      <h1>Kanu-EFB</h1>
-      <p>Link your Kanu-EFB account to enable activity upload.</p>
+      <h1>{{call .T "efb.heading"}}</h1>
+      <p>{{call .T "efb.subtitle"}}</p>
     </hgroup>
 
     {{if .Connected}}
     <article class="settings-card">
       <header>
-        <strong>Current connection</strong>
-        <span class="status-badge status-connected" style="float:right;">Connected</span>
+        <strong>{{call .T "efb.current"}}</strong>
+        <span class="status-badge status-connected" style="float:right;">{{call .T "common.connected"}}</span>
       </header>
-      <p>Username: <strong>{{.Username}}</strong></p>
+      <p>{{call .T "efb.username_label_display"}} <strong>{{.Username}}</strong></p>
       <form method="POST" action="/settings/efb/delete"
-            onsubmit="return confirm('Remove your EFB credentials?');">
+            onsubmit="return confirm('{{call .T "efb.remove_confirm"}}');">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="outline contrast">Remove connection</button>
+        <button type="submit" class="outline contrast">{{call .T "efb.remove"}}</button>
       </form>
     </article>
     {{end}}
 
     <article class="settings-card">
-      <header><strong>{{if .Connected}}Update credentials{{else}}Connect Kanu-EFB{{end}}</strong></header>
-      <p>Enter your Kanu-EFB username and password. Credentials will be validated against the portal and stored encrypted.</p>
+      <header><strong>{{if .Connected}}{{call .T "efb.update_heading"}}{{else}}{{call .T "efb.connect_heading"}}{{end}}</strong></header>
+      <p>{{call .T "efb.form_desc"}}</p>
       <form method="POST" action="/settings/efb">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label for="username">Username
-          <input type="text" id="username" name="username" placeholder="your-efb-username"
+        <label for="username">{{call .T "efb.username_label"}}
+          <input type="text" id="username" name="username" placeholder="{{call .T "efb.username_placeholder"}}"
                  {{if .Username}}value="{{.Username}}"{{end}} required autocomplete="username">
         </label>
-        <label for="password">Password
-          <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+        <label for="password">{{call .T "efb.password_label"}}
+          <input type="password" id="password" name="password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" required autocomplete="current-password">
         </label>
-        <button type="submit">Test &amp; Save</button>
+        <button type="submit">{{call .T "efb.submit"}}</button>
       </form>
     </article>
 
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

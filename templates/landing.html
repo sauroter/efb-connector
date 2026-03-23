@@ -1,11 +1,11 @@
 {{define "landing.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <meta name="description" content="Automatically sync your Garmin paddling activities to Kanu-EFB. Auto-create trip entries with river data. Free, secure, no password required.">
-  <title>EFB Connector — Sync Garmin to Kanu-EFB</title>
+  <meta name="description" content="{{call .T "landing.meta_description"}}">
+  <title>{{call .T "landing.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <style>
@@ -28,8 +28,17 @@
 </head>
 <body>
   <nav class="container">
-    <ul><li><img src="/static/favicon.svg" alt="" width="24" height="24" style="vertical-align: middle; margin-right: 0.4rem;"><strong>EFB Connector</strong></li></ul>
-    <ul><li><a href="/login" role="button" class="outline">Sign in</a></li></ul>
+    <ul><li><img src="/static/favicon.svg" alt="" width="24" height="24" style="vertical-align: middle; margin-right: 0.4rem;"><strong>{{call .T "nav.brand"}}</strong></li></ul>
+    <ul>
+      <li>
+        {{if eq .Lang "de"}}
+          <strong>DE</strong> | <a href="#" onclick="document.cookie='lang=en;path=/;max-age=31536000;SameSite=Lax;Secure';location.reload();return false">EN</a>
+        {{else}}
+          <a href="#" onclick="document.cookie='lang=de;path=/;max-age=31536000;SameSite=Lax;Secure';location.reload();return false">DE</a> | <strong>EN</strong>
+        {{end}}
+      </li>
+      <li><a href="/login" role="button" class="outline">{{call .T "nav.sign_in"}}</a></li>
+    </ul>
   </nav>
 
   <main class="container">
@@ -37,85 +46,85 @@
 
     <section class="hero">
       <img src="/static/favicon.svg" alt="EFB Connector" width="72" height="72" style="margin-bottom: 1rem;">
-      <h1>Sync your Garmin paddling activities to Kanu-EFB — automatically</h1>
-      <p>EFB Connector downloads your paddling activities from Garmin Connect, uploads them to Kanu-EFB, and creates logbook entries with river data — every day, hands-free.</p>
-      <a href="/login" role="button" style="font-size: 1.1rem;">Get started — it's free</a>
+      <h1>{{call .T "landing.hero_title"}}</h1>
+      <p>{{call .T "landing.hero_subtitle"}}</p>
+      <a href="/login" role="button" style="font-size: 1.1rem;">{{call .T "landing.cta"}}</a>
     </section>
 
     <section>
       <div class="features">
         <div class="feature-card">
-          <h3>Automatic daily sync</h3>
-          <p>Activities are synced from Garmin Connect to Kanu-EFB every day at ~04:00 UTC. No manual uploads needed.</p>
+          <h3>{{call .T "landing.feat_sync_title"}}</h3>
+          <p>{{call .T "landing.feat_sync_desc"}}</p>
         </div>
         <div class="feature-card">
-          <h3>Trip logbook entries</h3>
-          <p>Automatically create Fahrten (logbook entries) in Kanu-EFB from your synced tracks, with start and end times pre-filled.</p>
+          <h3>{{call .T "landing.feat_trips_title"}}</h3>
+          <p>{{call .T "landing.feat_trips_desc"}}</p>
         </div>
         <div class="feature-card">
-          <h3>River data enrichment</h3>
-          <p>Trip entries are enriched with river section name, difficulty grade, and current gauge readings from Rivermap.</p>
+          <h3>{{call .T "landing.feat_enrich_title"}}</h3>
+          <p>{{call .T "landing.feat_enrich_desc"}}</p>
         </div>
         <div class="feature-card">
-          <h3>Passwordless sign-in</h3>
-          <p>No password to create or remember. Sign in with a magic link sent to your email address.</p>
+          <h3>{{call .T "landing.feat_auth_title"}}</h3>
+          <p>{{call .T "landing.feat_auth_desc"}}</p>
         </div>
         <div class="feature-card">
-          <h3>Encrypted credentials</h3>
-          <p>Your Garmin and EFB credentials are encrypted at rest using AES-256-GCM. You can remove them at any time.</p>
+          <h3>{{call .T "landing.feat_encrypt_title"}}</h3>
+          <p>{{call .T "landing.feat_encrypt_desc"}}</p>
         </div>
         <div class="feature-card">
-          <h3>Manual sync & history</h3>
-          <p>Trigger a sync on demand, sync a custom date range, and review your full sync history with detailed status.</p>
+          <h3>{{call .T "landing.feat_manual_title"}}</h3>
+          <p>{{call .T "landing.feat_manual_desc"}}</p>
         </div>
       </div>
     </section>
 
     <section style="text-align: center;">
-      <h2>Supported activities</h2>
-      <p style="color: var(--pico-muted-color);">EFB Connector syncs these Garmin activity types:</p>
+      <h2>{{call .T "landing.activities_title"}}</h2>
+      <p style="color: var(--pico-muted-color);">{{call .T "landing.activities_desc"}}</p>
       <div class="activities">
-        <span class="activity-badge">Kayaking</span>
-        <span class="activity-badge">Canoeing</span>
-        <span class="activity-badge">Stand Up Paddleboarding</span>
-        <span class="activity-badge">Rowing</span>
-        <span class="activity-badge">Whitewater Rafting</span>
-        <span class="activity-badge">Paddling</span>
+        <span class="activity-badge">{{call .T "landing.activity_kayaking"}}</span>
+        <span class="activity-badge">{{call .T "landing.activity_canoeing"}}</span>
+        <span class="activity-badge">{{call .T "landing.activity_sup"}}</span>
+        <span class="activity-badge">{{call .T "landing.activity_rowing"}}</span>
+        <span class="activity-badge">{{call .T "landing.activity_rafting"}}</span>
+        <span class="activity-badge">{{call .T "landing.activity_paddling"}}</span>
       </div>
     </section>
 
     <section style="text-align: center;">
-      <h2>How it works</h2>
+      <h2>{{call .T "landing.how_title"}}</h2>
       <div class="steps">
         <div>
           <span class="step-num">1</span>
-          <h4>Sign in</h4>
-          <p>Enter your email and click the magic link — no password needed.</p>
+          <h4>{{call .T "landing.step1_title"}}</h4>
+          <p>{{call .T "landing.step1_desc"}}</p>
         </div>
         <div>
           <span class="step-num">2</span>
-          <h4>Connect accounts</h4>
-          <p>Link your Garmin Connect and Kanu-EFB credentials. Stored encrypted.</p>
+          <h4>{{call .T "landing.step2_title"}}</h4>
+          <p>{{call .T "landing.step2_desc"}}</p>
         </div>
         <div>
           <span class="step-num">3</span>
-          <h4>Set preferences</h4>
-          <p>Choose whether to auto-create trip entries and enrich them with river data.</p>
+          <h4>{{call .T "landing.step3_title"}}</h4>
+          <p>{{call .T "landing.step3_desc"}}</p>
         </div>
         <div>
           <span class="step-num">4</span>
-          <h4>Relax</h4>
-          <p>Your activities sync automatically every day. Check the dashboard anytime.</p>
+          <h4>{{call .T "landing.step4_title"}}</h4>
+          <p>{{call .T "landing.step4_desc"}}</p>
         </div>
       </div>
     </section>
 
     <section class="cta-section">
-      <a href="/login" role="button" style="font-size: 1.1rem;">Get started — it's free</a>
-      <p><small>No credit card. No password. Just your email.</small></p>
+      <a href="/login" role="button" style="font-size: 1.1rem;">{{call .T "landing.cta"}}</a>
+      <p><small>{{call .T "landing.cta_footer"}}</small></p>
     </section>
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

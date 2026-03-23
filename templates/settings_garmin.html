@@ -1,10 +1,10 @@
 {{define "settings_garmin.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Garmin Settings — EFB Connector</title>
+  <title>{{call .T "garmin.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
@@ -21,43 +21,43 @@
     {{end}}
 
     <hgroup>
-      <h1>Garmin Connect</h1>
-      <p>Link your Garmin account to sync paddling activities.</p>
+      <h1>{{call .T "garmin.heading"}}</h1>
+      <p>{{call .T "garmin.subtitle"}}</p>
     </hgroup>
 
     {{if .Connected}}
     <article class="settings-card">
       <header>
-        <strong>Current connection</strong>
-        <span class="status-badge status-connected" style="float:right;">Connected</span>
+        <strong>{{call .T "garmin.current"}}</strong>
+        <span class="status-badge status-connected" style="float:right;">{{call .T "common.connected"}}</span>
       </header>
-      <p>Account: <strong>{{.Email}}</strong></p>
+      <p>{{call .T "garmin.account"}} <strong>{{.Email}}</strong></p>
       <form method="POST" action="/settings/garmin/delete"
-            onsubmit="return confirm('Remove your Garmin credentials?');">
+            onsubmit="return confirm('{{call .T "garmin.remove_confirm"}}');">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" class="outline contrast">Remove connection</button>
+        <button type="submit" class="outline contrast">{{call .T "garmin.remove"}}</button>
       </form>
     </article>
     {{end}}
 
     <article class="settings-card">
-      <header><strong>{{if .Connected}}Update credentials{{else}}Connect Garmin{{end}}</strong></header>
-      <p>Enter your Garmin Connect email and password. Credentials will be validated and stored encrypted.</p>
+      <header><strong>{{if .Connected}}{{call .T "garmin.update_heading"}}{{else}}{{call .T "garmin.connect_heading"}}{{end}}</strong></header>
+      <p>{{call .T "garmin.form_desc"}}</p>
       <form method="POST" action="/settings/garmin">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label for="email">Email address
-          <input type="email" id="email" name="email" placeholder="you@garmin.com"
+        <label for="email">{{call .T "garmin.email_label"}}
+          <input type="email" id="email" name="email" placeholder="{{call .T "garmin.email_placeholder"}}"
                  {{if .Email}}value="{{.Email}}"{{end}} required>
         </label>
-        <label for="password">Password
-          <input type="password" id="password" name="password" placeholder="••••••••" required>
+        <label for="password">{{call .T "garmin.password_label"}}
+          <input type="password" id="password" name="password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" required>
         </label>
-        <button type="submit">Test &amp; Save</button>
+        <button type="submit">{{call .T "garmin.submit"}}</button>
       </form>
     </article>
 
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}

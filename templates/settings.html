@@ -1,10 +1,10 @@
 {{define "settings.html"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Settings — EFB Connector</title>
+  <title>{{call .T "settings.title"}}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
@@ -18,48 +18,48 @@
     {{end}}
 
     <hgroup>
-      <h1>Settings</h1>
-      <p>Manage your connections and preferences.</p>
+      <h1>{{call .T "settings.heading"}}</h1>
+      <p>{{call .T "settings.subtitle"}}</p>
     </hgroup>
 
-    <div class="settings-group-label">Connections</div>
+    <div class="settings-group-label">{{call .T "settings.connections"}}</div>
     <article class="settings-list">
       <a href="/settings/garmin" class="settings-row">
         <div class="settings-row-info">
-          <strong>Garmin Connect</strong>
-          {{if .GarminConnected}}<small>{{.GarminEmail}}</small>{{else}}<small>Not configured</small>{{end}}
+          <strong>{{call .T "settings.garmin"}}</strong>
+          {{if .GarminConnected}}<small>{{.GarminEmail}}</small>{{else}}<small>{{call .T "common.not_configured"}}</small>{{end}}
         </div>
         <div class="settings-row-action">
           {{if .GarminConnected}}
-            <span class="status-badge status-connected">Connected</span>
+            <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
           {{else}}
-            <span class="status-badge status-disconnected">Not connected</span>
+            <span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span>
           {{end}}
           <span class="settings-chevron">&#8250;</span>
         </div>
       </a>
       <a href="/settings/efb" class="settings-row">
         <div class="settings-row-info">
-          <strong>Kanu-EFB</strong>
-          {{if .EFBConnected}}<small>{{.EFBUsername}}</small>{{else}}<small>Not configured</small>{{end}}
+          <strong>{{call .T "settings.efb"}}</strong>
+          {{if .EFBConnected}}<small>{{.EFBUsername}}</small>{{else}}<small>{{call .T "common.not_configured"}}</small>{{end}}
         </div>
         <div class="settings-row-action">
           {{if .EFBConnected}}
-            <span class="status-badge status-connected">Connected</span>
+            <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
           {{else}}
-            <span class="status-badge status-disconnected">Not connected</span>
+            <span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span>
           {{end}}
           <span class="settings-chevron">&#8250;</span>
         </div>
       </a>
     </article>
 
-    <div class="settings-group-label">Sync preferences</div>
+    <div class="settings-group-label">{{call .T "settings.sync_prefs"}}</div>
     <article class="settings-list">
       <div class="settings-row">
         <div class="settings-row-info">
-          <strong>Auto-create trip entries</strong>
-          <small>Create logbook entries (Fahrten) from synced tracks</small>
+          <strong>{{call .T "settings.auto_create"}}</strong>
+          <small>{{call .T "settings.auto_create_desc"}}</small>
         </div>
         <div class="settings-row-action">
           <form method="post" action="/settings/auto-create-trips" style="margin: 0;">
@@ -71,8 +71,8 @@
       {{if .AutoCreateTrips}}
       <div class="settings-row">
         <div class="settings-row-info">
-          <strong>Enrich trip entries</strong>
-          <small>Add river section, grade, and gauge data from Rivermap</small>
+          <strong>{{call .T "settings.enrich"}}</strong>
+          <small>{{call .T "settings.enrich_desc"}}</small>
         </div>
         <div class="settings-row-action">
           <form method="post" action="/settings/enrich-trips" style="margin: 0;">
@@ -84,14 +84,33 @@
       {{end}}
     </article>
 
-    <div class="settings-group-label">Account</div>
+    <div class="settings-group-label">{{call .T "settings.general"}}</div>
     <article class="settings-list">
-      <form method="POST" action="/account/delete" onsubmit="return confirm('Are you sure? This will permanently delete your account and all data. This cannot be undone.');" style="margin: 0;">
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <strong>{{call .T "settings.language"}}</strong>
+          <small>{{call .T "settings.language_desc"}}</small>
+        </div>
+        <div class="settings-row-action">
+          <form method="post" action="/settings/language" style="margin: 0; display: flex; gap: 0.5rem;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="hidden" name="lang" value="{{if eq .Lang "de"}}en{{else}}de{{end}}">
+            <button type="submit" class="outline secondary" style="margin: 0; padding: 0.3em 0.8em; font-size: 0.85em;">
+              {{if eq .Lang "de"}}English{{else}}Deutsch{{end}}
+            </button>
+          </form>
+        </div>
+      </div>
+    </article>
+
+    <div class="settings-group-label">{{call .T "settings.account"}}</div>
+    <article class="settings-list">
+      <form method="POST" action="/account/delete" onsubmit="return confirm('{{call .T "settings.delete_confirm"}}');" style="margin: 0;">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="settings-row settings-row-danger">
           <div class="settings-row-info">
-            <strong>Delete account</strong>
-            <small>Permanently remove your account and all data</small>
+            <strong>{{call .T "settings.delete_account"}}</strong>
+            <small>{{call .T "settings.delete_desc"}}</small>
           </div>
           <div class="settings-row-action">
             <span class="settings-chevron">&#8250;</span>
@@ -101,6 +120,6 @@
     </article>
   </main>
 
-  {{template "footer"}}
+  {{template "footer" .}}
 </body>
 </html>{{end}}
