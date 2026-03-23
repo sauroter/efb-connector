@@ -77,5 +77,5 @@ func (e *TripEnrichment) FormatComment() string {
 
 	lines = append(lines, "Data: rivermap.org (CC BY-SA 4.0)")
 
-	return "---\n" + strings.Join(lines, "\n")
+	return strings.Join(lines, "\n") + "\n---"
 }
