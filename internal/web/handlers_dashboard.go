@@ -83,7 +83,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		showGettingStarted = true
 	}
 
-	s.render(w, r,"dashboard.html", map[string]any{
+	s.render(w, r, "dashboard.html", map[string]any{
 		"Flash":              flash(w, r),
 		"CSRFToken":          s.auth.CSRFToken(r),
 		"User":               user,
@@ -113,7 +113,7 @@ func (s *Server) handleGarminSettingsForm(w http.ResponseWriter, r *http.Request
 		connected = true
 	}
 
-	s.render(w, r,"settings_garmin.html", map[string]any{
+	s.render(w, r, "settings_garmin.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Connected": connected,
@@ -205,7 +205,7 @@ func (s *Server) handleEFBSettingsForm(w http.ResponseWriter, r *http.Request) {
 		connected = true
 	}
 
-	s.render(w, r,"settings_efb.html", map[string]any{
+	s.render(w, r, "settings_efb.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Connected": connected,
@@ -303,14 +303,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		efbConnected = true
 	}
 
-	s.render(w, r,"settings.html", map[string]any{
+	s.render(w, r, "settings.html", map[string]any{
 		"Flash":           flash(w, r),
 		"CSRFToken":       s.auth.CSRFToken(r),
 		"User":            user,
 		"GarminConnected": garminConnected,
 		"GarminEmail":     garminEmail,
 		"EFBConnected":    efbConnected,
-		"EFBUsername":      efbUsername,
+		"EFBUsername":    efbUsername,
 		"AutoCreateTrips": user.AutoCreateTrips,
 		"EnrichTrips":     user.EnrichTrips,
 	})
