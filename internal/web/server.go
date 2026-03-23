@@ -91,7 +91,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /login", s.handleLoginForm)
 	mux.HandleFunc("POST /login", s.handleLoginSubmit)
 	mux.HandleFunc("GET /auth/verify", s.handleVerifyMagicLink)
-	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /impressum", s.handleImpressum)
 	mux.HandleFunc("GET /privacy", s.handlePrivacy)
 
@@ -99,6 +98,7 @@ func (s *Server) Routes() http.Handler {
 	protect := func(h http.HandlerFunc) http.Handler {
 		return s.auth.RequireAuth(s.auth.CSRFProtect(h))
 	}
+	mux.Handle("POST /auth/logout", protect(s.handleLogout))
 	mux.Handle("GET /dashboard", protect(s.handleDashboard))
 	mux.Handle("GET /settings/garmin", protect(s.handleGarminSettingsForm))
 	mux.Handle("POST /settings/garmin", protect(s.handleGarminSettingsSave))
@@ -128,7 +128,7 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	// Wrap the entire mux in logging + recovery middleware.
-	return s.recovery(s.logging(mux))
+	return s.recovery(s.logging(securityHeaders(mux)))
 }
 
 // render executes the named template with data and writes the result to w.
@@ -153,6 +153,7 @@ func flash(w http.ResponseWriter, r *http.Request) string {
 		Value:  "",
 		Path:   "/",
 		MaxAge: -1,
+		Secure: true,
 	})
 	return cookie.Value
 }
@@ -165,6 +166,7 @@ func setFlash(w http.ResponseWriter, msg string) {
 		Path:     "/",
 		MaxAge:   60, // generous: should be consumed on the next page load
 		HttpOnly: true,
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
