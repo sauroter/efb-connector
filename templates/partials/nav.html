@@ -1,0 +1,26 @@
+{{define "nav"}}
+<nav class="container">
+  <ul>
+    <li><a href="/dashboard" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li>
+  </ul>
+  <ul>
+    <li class="hide-mobile"><a href="/dashboard">Dashboard</a></li>
+    <li>
+      <details class="dropdown">
+        <summary role="link" class="nav-menu-toggle">&#9776;</summary>
+        <ul>
+          <li class="show-mobile-only"><a href="/dashboard">Dashboard</a></li>
+          <li><a href="/settings">Settings</a></li>
+          <li><a href="/sync/history">Sync History</a></li>
+          <li class="dropdown-logout">
+            <form method="POST" action="/auth/logout" style="margin: 0;">
+              <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+              <button type="submit">Logout</button>
+            </form>
+          </li>
+        </ul>
+      </details>
+    </li>
+  </ul>
+</nav>
+{{end}}

@@ -1,0 +1,106 @@
+{{define "settings.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>Settings — EFB Connector</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+  {{template "nav" .}}
+
+  <main class="container">
+    {{if .Flash}}
+    <div role="alert" class="flash-message">{{.Flash}}</div>
+    {{end}}
+
+    <hgroup>
+      <h1>Settings</h1>
+      <p>Manage your connections and preferences.</p>
+    </hgroup>
+
+    <div class="settings-group-label">Connections</div>
+    <article class="settings-list">
+      <a href="/settings/garmin" class="settings-row">
+        <div class="settings-row-info">
+          <strong>Garmin Connect</strong>
+          {{if .GarminConnected}}<small>{{.GarminEmail}}</small>{{else}}<small>Not configured</small>{{end}}
+        </div>
+        <div class="settings-row-action">
+          {{if .GarminConnected}}
+            <span class="status-badge status-connected">Connected</span>
+          {{else}}
+            <span class="status-badge status-disconnected">Not connected</span>
+          {{end}}
+          <span class="settings-chevron">&#8250;</span>
+        </div>
+      </a>
+      <a href="/settings/efb" class="settings-row">
+        <div class="settings-row-info">
+          <strong>Kanu-EFB</strong>
+          {{if .EFBConnected}}<small>{{.EFBUsername}}</small>{{else}}<small>Not configured</small>{{end}}
+        </div>
+        <div class="settings-row-action">
+          {{if .EFBConnected}}
+            <span class="status-badge status-connected">Connected</span>
+          {{else}}
+            <span class="status-badge status-disconnected">Not connected</span>
+          {{end}}
+          <span class="settings-chevron">&#8250;</span>
+        </div>
+      </a>
+    </article>
+
+    <div class="settings-group-label">Sync preferences</div>
+    <article class="settings-list">
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <strong>Auto-create trip entries</strong>
+          <small>Create logbook entries (Fahrten) from synced tracks</small>
+        </div>
+        <div class="settings-row-action">
+          <form method="post" action="/settings/auto-create-trips" style="margin: 0;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="checkbox" name="enabled" value="1" role="switch" {{if .AutoCreateTrips}}checked{{end}} onchange="this.form.submit()" style="margin: 0;">
+          </form>
+        </div>
+      </div>
+      {{if .AutoCreateTrips}}
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <strong>Enrich trip entries</strong>
+          <small>Add river section, grade, and gauge data from Rivermap</small>
+        </div>
+        <div class="settings-row-action">
+          <form method="post" action="/settings/enrich-trips" style="margin: 0;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="checkbox" name="enabled" value="1" role="switch" {{if .EnrichTrips}}checked{{end}} onchange="this.form.submit()" style="margin: 0;">
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </article>
+
+    <div class="settings-group-label">Account</div>
+    <article class="settings-list">
+      <form method="POST" action="/account/delete" onsubmit="return confirm('Are you sure? This will permanently delete your account and all data. This cannot be undone.');" style="margin: 0;">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" class="settings-row settings-row-danger">
+          <div class="settings-row-info">
+            <strong>Delete account</strong>
+            <small>Permanently remove your account and all data</small>
+          </div>
+          <div class="settings-row-action">
+            <span class="settings-chevron">&#8250;</span>
+          </div>
+        </button>
+      </form>
+    </article>
+  </main>
+
+  {{template "footer"}}
+</body>
+</html>{{end}}

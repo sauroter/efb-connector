@@ -4,16 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <meta name="description" content="Automatically sync your Garmin paddling activities to Kanu-EFB. Free, secure, no password required.">
+  <meta name="description" content="Automatically sync your Garmin paddling activities to Kanu-EFB. Auto-create trip entries with river data. Free, secure, no password required.">
   <title>EFB Connector — Sync Garmin to Kanu-EFB</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="/static/styles.css">
   <style>
-    .hero { text-align: center; padding: 4rem 1rem; }
-    .hero h1 { font-size: 2.5rem; }
-    .hero p { font-size: 1.2rem; color: var(--pico-muted-color); max-width: 600px; margin: 1rem auto 2rem; }
-    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; margin: 3rem 0; }
+    .hero { text-align: center; padding: 4rem 1rem 2rem; }
+    .hero h1 { font-size: 2.4rem; line-height: 1.2; max-width: 700px; margin: 0 auto 1rem; }
+    .hero p { font-size: 1.15rem; color: var(--pico-muted-color); max-width: 580px; margin: 0 auto 2rem; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; margin: 2rem 0 3rem; }
     .feature-card { padding: 1.5rem; background: var(--pico-card-background-color); border-radius: var(--pico-border-radius); border: 1px solid var(--pico-muted-border-color); }
+    .feature-card h3 { margin-bottom: 0.5rem; font-size: 1.1rem; }
+    .feature-card p { margin-bottom: 0; color: var(--pico-muted-color); font-size: 0.95rem; }
+    .activities { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin: 1rem 0 2rem; }
+    .activity-badge { display: inline-block; padding: 0.3em 0.9em; border-radius: 999px; font-size: 0.9em; font-weight: 500; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin: 2rem 0 3rem; text-align: center; }
+    .step-num { display: inline-flex; align-items: center; justify-content: center; width: 2.2em; height: 2.2em; border-radius: 50%; background: var(--pico-primary); color: #fff; font-weight: 700; font-size: 1.1rem; margin-bottom: 0.75rem; }
+    .steps h4 { margin-bottom: 0.3rem; }
+    .steps p { color: var(--pico-muted-color); font-size: 0.9rem; margin: 0; }
+    .cta-section { text-align: center; padding: 2rem 0 3rem; }
+    .cta-section p { color: var(--pico-muted-color); margin-top: 0.75rem; }
   </style>
 </head>
 <body>
@@ -27,34 +37,82 @@
 
     <section class="hero">
       <img src="/static/favicon.svg" alt="EFB Connector" width="72" height="72" style="margin-bottom: 1rem;">
-      <h1>Sync your Garmin paddling activities to Kanu-EFB</h1>
-      <p>EFB Connector automatically downloads your kayaking and canoeing activities from Garmin Connect and uploads them to your Kanu-EFB electronic logbook — every day, without any manual steps.</p>
-      <a href="/login" role="button">Get started — it's free</a>
+      <h1>Sync your Garmin paddling activities to Kanu-EFB — automatically</h1>
+      <p>EFB Connector downloads your paddling activities from Garmin Connect, uploads them to Kanu-EFB, and creates logbook entries with river data — every day, hands-free.</p>
+      <a href="/login" role="button" style="font-size: 1.1rem;">Get started — it's free</a>
     </section>
 
-    <section class="features">
-      <div class="feature-card">
-        <h3>Automatic daily sync</h3>
-        <p>Your activities are synced automatically around 04:00 UTC every day. No need to remember to upload manually.</p>
-      </div>
-      <div class="feature-card">
-        <h3>No password required</h3>
-        <p>Sign in with a magic link sent to your email — no password to create or remember.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Secure credential storage</h3>
-        <p>Your Garmin and EFB credentials are encrypted at rest using AES-256-GCM.</p>
+    <section>
+      <div class="features">
+        <div class="feature-card">
+          <h3>Automatic daily sync</h3>
+          <p>Activities are synced from Garmin Connect to Kanu-EFB every day at ~04:00 UTC. No manual uploads needed.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Trip logbook entries</h3>
+          <p>Automatically create Fahrten (logbook entries) in Kanu-EFB from your synced tracks, with start and end times pre-filled.</p>
+        </div>
+        <div class="feature-card">
+          <h3>River data enrichment</h3>
+          <p>Trip entries are enriched with river section name, difficulty grade, and current gauge readings from Rivermap.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Passwordless sign-in</h3>
+          <p>No password to create or remember. Sign in with a magic link sent to your email address.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Encrypted credentials</h3>
+          <p>Your Garmin and EFB credentials are encrypted at rest using AES-256-GCM. You can remove them at any time.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Manual sync & history</h3>
+          <p>Trigger a sync on demand, sync a custom date range, and review your full sync history with detailed status.</p>
+        </div>
       </div>
     </section>
 
-    <section style="text-align: center; margin: 3rem 0;">
+    <section style="text-align: center;">
+      <h2>Supported activities</h2>
+      <p style="color: var(--pico-muted-color);">EFB Connector syncs these Garmin activity types:</p>
+      <div class="activities">
+        <span class="activity-badge">Kayaking</span>
+        <span class="activity-badge">Canoeing</span>
+        <span class="activity-badge">Stand Up Paddleboarding</span>
+        <span class="activity-badge">Rowing</span>
+        <span class="activity-badge">Whitewater Rafting</span>
+        <span class="activity-badge">Paddling</span>
+      </div>
+    </section>
+
+    <section style="text-align: center;">
       <h2>How it works</h2>
-      <ol style="display: inline-block; text-align: left; max-width: 480px;">
-        <li>Sign in with your email address</li>
-        <li>Connect your Garmin Connect account</li>
-        <li>Connect your Kanu-EFB account</li>
-        <li>Sit back — your activities sync automatically</li>
-      </ol>
+      <div class="steps">
+        <div>
+          <span class="step-num">1</span>
+          <h4>Sign in</h4>
+          <p>Enter your email and click the magic link — no password needed.</p>
+        </div>
+        <div>
+          <span class="step-num">2</span>
+          <h4>Connect accounts</h4>
+          <p>Link your Garmin Connect and Kanu-EFB credentials. Stored encrypted.</p>
+        </div>
+        <div>
+          <span class="step-num">3</span>
+          <h4>Set preferences</h4>
+          <p>Choose whether to auto-create trip entries and enrich them with river data.</p>
+        </div>
+        <div>
+          <span class="step-num">4</span>
+          <h4>Relax</h4>
+          <p>Your activities sync automatically every day. Check the dashboard anytime.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <a href="/login" role="button" style="font-size: 1.1rem;">Get started — it's free</a>
+      <p><small>No credit card. No password. Just your email.</small></p>
     </section>
   </main>
 

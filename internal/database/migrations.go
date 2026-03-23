@@ -88,4 +88,10 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
 	// 0003 – track trips created during sync
 	`ALTER TABLE sync_runs ADD COLUMN trips_created INTEGER NOT NULL DEFAULT 0;`,
+
+	// 0004 – track whether user has completed the onboarding preferences step
+	`ALTER TABLE users ADD COLUMN setup_completed INTEGER NOT NULL DEFAULT 0;`,
+
+	// 0005 – add enrich_trips user preference (default enabled for existing users)
+	`ALTER TABLE users ADD COLUMN enrich_trips INTEGER NOT NULL DEFAULT 1;`,
 }

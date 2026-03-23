@@ -9,24 +9,11 @@
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <style>
-    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
     .sync-status-container { min-height: 3rem; }
   </style>
 </head>
 <body>
-  <nav class="container">
-    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li></ul>
-    <ul>
-      <li class="hide-mobile"><a href="/dashboard">Dashboard</a></li>
-      <li><a href="/sync/history">Sync History</a></li>
-      <li>
-        <form method="POST" action="/auth/logout" style="display: inline;">
-          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <button type="submit" class="outline secondary" style="margin: 0;">Logout</button>
-        </form>
-      </li>
-    </ul>
-  </nav>
+  {{template "nav" .}}
 
   <main class="container">
     {{if .Flash}}
@@ -41,7 +28,7 @@
     {{if .ShowGettingStarted}}
     <section>
       <h2>Getting Started</h2>
-      <p>Set up your account in three steps:</p>
+      <p>Set up your account in four steps:</p>
       <div class="getting-started-steps">
         <div class="getting-started-step {{if .GarminConnected}}step-done{{else if eq .SetupStep 1}}step-active{{else}}step-pending{{end}}">
           {{if .GarminConnected}}
@@ -61,77 +48,73 @@
             <span class="step-icon">2</span> Connect Kanu-EFB
           {{end}}
         </div>
-        <div class="getting-started-step {{if and .GarminConnected .EFBConnected (not (eq .SetupStep 3))}}step-done{{else if eq .SetupStep 3}}step-active{{else}}step-pending{{end}}">
-          <span class="step-icon">3</span> Run your first sync
+        <div class="getting-started-step {{if .User.SetupCompleted}}step-done{{else if eq .SetupStep 3}}step-active{{else}}step-pending{{end}}">
+          {{if .User.SetupCompleted}}
+            <span class="step-icon">&#10003;</span> Configure preferences
+          {{else if eq .SetupStep 3}}
+            <span class="step-icon">3</span> Configure preferences
+          {{else}}
+            <span class="step-icon">3</span> Configure preferences
+          {{end}}
+        </div>
+        <div class="getting-started-step {{if eq .SetupStep 4}}step-active{{else}}step-pending{{end}}">
+          <span class="step-icon">4</span> Run your first sync
         </div>
       </div>
+
       {{if eq .SetupStep 3}}
       <article style="margin-top: 1.5rem;">
-        <header><strong>Before you sync: auto-create trip entries?</strong></header>
-        <p>EFB Connector can automatically create logbook entries (Fahrten) in your Kanu-EFB from synced tracks. Start and end times are filled in from your Garmin activity data. You can always change this later on the dashboard.</p>
-        <footer style="display: flex; gap: 0.5rem;">
-          <form method="post" action="/settings/auto-create-trips">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <input type="hidden" name="enabled" value="1">
-            <button type="submit">Yes, create trips automatically</button>
-          </form>
-          <form method="post" action="/settings/auto-create-trips">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <button type="submit" class="secondary">No thanks, just upload tracks</button>
-          </form>
-        </footer>
+        <header><strong>Configure your preferences</strong></header>
+        <form method="POST" action="/setup/configure">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <label>
+            <input type="checkbox" name="auto_create_trips" value="1" {{if .AutoCreateTrips}}checked{{end}}>
+            Automatically create EFB trip entries from synced tracks
+          </label>
+          <p><small style="color: var(--pico-muted-color);">Creates logbook entries (Fahrten) in your Kanu-EFB from synced tracks with start and end times from Garmin.</small></p>
+          <label>
+            <input type="checkbox" name="enrich_trips" value="1" checked>
+            Enrich trip entries with river section and gauge data
+          </label>
+          <p><small style="color: var(--pico-muted-color);">Adds river section name, difficulty grade, and current water level from Rivermap to your trip entries. Only applies when trip creation is enabled.</small></p>
+          <p><small style="color: var(--pico-muted-color);">You can change these anytime in <a href="/settings">Settings</a>.</small></p>
+          <button type="submit">Save &amp; continue</button>
+        </form>
       </article>
-      <form method="POST" action="/sync/trigger" style="margin-top: 1rem;">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit">Run first sync</button>
-      </form>
       {{end}}
-    </section>
-    {{else}}
-    <section class="card-grid">
-      <!-- Garmin connection card -->
-      <article>
-        <header>
-          <strong>Garmin Connect</strong>
-          {{if .GarminConnected}}
-            <span class="status-badge status-connected" style="float:right;">Connected</span>
-          {{else}}
-            <span class="status-badge status-disconnected" style="float:right;">Not connected</span>
-          {{end}}
-        </header>
-        {{if .GarminConnected}}
-          <p>Your Garmin account is linked.</p>
-          <a href="/settings/garmin" role="button" class="outline secondary">Manage</a>
-        {{else}}
-          <p>Connect your Garmin account to enable activity sync.</p>
-          <a href="/settings/garmin" role="button">Connect Garmin</a>
-        {{end}}
-      </article>
 
-      <!-- EFB connection card -->
-      <article>
-        <header>
-          <strong>Kanu-EFB</strong>
-          {{if .EFBConnected}}
-            <span class="status-badge status-connected" style="float:right;">Connected</span>
-          {{else}}
-            <span class="status-badge status-disconnected" style="float:right;">Not connected</span>
-          {{end}}
-        </header>
-        {{if .EFBConnected}}
-          <p>Your EFB account is linked.</p>
-          <a href="/settings/efb" role="button" class="outline secondary">Manage</a>
-        {{else}}
-          <p>Connect your Kanu-EFB account to enable activity upload.</p>
-          <a href="/settings/efb" role="button">Connect EFB</a>
-        {{end}}
+      {{if eq .SetupStep 4}}
+      <article style="margin-top: 1.5rem;">
+        <header><strong>Run your first sync</strong></header>
+        <p>Everything is set up. Sync your recent Garmin activities to Kanu-EFB now.</p>
+        <form method="POST" action="/sync/trigger">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button type="submit">Run first sync</button>
+        </form>
       </article>
+      {{end}}
     </section>
     {{end}}
 
     <!-- Sync section -->
     <section>
-      <h2>Sync</h2>
+      {{if not .ShowGettingStarted}}
+      <div class="connection-status">
+        Garmin:
+        {{if .GarminConnected}}
+          <span class="status-badge status-connected">Connected</span>
+        {{else}}
+          <a href="/settings/garmin"><span class="status-badge status-disconnected">Not connected</span></a>
+        {{end}}
+        &middot;
+        EFB:
+        {{if .EFBConnected}}
+          <span class="status-badge status-connected">Connected</span>
+        {{else}}
+          <a href="/settings/efb"><span class="status-badge status-disconnected">Not connected</span></a>
+        {{end}}
+      </div>
+      {{end}}
 
       <div id="sync-status" class="sync-status-container">
         {{if .LastSync}}
@@ -170,14 +153,6 @@
       </form>
       <p><small style="color: var(--pico-muted-color);">Syncs the last {{.SyncDays}} days of activities. Next automatic sync: ~04:00 UTC daily.</small></p>
 
-      <form method="post" action="/settings/auto-create-trips" style="margin-top: 0.75rem;">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label>
-          <input type="checkbox" name="enabled" value="1" {{if .AutoCreateTrips}}checked{{end}} onchange="this.form.submit()">
-          Automatically create EFB trip entries from synced tracks
-        </label>
-      </form>
-
       <details style="margin-top: 1rem;">
         <summary>Sync a custom date range</summary>
         <form method="POST" action="/sync/trigger"
@@ -206,21 +181,6 @@
       {{else}}
       <p><small style="color: var(--pico-muted-color);">Connect both Garmin and EFB to enable sync.</small></p>
       {{end}}
-    </section>
-
-    <!-- Danger zone -->
-    <section>
-      <details>
-        <summary style="color: var(--pico-del-color);">Danger zone</summary>
-        <article>
-          <h3>Delete account</h3>
-          <p>This will permanently delete your account and all associated data, including your credentials and sync history. This action cannot be undone.</p>
-          <form method="POST" action="/account/delete" onsubmit="return confirm('Are you sure? This cannot be undone.');">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <button type="submit" class="contrast">Delete my account</button>
-          </form>
-        </article>
-      </details>
     </section>
   </main>
 

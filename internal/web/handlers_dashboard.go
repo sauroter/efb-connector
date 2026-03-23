@@ -66,7 +66,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compute getting-started state.
-	// SetupStep: 1=need Garmin, 2=need EFB, 3=need first sync (also shows trip config), 0=all done.
+	// SetupStep: 1=need Garmin, 2=need EFB, 3=configure preferences, 4=run first sync, 0=all done.
 	setupStep := 0
 	showGettingStarted := false
 	if !garminConnected {
@@ -75,8 +75,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	} else if !efbConnected {
 		setupStep = 2
 		showGettingStarted = true
-	} else if !hasSynced {
+	} else if !user.SetupCompleted {
 		setupStep = 3
+		showGettingStarted = true
+	} else if !hasSynced {
+		setupStep = 4
 		showGettingStarted = true
 	}
 
@@ -273,6 +276,82 @@ func (s *Server) handleEFBSettingsDelete(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
 }
 
+// handleSettings renders the consolidated settings page.
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	user, err := s.db.GetUserByID(userID)
+	if err != nil || user == nil {
+		s.logger.Error("failed to load user", "user_id", userID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	garminConnected := false
+	garminEmail, _, garminErr := s.db.GetGarminCredentials(userID)
+	if garminErr == nil {
+		garminConnected = true
+	}
+
+	efbConnected := false
+	efbUsername, _, efbErr := s.db.GetEFBCredentials(userID)
+	if efbErr == nil {
+		efbConnected = true
+	}
+
+	s.render(w, "settings.html", map[string]any{
+		"Flash":           flash(w, r),
+		"CSRFToken":       s.auth.CSRFToken(r),
+		"User":            user,
+		"GarminConnected": garminConnected,
+		"GarminEmail":     garminEmail,
+		"EFBConnected":    efbConnected,
+		"EFBUsername":      efbUsername,
+		"AutoCreateTrips": user.AutoCreateTrips,
+		"EnrichTrips":     user.EnrichTrips,
+	})
+}
+
+// handleSetupConfigure saves preferences from the onboarding wizard (step 3)
+// and marks the setup as completed, advancing the user to step 4.
+func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	autoCreateTrips := r.FormValue("auto_create_trips") == "1"
+	enrichTrips := r.FormValue("enrich_trips") == "1"
+
+	if err := s.db.UpdateAutoCreateTrips(userID, autoCreateTrips); err != nil {
+		s.logger.Error("failed to update auto_create_trips", "user_id", userID, "error", err)
+		setFlash(w, "Failed to save preferences. Please try again.")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
+	if err := s.db.UpdateEnrichTrips(userID, enrichTrips); err != nil {
+		s.logger.Error("failed to update enrich_trips", "user_id", userID, "error", err)
+	}
+
+	if err := s.db.UpdateSetupCompleted(userID, true); err != nil {
+		s.logger.Error("failed to update setup_completed", "user_id", userID, "error", err)
+	}
+
+	s.logger.Info("setup preferences configured", "user_id", userID, "auto_create_trips", autoCreateTrips, "enrich_trips", enrichTrips)
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
 // handleAutoCreateTripsSave saves the auto_create_trips toggle for the current user.
 func (s *Server) handleAutoCreateTripsSave(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserFromContext(r.Context())
@@ -292,11 +371,44 @@ func (s *Server) handleAutoCreateTripsSave(w http.ResponseWriter, r *http.Reques
 	if err := s.db.UpdateAutoCreateTrips(userID, enabled); err != nil {
 		s.logger.Error("failed to update auto_create_trips", "user_id", userID, "error", err)
 		setFlash(w, "Failed to save setting. Please try again.")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-		return
 	}
 
 	s.logger.Info("auto_create_trips updated", "user_id", userID, "enabled", enabled)
+
+	// Redirect back to referring page (settings or dashboard wizard).
+	if ref := r.Referer(); strings.Contains(ref, "/settings") {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// handleEnrichTripsSave saves the enrich_trips toggle for the current user.
+func (s *Server) handleEnrichTripsSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	enabled := r.FormValue("enabled") == "1"
+
+	if err := s.db.UpdateEnrichTrips(userID, enabled); err != nil {
+		s.logger.Error("failed to update enrich_trips", "user_id", userID, "error", err)
+		setFlash(w, "Failed to save setting. Please try again.")
+	}
+
+	s.logger.Info("enrich_trips updated", "user_id", userID, "enabled", enabled)
+
+	if ref := r.Referer(); strings.Contains(ref, "/settings") {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 

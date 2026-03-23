@@ -8,10 +8,47 @@
 .status-running { background: #dbeafe; color: #1e40af; }
 .status-completed { background: #d1fae5; color: #065f46; }
 
+/* Nav menu dropdown */
+nav details.dropdown { margin: 0; padding: 0; border: 0; }
+nav details.dropdown > summary {
+  border: 0; background: none; box-shadow: none; padding: 0;
+  font-size: 1.4em; line-height: 1; cursor: pointer;
+  color: var(--pico-color); --pico-form-element-spacing-horizontal: 0;
+}
+nav details.dropdown > summary::after { display: none; }
+nav details.dropdown > summary:focus { box-shadow: none; }
+nav details.dropdown > ul { right: 0; left: auto; min-width: 10rem; text-align: left; }
+.dropdown-logout { border-top: 1px solid var(--pico-muted-border-color); margin-top: 0.25rem; padding-top: 0.25rem; }
+.dropdown-logout button { margin: 0; padding: 0.5rem 1rem; border: 0; background: none; cursor: pointer; text-align: left; width: 100%; color: var(--pico-muted-color); font-size: 0.9em; }
+.dropdown-logout button:hover { color: var(--pico-color); }
+
 /* Responsive nav */
+.show-mobile-only { display: none; }
 @media (max-width: 576px) {
   nav .hide-mobile { display: none; }
+  .show-mobile-only { display: list-item; }
 }
+
+/* Compact connection status on dashboard */
+.connection-status { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; font-size: 0.9em; color: var(--pico-muted-color); }
+.connection-status .status-badge { font-size: 0.85em; }
+
+/* Settings page — modern list layout */
+.settings-group-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--pico-muted-color); margin: 1.5rem 0 0.5rem 0.25rem; }
+.settings-group-label:first-of-type { margin-top: 0; }
+.settings-list { padding: 0; margin-bottom: 0.5rem; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; padding: 0.85rem 1rem; gap: 1rem; text-decoration: none; color: inherit; border: 0; background: none; width: 100%; text-align: left; cursor: default; font: inherit; }
+a.settings-row { cursor: pointer; }
+a.settings-row:hover { background: var(--pico-card-background-color); filter: brightness(0.97); }
+.settings-row + .settings-row { border-top: 1px solid var(--pico-muted-border-color); }
+.settings-row-info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.settings-row-info strong { font-size: 0.95rem; }
+.settings-row-info small { color: var(--pico-muted-color); }
+.settings-row-action { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+.settings-chevron { font-size: 1.3em; color: var(--pico-muted-color); line-height: 1; }
+.settings-row-danger { color: var(--pico-del-color); cursor: pointer; }
+.settings-row-danger strong { color: var(--pico-del-color); }
+button.settings-row-danger { cursor: pointer; }
 
 /* Spinner */
 .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.4em; }

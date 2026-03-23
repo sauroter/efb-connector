@@ -100,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.Handle("POST /auth/logout", protect(s.handleLogout))
 	mux.Handle("GET /dashboard", protect(s.handleDashboard))
+	mux.Handle("GET /settings", protect(s.handleSettings))
 	mux.Handle("GET /settings/garmin", protect(s.handleGarminSettingsForm))
 	mux.Handle("POST /settings/garmin", protect(s.handleGarminSettingsSave))
 	mux.Handle("POST /settings/garmin/delete", protect(s.handleGarminSettingsDelete))
@@ -107,6 +108,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /settings/efb", protect(s.handleEFBSettingsSave))
 	mux.Handle("POST /settings/efb/delete", protect(s.handleEFBSettingsDelete))
 	mux.Handle("POST /settings/auto-create-trips", protect(s.handleAutoCreateTripsSave))
+	mux.Handle("POST /settings/enrich-trips", protect(s.handleEnrichTripsSave))
+	mux.Handle("POST /setup/configure", protect(s.handleSetupConfigure))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
 	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))

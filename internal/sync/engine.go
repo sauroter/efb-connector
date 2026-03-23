@@ -137,7 +137,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips)
+	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -199,7 +199,7 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips bool) (found, synced, skipped, failed, tripsCreated int, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips bool) (found, synced, skipped, failed, tripsCreated int, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -387,9 +387,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
 			} else if trackID != "" {
-				// Build enrichment from Rivermap if available.
+				// Build enrichment from Rivermap if available and enabled.
 				var enrichment *efb.TripEnrichment
-				if s.rivermap != nil {
+				if enrichTrips && s.rivermap != nil {
 					enrichment = s.buildEnrichment(ctx, act, log)
 				}
 				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment); tripErr != nil {

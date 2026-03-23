@@ -6,12 +6,14 @@ A multi-tenant web service that automatically syncs water sport activities from 
 
 ## Features
 
-- **Passwordless authentication** — sign in with a magic link sent to your email
 - **Automatic daily sync** — paddling activities are synced from Garmin Connect to Kanu-EFB every day at ~04:00 UTC
+- **Trip logbook entries** — automatically create Fahrten (logbook entries) in EFB from synced tracks with pre-filled start/end times
+- **River data enrichment** — trip entries enriched with river section name, difficulty grade, and gauge readings via [Rivermap](https://rivermap.ch)
+- **Manual sync & history** — trigger syncs on demand, sync custom date ranges, and review a full sync log with detailed status
+- **Passwordless authentication** — sign in with a magic link sent to your email
 - **Encrypted credential storage** — Garmin and EFB credentials encrypted at rest with AES-256-GCM
-- **Self-service account management** — connect/disconnect accounts, view sync history, delete your data
-- **Multi-tenant** — each user manages their own credentials and sync independently
-- **Manual sync** — trigger a sync from the dashboard at any time
+- **Guided onboarding** — 4-step setup wizard walks new users through connecting accounts and configuring preferences
+- **Self-service management** — connect/disconnect accounts, manage preferences, view history, delete your data
 
 ## Supported Activity Types
 
@@ -21,6 +23,13 @@ A multi-tenant web service that automatically syncs water sport activities from 
 - Rowing
 - Paddling
 - Whitewater Rafting
+
+## How It Works
+
+1. **Sign in** with your email — a magic link is sent, no password needed
+2. **Connect** your Garmin Connect and Kanu-EFB accounts (credentials are validated and stored encrypted)
+3. **Configure** your preferences — auto-create trip entries, enrich with river data
+4. **Relax** — your activities sync automatically every day, or trigger a manual sync anytime
 
 ## Getting Started
 
