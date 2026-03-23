@@ -109,7 +109,7 @@ func run(logger *slog.Logger) error {
 		garminProvider = garmin.NewMockGarminProvider()
 		efbProvider = efb.NewMockEFBProvider(logger)
 	} else {
-		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py")
+		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py", encryptionKey)
 		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
 	}
 
