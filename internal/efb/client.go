@@ -311,7 +311,7 @@ func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
 
 // CreateTripFromTrack navigates to the trip creation form for the given EFB
 // track ID, fills in start/end times, and submits the form.
-func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64) error {
+func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
 	// Step 1: POST to /interpretation/usersmap to simulate clicking the
 	// "Fahrt neu anlegen" image button, which redirects to /trips/create.
 	clickFieldName := fmt.Sprintf("track_id:%s", trackID)
@@ -360,6 +360,12 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 	formValues.Set("endhour", fmt.Sprintf("%d", endTime.Hour()))
 	formValues.Set("endminute", fmt.Sprintf("%d", endTime.Minute()))
 	formValues.Set("save", "speichern")
+
+	// Append enrichment data to the comment field if provided.
+	if enrichment != nil {
+		existing := formValues.Get("comment")
+		formValues.Set("comment", existing+"\n"+enrichment.FormatComment())
+	}
 
 	// Step 4: POST the completed form.
 	tripCreateURL := c.baseURL + defaultTripCreatePath

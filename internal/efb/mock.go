@@ -49,11 +49,12 @@ func (m *MockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return "mock-track-1", nil
 }
 
-func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64) error {
+func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
 	m.logger.Info("[mock-efb] create trip from track",
 		"trackID", trackID,
 		"startTime", startTime,
 		"durationSecs", durationSecs,
+		"hasEnrichment", enrichment != nil,
 	)
 	return nil
 }

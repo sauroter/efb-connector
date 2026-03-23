@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/rivermap"
 )
 
 // ──────────────────────────────────────────────
@@ -813,6 +815,7 @@ type mockEFBProvider struct {
 	findTrackFilename string
 	createTripCalled  bool
 	createTripTrackID string
+	lastEnrichment    *efb.TripEnrichment
 	uploadCount       int
 }
 
@@ -835,9 +838,10 @@ func (m *mockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return m.findTrackResult, m.findTrackErr
 }
 
-func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64) error {
+func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64, enrichment *efb.TripEnrichment) error {
 	m.createTripCalled = true
 	m.createTripTrackID = trackID
+	m.lastEnrichment = enrichment
 	return m.createTripErr
 }
 
@@ -978,6 +982,271 @@ func TestSync_TripCreationFailure_DoesNotFailSync(t *testing.T) {
 	// Verify trip creation was attempted.
 	if !mockEFB.createTripCalled {
 		t.Error("expected CreateTripFromTrack to be called")
+	}
+}
+
+func TestSync_RivermapEnrichment(t *testing.T) {
+	// Set up a mock Rivermap server that returns a section matching
+	// the test activity's start coordinates, plus gauge readings.
+	mux := http.NewServeMux()
+
+	// Sections endpoint: return one section near the test activity coords.
+	type sectionJSON struct {
+		ID          string            `json:"id"`
+		River       map[string]string `json:"river"`
+		SectionName map[string]struct {
+			From          string `json:"from"`
+			To            string `json:"to"`
+			FormattedName string `json:"formattedName"`
+		} `json:"sectionName"`
+		Grade         string     `json:"grade"`
+		SpotGrades    []string   `json:"spotGrades"`
+		PutInLatLng   [2]float64 `json:"putInLatLng"`
+		TakeOutLatLng [2]float64 `json:"takeOutLatLng"`
+		Calibration   *struct {
+			StationID string  `json:"stationId"`
+			Unit      string  `json:"unit"`
+			LW        float64 `json:"lw"`
+			MW        float64 `json:"mw"`
+			HW        float64 `json:"hw"`
+		} `json:"calibration"`
+	}
+
+	sectionsResp := struct {
+		Sections []sectionJSON `json:"sections"`
+	}{
+		Sections: []sectionJSON{
+			{
+				ID:    "test-sec-1",
+				River: map[string]string{"de": "Saalach", "en": "Saalach"},
+				SectionName: map[string]struct {
+					From          string `json:"from"`
+					To            string `json:"to"`
+					FormattedName string `json:"formattedName"`
+				}{
+					"de": {From: "Lofer", To: "Scheffsnoth"},
+				},
+				Grade:      "III-IV",
+				SpotGrades: []string{"V"},
+				// Coordinates in micro-degrees (value * 1e6).
+				// 47.58 => 47580000, 12.70 => 12700000
+				PutInLatLng:   [2]float64{47580000, 12700000},
+				TakeOutLatLng: [2]float64{47600000, 12710000},
+				Calibration: &struct {
+					StationID string  `json:"stationId"`
+					Unit      string  `json:"unit"`
+					LW        float64 `json:"lw"`
+					MW        float64 `json:"mw"`
+					HW        float64 `json:"hw"`
+				}{
+					StationID: "station-1",
+					Unit:      "cm",
+					LW:        30,
+					MW:        60,
+					HW:        120,
+				},
+			},
+		},
+	}
+
+	sectionsBody, _ := json.Marshal(sectionsResp)
+
+	mux.HandleFunc("/v2/sections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(sectionsBody) //nolint:errcheck
+	})
+
+	// Readings endpoint: return gauge readings near the activity's start time.
+	mux.HandleFunc("/v2/stations/station-1/readings", func(w http.ResponseWriter, r *http.Request) {
+		// Return a reading at a fixed timestamp.
+		type readingJSON struct {
+			Ts int64   `json:"ts"`
+			V  float64 `json:"v"`
+		}
+		type readingsResp struct {
+			Readings map[string][]readingJSON `json:"readings"`
+		}
+		// Use unix timestamp 0 + offset; the actual value doesn't matter much
+		// as long as it's within the query window.
+		resp := readingsResp{
+			Readings: map[string][]readingJSON{
+				"cm":  {{Ts: time.Now().Unix(), V: 47}},
+				"m3s": {{Ts: time.Now().Unix(), V: 12.3}},
+			},
+		}
+		body, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body) //nolint:errcheck
+	})
+
+	rivermapSrv := httptest.NewServer(mux)
+	t.Cleanup(rivermapSrv.Close)
+
+	// Create the Rivermap client and load its cache.
+	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, "", slog.Default())
+	if err := rmClient.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache: %v", err)
+	}
+
+	// Set up database and user.
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+
+	// Create activities with coordinates matching the Rivermap section.
+	acts := []garmin.Activity{
+		{
+			ProviderID:   "act-rm-1",
+			Name:         "River Run",
+			Type:         "kayaking",
+			Date:         time.Now().Add(-time.Hour),
+			StartTime:    time.Now().Add(-time.Hour),
+			DurationSecs: 3600,
+			DistanceM:    5000,
+			StartLat:     47.58,
+			StartLng:     12.70,
+		},
+	}
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-enriched",
+	}
+	gp := &mockGarminProvider{activities: acts}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+	engine.SetRivermapClient(rmClient)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
+	}
+	if run.TripsCreated != 1 {
+		t.Errorf("trips_created = %d, want 1", run.TripsCreated)
+	}
+
+	// Verify enrichment was passed.
+	if !mockEFB.createTripCalled {
+		t.Fatal("expected CreateTripFromTrack to be called")
+	}
+	if mockEFB.lastEnrichment == nil {
+		t.Fatal("expected enrichment to be non-nil")
+	}
+
+	en := mockEFB.lastEnrichment
+	if en.SectionName != "Saalach [Lofer - Scheffsnoth]" {
+		t.Errorf("SectionName = %q, want %q", en.SectionName, "Saalach [Lofer - Scheffsnoth]")
+	}
+	if en.Grade != "III-IV" {
+		t.Errorf("Grade = %q, want %q", en.Grade, "III-IV")
+	}
+	if len(en.SpotGrades) != 1 || en.SpotGrades[0] != "V" {
+		t.Errorf("SpotGrades = %v, want [V]", en.SpotGrades)
+	}
+	if en.GaugeName != "station-1" {
+		t.Errorf("GaugeName = %q, want %q", en.GaugeName, "station-1")
+	}
+	if en.GaugeReading != "47 cm" {
+		t.Errorf("GaugeReading = %q, want %q", en.GaugeReading, "47 cm")
+	}
+	if en.GaugeFlow != "12.3 m3s" {
+		t.Errorf("GaugeFlow = %q, want %q", en.GaugeFlow, "12.3 m3s")
+	}
+	if en.WaterLevel != "Low water" {
+		t.Errorf("WaterLevel = %q, want %q", en.WaterLevel, "Low water")
+	}
+}
+
+func TestSync_RivermapEnrichment_NoSectionMatch(t *testing.T) {
+	// Rivermap server returns a section far from the activity coordinates.
+	mux := http.NewServeMux()
+
+	sectionsBody, _ := json.Marshal(struct {
+		Sections []struct {
+			ID            string            `json:"id"`
+			River         map[string]string `json:"river"`
+			Grade         string            `json:"grade"`
+			PutInLatLng   [2]float64        `json:"putInLatLng"`
+			TakeOutLatLng [2]float64        `json:"takeOutLatLng"`
+		} `json:"sections"`
+	}{
+		Sections: []struct {
+			ID            string            `json:"id"`
+			River         map[string]string `json:"river"`
+			Grade         string            `json:"grade"`
+			PutInLatLng   [2]float64        `json:"putInLatLng"`
+			TakeOutLatLng [2]float64        `json:"takeOutLatLng"`
+		}{
+			{
+				ID:            "far-sec",
+				River:         map[string]string{"de": "Isar"},
+				Grade:         "II",
+				PutInLatLng:   [2]float64{48137000, 11576000}, // Munich area
+				TakeOutLatLng: [2]float64{48200000, 11600000},
+			},
+		},
+	})
+
+	mux.HandleFunc("/v2/sections", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(sectionsBody) //nolint:errcheck
+	})
+
+	rivermapSrv := httptest.NewServer(mux)
+	t.Cleanup(rivermapSrv.Close)
+
+	rmClient := rivermap.NewClient("test-key", rivermapSrv.URL, "", slog.Default())
+	if err := rmClient.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache: %v", err)
+	}
+
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+
+	// Activity is in Austria, but section is in Munich -- too far.
+	acts := []garmin.Activity{
+		{
+			ProviderID:   "act-no-match",
+			Name:         "Paddle",
+			Type:         "kayaking",
+			Date:         time.Now().Add(-time.Hour),
+			StartTime:    time.Now().Add(-time.Hour),
+			DurationSecs: 3600,
+			DistanceM:    5000,
+			StartLat:     47.58,
+			StartLng:     12.70,
+		},
+	}
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-no-enrich",
+	}
+	gp := &mockGarminProvider{activities: acts}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+	engine.SetRivermapClient(rmClient)
+
+	_, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	// Trip should be created but WITHOUT enrichment.
+	if !mockEFB.createTripCalled {
+		t.Fatal("expected CreateTripFromTrack to be called")
+	}
+	if mockEFB.lastEnrichment != nil {
+		t.Errorf("expected nil enrichment for non-matching section, got %+v", mockEFB.lastEnrichment)
 	}
 }
 

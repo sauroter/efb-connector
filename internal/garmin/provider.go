@@ -58,6 +58,11 @@ type Activity struct {
 	// StartTime is the full local start time of the activity (date + time).
 	StartTime time.Time
 
+	// StartLat is the latitude of the activity starting point (WGS-84 degrees).
+	StartLat float64
+	// StartLng is the longitude of the activity starting point (WGS-84 degrees).
+	StartLng float64
+
 	// DurationSecs is the total elapsed duration of the activity in seconds.
 	DurationSecs float64
 
