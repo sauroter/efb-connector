@@ -259,7 +259,19 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 		return "", fmt.Errorf("efb: session expired, got login page instead of tracks")
 	}
 
-	return parseUnassociatedTrack(string(body), gpxFilename), nil
+	// Debug: check if the filename appears in the response at all.
+	htmlStr := string(body)
+	if strings.Contains(htmlStr, gpxFilename) {
+		slog.Info("efb: track filename found in tracks page HTML", "filename", gpxFilename)
+	} else {
+		slog.Warn("efb: track filename NOT found in tracks page HTML",
+			"filename", gpxFilename,
+			"bodyLen", len(body),
+			"hasTrackList", strings.Contains(htmlStr, "Meine Tracks"),
+			"hasOverflowDiv", strings.Contains(htmlStr, `overflow:auto`))
+	}
+
+	return parseUnassociatedTrack(htmlStr, gpxFilename), nil
 }
 
 // parseUnassociatedTrack scans the tracks page HTML for a track row containing
