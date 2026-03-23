@@ -2,12 +2,14 @@ package efb
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newMockServer creates a test HTTP server that simulates the EFB portal.
@@ -304,5 +306,319 @@ func TestValidateCredentials_WrongPassword(t *testing.T) {
 	err := c.ValidateCredentials(context.Background(), "valid", "wrong")
 	if err == nil {
 		t.Fatal("expected error for wrong credentials, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FindUnassociatedTrack tests
+// ---------------------------------------------------------------------------
+
+// tracksPageHTML returns a minimal HTML page simulating /interpretation/usersmap
+// with the given track rows.
+func tracksPageHTML(rows ...string) string {
+	var sb strings.Builder
+	sb.WriteString(`<html><body>`)
+	for _, r := range rows {
+		sb.WriteString(r)
+	}
+	sb.WriteString(`</body></html>`)
+	return sb.String()
+}
+
+// trackRow returns a minimal HTML snippet for a track row.
+// If hasTrip is true, the button is "edit:ID"; otherwise "track_id:ID".
+func trackRow(filename, trackID string, hasTrip bool) string {
+	buttonName := "track_id:" + trackID
+	buttonTitle := "Fahrt neu anlegen"
+	if hasTrip {
+		buttonName = "edit:" + trackID
+		buttonTitle = "Fahrt bearbeiten"
+	}
+	return `<div style="overflow:auto; padding:2px;">` +
+		`<div style="float:left; width:100px;">01.01.2025</div>` +
+		`<div style="float:left; width:200px;">` + filename + `</div>` +
+		`<div style="float:left; width:200px;">Track Name</div>` +
+		`<div style="float:left; width:100px;">` +
+		`<input type="image" name="` + buttonName + `" title="` + buttonTitle + `">` +
+		`</div></div>`
+}
+
+func newTracksServer(t *testing.T, html string) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		if err != nil || cookie.Value != "1" {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(html)) //nolint:errcheck
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestFindUnassociatedTrack_Found(t *testing.T) {
+	html := tracksPageHTML(
+		trackRow("garmin_123.gpx", "99", false),
+		trackRow("garmin_456.gpx", "100", true),
+	)
+	srv := newTracksServer(t, html)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	id, err := c.FindUnassociatedTrack(context.Background(), "garmin_123.gpx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "99" {
+		t.Errorf("expected track ID '99', got %q", id)
+	}
+}
+
+func TestFindUnassociatedTrack_AlreadyAssociated(t *testing.T) {
+	html := tracksPageHTML(
+		trackRow("garmin_123.gpx", "555", true),
+	)
+	srv := newTracksServer(t, html)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	id, err := c.FindUnassociatedTrack(context.Background(), "garmin_123.gpx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("expected empty string for already associated track, got %q", id)
+	}
+}
+
+func TestFindUnassociatedTrack_NotFound(t *testing.T) {
+	html := tracksPageHTML(
+		trackRow("garmin_456.gpx", "100", false),
+	)
+	srv := newTracksServer(t, html)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	id, err := c.FindUnassociatedTrack(context.Background(), "garmin_123.gpx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("expected empty string for not found track, got %q", id)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateTripFromTrack tests
+// ---------------------------------------------------------------------------
+
+// tripFormHTML returns a minimal trip creation form with pre-filled fields.
+func tripFormHTML() string {
+	return `<html><body>
+<form method="POST" action="/trips/create">
+<input type="hidden" name="boat_id" value="42">
+<input type="hidden" name="track_id" value="99">
+<input type="text" name="begdate" value="15.03.2025">
+<input type="text" name="beghour" value="0">
+<input type="text" name="begminute" value="0">
+<input type="text" name="enddate" value="15.03.2025">
+<input type="text" name="endhour" value="0">
+<input type="text" name="endminute" value="0">
+<select name="destination" >
+  <option value="1" selected>Ziel A</option>
+  <option value="2">Ziel B</option>
+</select>
+<select name="waters_store[]">
+  <option value="10" selected>Gewaesser 1</option>
+</select>
+<textarea name="comment"></textarea>
+<input type="submit" name="save" value="speichern">
+</form>
+</body></html>`
+}
+
+func newTripServer(t *testing.T, onSave func(r *http.Request)) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// Simulate click on track_id button -> serve the trip form.
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(tripFormHTML())) //nolint:errcheck
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if onSave != nil {
+				onSave(r)
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Trip saved successfully")) //nolint:errcheck
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(tripFormHTML())) //nolint:errcheck
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestCreateTripFromTrack_Success(t *testing.T) {
+	srv := newTripServer(t, nil)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestCreateTripFromTrack_TimesFilledCorrectly(t *testing.T) {
+	var capturedBody string
+
+	srv := newTripServer(t, func(r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		capturedBody = string(bodyBytes)
+		// Replace body so downstream code can still read it if needed.
+		r.Body = io.NopCloser(strings.NewReader(capturedBody))
+	})
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	// Start: 14:30, Duration: 5400s (1h30m) -> End: 16:00
+	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 5400)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if capturedBody == "" {
+		t.Fatal("no POST body was captured")
+	}
+
+	// Verify start time fields.
+	assertFormValue(t, capturedBody, "beghour", "14")
+	assertFormValue(t, capturedBody, "begminute", "30")
+
+	// Verify end time fields (14:30 + 5400s = 16:00).
+	assertFormValue(t, capturedBody, "endhour", "16")
+	assertFormValue(t, capturedBody, "endminute", "0")
+	assertFormValue(t, capturedBody, "enddate", "15.03.2025")
+
+	// Verify the save button was included.
+	assertFormValue(t, capturedBody, "save", "speichern")
+
+	// Verify pre-filled fields were preserved.
+	assertFormValue(t, capturedBody, "boat_id", "42")
+}
+
+// assertFormValue checks that the URL-encoded body contains name=expectedValue.
+func assertFormValue(t *testing.T, body, name, expectedValue string) {
+	t.Helper()
+	// Parse the URL-encoded body to get the value.
+	// We need to handle URL encoding properly.
+	pairs := strings.Split(body, "&")
+	for _, pair := range pairs {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		// URL-decode key and value.
+		key := strings.ReplaceAll(parts[0], "+", " ")
+		val := strings.ReplaceAll(parts[1], "+", " ")
+		if key == name {
+			if val != expectedValue {
+				t.Errorf("form field %q: expected %q, got %q", name, expectedValue, val)
+			}
+			return
+		}
+	}
+	t.Errorf("form field %q not found in body", name)
+}
+
+func TestCreateTripFromTrack_SubmitFailure(t *testing.T) {
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		// Serve the form on POST (simulating the track_id click).
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(tripFormHTML())) //nolint:errcheck
+	})
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {
+		// Return 500 on the save POST.
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	if err == nil {
+		t.Fatal("expected error for server 500, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to mention status 500, got: %v", err)
 	}
 }

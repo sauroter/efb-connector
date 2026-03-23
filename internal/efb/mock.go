@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // UploadRecord records a single upload for test assertions.
@@ -40,6 +41,20 @@ func (m *MockEFBProvider) Upload(_ context.Context, gpxData []byte, filename str
 
 func (m *MockEFBProvider) ValidateCredentials(_ context.Context, username, _ string) error {
 	m.logger.Info("[mock-efb] validate credentials", "username", username)
+	return nil
+}
+
+func (m *MockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename string) (string, error) {
+	m.logger.Info("[mock-efb] find unassociated track", "gpxFilename", gpxFilename)
+	return "mock-track-1", nil
+}
+
+func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64) error {
+	m.logger.Info("[mock-efb] create trip from track",
+		"trackID", trackID,
+		"startTime", startTime,
+		"durationSecs", durationSecs,
+	)
 	return nil
 }
 
