@@ -53,15 +53,29 @@ def get_credentials_from_stdin():
         return None, None, None
 
 
-# Water sport activity types to filter
-WATER_SPORT_TYPES = [
+# Stable parent type ID for Garmin's "water_sports" category. All water sport
+# subtypes (kayaking_v2, paddling_v2, rowing_v2, etc.) share this parent,
+# making it resilient to typeKey renames like kayaking → kayaking_v2.
+WATER_SPORTS_PARENT_TYPE_ID = 228
+
+# Legacy typeKeys filed under other parent IDs that we also want to capture.
+LEGACY_WATER_SPORT_TYPES = {
     "kayaking",
-    "whitewater_rafting_v2",
-    "stand_up_paddleboarding",
     "paddling",
     "canoeing",
     "rowing",
-]
+    "stand_up_paddleboarding",
+    "whitewater_rafting_kayaking",
+}
+
+
+def is_water_sport(activity):
+    """Check if an activity is a water sport via parentTypeId or legacy typeKey."""
+    parent_id = activity.get("activityType", {}).get("parentTypeId")
+    if parent_id == WATER_SPORTS_PARENT_TYPE_ID:
+        return True
+    type_key = activity.get("activityType", {}).get("typeKey", "")
+    return type_key in LEGACY_WATER_SPORT_TYPES
 
 
 def load_config():
@@ -173,16 +187,18 @@ def list_activities(client, days=30):
 
     water_activities = []
     for activity in activities:
+        if not is_water_sport(activity):
+            continue
         activity_type = activity.get("activityType", {}).get("typeKey", "")
-        if activity_type in WATER_SPORT_TYPES:
-            water_activities.append({
-                "id": activity["activityId"],
-                "name": activity.get("activityName", "Unnamed"),
-                "type": activity_type,
-                "date": activity.get("startTimeLocal", "")[:10],
-                "duration": activity.get("duration", 0),
-                "distance": activity.get("distance", 0),
-            })
+        water_activities.append({
+            "id": activity["activityId"],
+            "name": activity.get("activityName", "Unnamed"),
+            "type": activity_type,
+            "parent_type_id": activity.get("activityType", {}).get("parentTypeId"),
+            "date": activity.get("startTimeLocal", "")[:10],
+            "duration": activity.get("duration", 0),
+            "distance": activity.get("distance", 0),
+        })
 
     return water_activities
 

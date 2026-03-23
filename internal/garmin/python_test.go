@@ -58,10 +58,10 @@ lp.add_argument("--json", action="store_true")
 args = parser.parse_args()
 
 activities = [
-    {"id": 123456, "name": "Morning Paddle", "type": "kayaking",
-     "date": "2026-03-10", "duration": 3600.0, "distance": 5000.0},
+    {"id": 123456, "name": "Morning Paddle", "type": "kayaking_v2",
+     "parent_type_id": 228, "date": "2026-03-10", "duration": 3600.0, "distance": 5000.0},
     {"id": 789012, "name": "River Run",      "type": "canoeing",
-     "date": "2026-03-12", "duration": 7200.0, "distance": 12000.0},
+     "parent_type_id": 228, "date": "2026-03-12", "duration": 7200.0, "distance": 12000.0},
 ]
 print(json.dumps(activities))
 `)
@@ -89,8 +89,8 @@ print(json.dumps(activities))
 	if a0.Name != "Morning Paddle" {
 		t.Errorf("a0.Name = %q, want %q", a0.Name, "Morning Paddle")
 	}
-	if a0.Type != "kayaking" {
-		t.Errorf("a0.Type = %q, want %q", a0.Type, "kayaking")
+	if a0.Type != "kayaking_v2" {
+		t.Errorf("a0.Type = %q, want %q", a0.Type, "kayaking_v2")
 	}
 	if a0.DurationSecs != 3600.0 {
 		t.Errorf("a0.DurationSecs = %v, want 3600.0", a0.DurationSecs)
