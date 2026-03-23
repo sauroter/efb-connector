@@ -45,7 +45,7 @@ type listActivityJSON struct {
 	ID           interface{} `json:"id"`             // Garmin returns a number; use interface{} for robustness
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
-	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID
+	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; not mapped to Activity (filtering is in Python)
 	Date         string      `json:"date"`           // "YYYY-MM-DD"
 	Duration     float64     `json:"duration"`       // seconds
 	Distance     float64     `json:"distance"`       // metres
