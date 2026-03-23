@@ -612,3 +612,164 @@ func TestCreateTripFromTrack_SubmitFailure(t *testing.T) {
 		t.Errorf("expected error to mention status 500, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// C1: selectedOptionRe handles value before selected
+// ---------------------------------------------------------------------------
+
+func TestParseFormFields_SelectValueBeforeSelected(t *testing.T) {
+	html := `<form>
+<select name="boat">
+  <option value="1">Boat A</option>
+  <option value="2" selected>Boat B</option>
+  <option value="3">Boat C</option>
+</select>
+</form>`
+
+	vals := parseFormFields(html)
+	got := vals.Get("boat")
+	if got != "2" {
+		t.Errorf("expected selected value '2' when value precedes selected, got %q", got)
+	}
+}
+
+func TestParseFormFields_SelectSelectedBeforeValue(t *testing.T) {
+	// Also verify the original order still works.
+	html := `<form>
+<select name="boat">
+  <option value="1">Boat A</option>
+  <option selected value="2">Boat B</option>
+</select>
+</form>`
+
+	vals := parseFormFields(html)
+	got := vals.Get("boat")
+	if got != "2" {
+		t.Errorf("expected selected value '2' when selected precedes value, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// C2: parseUnassociatedTrack respects row boundaries
+// ---------------------------------------------------------------------------
+
+func TestParseUnassociatedTrack_NoBleedBetweenRows(t *testing.T) {
+	// Row 1: garmin_AAA.gpx with track_id:50 (unassociated)
+	// Row 2: garmin_BBB.gpx with edit:60 (already associated)
+	//
+	// When searching for garmin_BBB.gpx, we should NOT pick up
+	// track_id:50 from row 1.
+	html := tracksPageHTML(
+		trackRow("garmin_AAA.gpx", "50", false),
+		trackRow("garmin_BBB.gpx", "60", true),
+	)
+
+	id := parseUnassociatedTrack(html, "garmin_BBB.gpx")
+	if id != "" {
+		t.Errorf("expected empty string for already associated track, got %q (bleed from adjacent row)", id)
+	}
+}
+
+func TestParseUnassociatedTrack_CorrectRowSelected(t *testing.T) {
+	// Three adjacent rows; only the middle one matches our filename and is
+	// unassociated. The other rows have different states.
+	html := tracksPageHTML(
+		trackRow("garmin_111.gpx", "10", true),  // associated
+		trackRow("garmin_222.gpx", "20", false), // unassociated — target
+		trackRow("garmin_333.gpx", "30", true),  // associated
+	)
+
+	id := parseUnassociatedTrack(html, "garmin_222.gpx")
+	if id != "20" {
+		t.Errorf("expected track ID '20', got %q", id)
+	}
+}
+
+func TestParseUnassociatedTrack_FilenameInWrongRowIgnored(t *testing.T) {
+	// The filename appears in a row that has edit (associated), while an
+	// adjacent row has track_id (unassociated) for a DIFFERENT file.
+	// We must not return the wrong track ID.
+	html := tracksPageHTML(
+		trackRow("garmin_TARGET.gpx", "77", true),   // associated — our file
+		trackRow("garmin_OTHER.gpx", "88", false),    // unassociated — different file
+	)
+
+	id := parseUnassociatedTrack(html, "garmin_TARGET.gpx")
+	if id != "" {
+		t.Errorf("expected empty string for associated track, got %q", id)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// I1: Error indicator detection in trip save response
+// ---------------------------------------------------------------------------
+
+func TestCreateTripFromTrack_ErrorIndicatorInResponse(t *testing.T) {
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(tripFormHTML())) //nolint:errcheck
+	})
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {
+		// Return 200 but with an error indicator in the body.
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Fehler: Datum ungültig")) //nolint:errcheck
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
+	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600)
+	if err == nil {
+		t.Fatal("expected error when response contains 'Fehler', got nil")
+	}
+	if !strings.Contains(err.Error(), "error indicator") {
+		t.Errorf("expected 'error indicator' in error message, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// I2: HTML entity unescaping in parseFormFields
+// ---------------------------------------------------------------------------
+
+func TestParseFormFields_HTMLEntityUnescaping(t *testing.T) {
+	html := `<form>
+<input type="hidden" name="location" value="M&uuml;nchen &amp; Berlin">
+<select name="water">
+  <option value="Gew&auml;sser &amp; See" selected>Water</option>
+</select>
+<textarea name="comment">Stra&szlig;e &lt;1&gt;</textarea>
+</form>`
+
+	vals := parseFormFields(html)
+
+	tests := []struct {
+		field    string
+		expected string
+	}{
+		{"location", "München & Berlin"},
+		{"water", "Gewässer & See"},
+		{"comment", "Straße <1>"},
+	}
+	for _, tc := range tests {
+		got := vals.Get(tc.field)
+		if got != tc.expected {
+			t.Errorf("field %q: expected %q, got %q", tc.field, tc.expected, got)
+		}
+	}
+}

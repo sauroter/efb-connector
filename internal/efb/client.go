@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	gohtml "html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -33,7 +34,7 @@ var (
 	valueRe          = regexp.MustCompile(`value="([^"]*)"`)
 	typeRe           = regexp.MustCompile(`type="([^"]*)"`)
 	selectRe         = regexp.MustCompile(`(?s)<select\b[^>]*name="([^"]*)"[^>]*>(.*?)</select>`)
-	selectedOptionRe = regexp.MustCompile(`<option\b[^>]*selected[^>]*value="([^"]*)"`)
+	selectedOptionRe = regexp.MustCompile(`<option\b[^>]*\bselected\b[^>]*>`)
 	firstOptionRe    = regexp.MustCompile(`<option\b[^>]*value="([^"]*)"`)
 	textareaRe       = regexp.MustCompile(`(?s)<textarea\b[^>]*name="([^"]*)"[^>]*>(.*?)</textarea>`)
 )
@@ -260,32 +261,37 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 // gpxFilename. If the row has a "track_id:NNN" button (no trip yet), the track
 // ID is returned. If the row has an "edit:NNN" button (trip exists) or the
 // filename is not found, an empty string is returned.
-func parseUnassociatedTrack(html, gpxFilename string) string {
+func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
 	// Each track row is a <div style="overflow:auto;..."> block containing
 	// the filename and either a track_id:NNN or edit:NNN input button.
-	// We split on overflow:auto divs and search each chunk.
+	// We find the enclosing row boundaries rather than using a fixed window
+	// to avoid bleeding into adjacent track rows.
 
-	// Strategy: find all occurrences of the filename, then look for
-	// track_id:NNN or edit:NNN in the surrounding context.
+	const rowDelimiter = `<div style="overflow:auto`
+
 	idx := 0
 	for {
-		pos := strings.Index(html[idx:], gpxFilename)
+		pos := strings.Index(htmlBody[idx:], gpxFilename)
 		if pos == -1 {
 			return ""
 		}
 		pos += idx
 
-		// Find the enclosing div boundaries (look backwards for overflow:auto
-		// and forwards for the next one, or use a generous window).
-		start := pos - 2000
-		if start < 0 {
+		// Search backwards from the match to find the nearest row delimiter.
+		start := strings.LastIndex(htmlBody[:pos], rowDelimiter)
+		if start == -1 {
 			start = 0
 		}
-		end := pos + 2000
-		if end > len(html) {
-			end = len(html)
+
+		// Search forwards to find the next row delimiter (or end of string).
+		end := strings.Index(htmlBody[pos:], rowDelimiter)
+		if end == -1 {
+			end = len(htmlBody)
+		} else {
+			end += pos
 		}
-		chunk := html[start:end]
+
+		chunk := htmlBody[start:end]
 
 		// Look for track_id:NNN pattern — means no trip yet.
 		trackIDMatch := trackIDRe.FindStringSubmatch(chunk)
@@ -383,6 +389,12 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 			resp2.StatusCode, truncateBody(body2))
 	}
 
+	// Verify the response does not contain error indicators.
+	respText := string(body2)
+	if strings.Contains(respText, "Fehler") || strings.Contains(respText, "error") {
+		return fmt.Errorf("efb: trip creation may have failed (response contains error indicator)")
+	}
+
 	return nil
 }
 
@@ -419,7 +431,7 @@ func parseFormFields(html string) url.Values {
 		value := ""
 		valueMatch := valueRe.FindStringSubmatch(match)
 		if valueMatch != nil {
-			value = valueMatch[1]
+			value = gohtml.UnescapeString(valueMatch[1])
 		}
 		vals.Add(name, value)
 	}
@@ -427,23 +439,25 @@ func parseFormFields(html string) url.Values {
 	// Parse <select> elements with their selected options.
 	for _, match := range selectRe.FindAllStringSubmatch(html, -1) {
 		name := match[1]
-		body := match[2]
+		opts := match[2]
 
-		optionMatch := selectedOptionRe.FindStringSubmatch(body)
-		if optionMatch != nil {
-			vals.Add(name, optionMatch[1])
-		} else {
-			// No selected option; try the first option's value.
-			firstOption := firstOptionRe.FindStringSubmatch(body)
-			if firstOption != nil {
-				vals.Add(name, firstOption[1])
+		// Find the <option> tag with "selected", then extract value from it.
+		if selMatch := selectedOptionRe.FindString(opts); selMatch != "" {
+			if valMatch := valueRe.FindStringSubmatch(selMatch); len(valMatch) > 1 {
+				vals.Add(name, gohtml.UnescapeString(valMatch[1]))
+				continue
 			}
+		}
+		// No selected option; try the first option's value.
+		firstOption := firstOptionRe.FindStringSubmatch(opts)
+		if firstOption != nil {
+			vals.Add(name, gohtml.UnescapeString(firstOption[1]))
 		}
 	}
 
 	// Parse <textarea> elements.
 	for _, match := range textareaRe.FindAllStringSubmatch(html, -1) {
-		vals.Add(match[1], match[2])
+		vals.Add(match[1], gohtml.UnescapeString(match[2]))
 	}
 
 	return vals
