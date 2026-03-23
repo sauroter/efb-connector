@@ -57,6 +57,8 @@ type listActivityJSON struct {
 	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; not mapped to Activity (filtering is in Python)
 	Date         string      `json:"date"`           // "YYYY-MM-DD"
 	StartTime    string      `json:"start_time"`     // "YYYY-MM-DD HH:MM:SS"
+	StartLat     float64     `json:"start_lat"`
+	StartLng     float64     `json:"start_lng"`
 	Duration     float64     `json:"duration"`       // seconds
 	Distance     float64     `json:"distance"`       // metres
 }
@@ -112,6 +114,8 @@ func (p *PythonGarminProvider) ListActivities(
 			Type:         r.Type,
 			Date:         date,
 			StartTime:    startTime,
+			StartLat:     r.StartLat,
+			StartLng:     r.StartLng,
 			DurationSecs: r.Duration,
 			DistanceM:    r.Distance,
 		})

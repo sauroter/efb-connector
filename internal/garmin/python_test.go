@@ -62,9 +62,11 @@ args = parser.parse_args()
 activities = [
     {"id": 123456, "name": "Morning Paddle", "type": "kayaking_v2",
      "parent_type_id": 228, "date": "2026-03-10", "start_time": "2026-03-10 14:30:00",
+     "start_lat": 47.58, "start_lng": 12.70,
      "duration": 3600.0, "distance": 5000.0},
     {"id": 789012, "name": "River Run", "type": "canoeing",
      "parent_type_id": 228, "date": "2026-03-12", "start_time": "2026-03-12 09:15:00",
+     "start_lat": 47.58, "start_lng": 12.70,
      "duration": 7200.0, "distance": 12000.0},
 ]
 print(json.dumps(activities))
@@ -109,6 +111,12 @@ print(json.dumps(activities))
 	wantStartTime := time.Date(2026, 3, 10, 14, 30, 0, 0, time.UTC)
 	if !a0.StartTime.Equal(wantStartTime) {
 		t.Errorf("a0.StartTime = %v, want %v", a0.StartTime, wantStartTime)
+	}
+	if a0.StartLat != 47.58 {
+		t.Errorf("a0.StartLat = %v, want 47.58", a0.StartLat)
+	}
+	if a0.StartLng != 12.70 {
+		t.Errorf("a0.StartLng = %v, want 12.70", a0.StartLng)
 	}
 
 	// Second activity
