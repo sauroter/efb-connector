@@ -78,7 +78,7 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 
 	if r.Header.Get("HX-Request") == "true" {
 		// Return a "running" partial that will auto-poll for updates.
-		s.render(w, r,"sync_status.html", map[string]any{
+		s.render(w, r, "sync_status.html", map[string]any{
 			"HasRun": true,
 			"Status": "running",
 		})
@@ -127,7 +127,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, r,"sync_status.html", data)
+	s.render(w, r, "sync_status.html", data)
 }
 
 // handleSyncHistory renders the full sync history page.
@@ -153,7 +153,7 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, r,"sync_history.html", map[string]any{
+	s.render(w, r, "sync_history.html", map[string]any{
 		"Flash":     flash(w, r),
 		"CSRFToken": s.auth.CSRFToken(r),
 		"Runs":      runs,
@@ -167,7 +167,9 @@ func (s *Server) syncError(w http.ResponseWriter, r *http.Request, msg string) {
 		lang := i18n.FromContext(r.Context())
 		translated := html.EscapeString(i18n.T(lang, msg))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + translated + `</p></div>`))
+		if _, err := w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + translated + `</p></div>`)); err != nil {
+			s.logger.Error("failed to write sync error response", "error", err)
+		}
 		return
 	}
 	setFlash(w, msg)

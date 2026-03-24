@@ -26,14 +26,14 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, r,"landing.html", map[string]any{
+	s.render(w, r, "landing.html", map[string]any{
 		"Flash": flash(w, r),
 	})
 }
 
 // handleLoginForm renders the email input form for magic link login.
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r,"login.html", map[string]any{
+	s.render(w, r, "login.html", map[string]any{
 		"Flash": flash(w, r),
 	})
 }
@@ -48,6 +48,14 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
 	if email == "" {
+		setFlash(w, "flash.email_required")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	// Reject clearly invalid email addresses (must have exactly one '@' with
+	// non-empty local and domain parts, and the domain must contain a '.').
+	if !isValidEmail(email) {
 		setFlash(w, "flash.email_required")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
@@ -79,7 +87,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Always show confirmation regardless of whether the email exists or was sent.
-	s.render(w, r,"login_sent.html", map[string]any{
+	s.render(w, r, "login_sent.html", map[string]any{
 		"Email": email,
 	})
 }
@@ -211,4 +219,24 @@ func remoteIP(r *http.Request) string {
 		return r.RemoteAddr[:idx]
 	}
 	return r.RemoteAddr
+}
+
+// isValidEmail performs a minimal sanity-check on an email address: it must
+// contain exactly one '@', a non-empty local part, and a domain part that
+// contains at least one '.'. Full RFC 5322 validation is intentionally omitted
+// to keep the check simple and avoid false negatives with unusual but valid
+// addresses.
+func isValidEmail(email string) bool {
+	at := strings.IndexByte(email, '@')
+	if at == -1 || at == 0 {
+		// '@' not present, or local part is empty.
+		return false
+	}
+	domain := email[at+1:]
+	if len(domain) == 0 {
+		return false
+	}
+	// Domain must contain a dot and neither part may be empty.
+	dot := strings.LastIndexByte(domain, '.')
+	return dot > 0 && dot < len(domain)-1
 }

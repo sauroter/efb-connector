@@ -10,7 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"time"
 
 	"efb-connector/internal/database"
@@ -327,7 +327,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 		// Mark all queued activities as failed.
 		for _, act := range toSync {
-			_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "efb login failed")
+			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "efb login failed"); recErr != nil {
+				log.Error("failed to record activity", "activity_id", act.garminID, "error", recErr)
+			}
 			failed++
 		}
 		return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login: %w", err)
@@ -341,9 +343,13 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		gpxData, err := s.garmin.DownloadGPX(ctx, garminCreds, act.garminID)
 		if err != nil {
 			log.Error("failed to download GPX", "error", err)
-			_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", err.Error())
+			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", err.Error()); recErr != nil {
+				log.Error("failed to record activity", "error", recErr)
+			}
 			if act.isRetry {
-				_ = s.db.IncrementRetryCount(userID, act.garminID)
+				if incErr := s.db.IncrementRetryCount(userID, act.garminID); incErr != nil {
+					log.Error("failed to increment retry count", "error", incErr)
+				}
 				s.checkAndMarkPermanentFailure(userID, act.garminID, log)
 			}
 			failed++
@@ -355,9 +361,13 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		uploadErr := s.efb.Upload(ctx, gpxData, filename)
 		if uploadErr != nil {
 			log.Error("failed to upload GPX to EFB", "error", uploadErr)
-			_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", uploadErr.Error())
+			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", uploadErr.Error()); recErr != nil {
+				log.Error("failed to record activity", "error", recErr)
+			}
 			if act.isRetry {
-				_ = s.db.IncrementRetryCount(userID, act.garminID)
+				if incErr := s.db.IncrementRetryCount(userID, act.garminID); incErr != nil {
+					log.Error("failed to increment retry count", "error", incErr)
+				}
 				s.checkAndMarkPermanentFailure(userID, act.garminID, log)
 			}
 			failed++
@@ -367,7 +377,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				log.Warn("EFB returned 5xx, stopping sync for this user")
 				// Mark remaining activities as failed.
 				for _, remaining := range toSync[i+1:] {
-					_ = s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", "skipped due to EFB 5xx")
+					if recErr := s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", "skipped due to EFB 5xx"); recErr != nil {
+						log.Error("failed to record activity", "activity_id", remaining.garminID, "error", recErr)
+					}
 					failed++
 				}
 				return found, synced, skipped, failed, tripsCreated, fmt.Errorf("sync: EFB 5xx error, aborting: %w", uploadErr)
@@ -377,7 +389,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 		// 7d: Success.
 		log.Info("activity uploaded successfully")
-		_ = s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "success", "")
+		if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "success", ""); recErr != nil {
+			log.Error("failed to record successful activity", "error", recErr)
+		}
 		synced++
 
 		// 7e: Create trip from the uploaded track (if enabled).
@@ -541,6 +555,13 @@ func (s *SyncEngine) SyncAllUsers(ctx context.Context) error {
 	return nil
 }
 
+// server5xxRe matches the "status 5XX" pattern in EFB error messages, where
+// XX are exactly two digits. This is more precise than a plain substring match
+// to avoid false positives when EFB returns a 4xx response whose body happens
+// to contain the text "status 5". The regexp is compiled once at package
+// initialisation and reused on every call to isServer5xxError.
+var server5xxRe = regexp.MustCompile(`status 5\d{2}`)
+
 // isServer5xxError checks if an EFB upload error indicates a server-side 5xx
 // error by inspecting the error message. The EFB client formats these as
 // "efb: upload failed with status 5XX: ...".
@@ -548,7 +569,5 @@ func isServer5xxError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	// Look for the pattern "status 5" in the error message.
-	return strings.Contains(msg, "status 5")
+	return server5xxRe.MatchString(err.Error())
 }
