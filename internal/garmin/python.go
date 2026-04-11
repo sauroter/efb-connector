@@ -227,6 +227,7 @@ func (p *PythonGarminProvider) run(
 		defer os.RemoveAll(tmpTokenDir)
 
 		decryptTokenStore(p.encryptionKey, creds.TokenStorePath, tmpTokenDir)
+		cleanupLegacyTokens(creds.TokenStorePath)
 		tokenStoreForSubprocess = tmpTokenDir
 	}
 
@@ -270,8 +271,25 @@ func (p *PythonGarminProvider) run(
 	return stdoutBuf.String(), stderrBuf.String(), runErr
 }
 
-// tokenFileNames is the set of OAuth token files managed by garth.
-var tokenFileNames = []string{"oauth1_token.json", "oauth2_token.json"}
+// tokenFileNames is the set of token files managed by garminconnect 0.3.x.
+var tokenFileNames = []string{"garmin_tokens.json"}
+
+// legacyTokenFileNames lists the old garth-era token files that should be
+// cleaned up after the upgrade to garminconnect 0.3.x.
+var legacyTokenFileNames = []string{"oauth1_token.json", "oauth2_token.json"}
+
+// cleanupLegacyTokens removes old garth-era token files (both encrypted and
+// plaintext) from the given directory.  This is idempotent and safe to call on
+// every run.
+func cleanupLegacyTokens(tokenStoreDir string) {
+	for _, name := range legacyTokenFileNames {
+		encPath := filepath.Join(tokenStoreDir, name+".enc")
+		if err := os.Remove(encPath); err == nil {
+			slog.Info("garmin: removed legacy token file", "file", encPath)
+		}
+		os.Remove(filepath.Join(tokenStoreDir, name))
+	}
+}
 
 // decryptTokenStore decrypts .enc files from srcDir to dstDir as plaintext JSON.
 // Missing or corrupted files are silently skipped — a fresh Garmin login will

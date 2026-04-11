@@ -191,6 +191,7 @@ var En = map[string]string{
 	"flash.logged_out":              "You have been logged out.",
 	"flash.email_password_required": "Email and password are required.",
 	"flash.garmin_invalid":          "Garmin credentials are invalid. Please check and try again.",
+	"flash.garmin_mfa_required":     "Garmin requires additional verification (MFA/CAPTCHA). Try logging into Garmin Connect in your browser first, then retry here.",
 	"flash.save_credentials_failed": "Failed to save credentials. Please try again.",
 	"flash.garmin_saved":            "Garmin credentials saved successfully.",
 	"flash.delete_credentials_failed": "Failed to delete credentials.",

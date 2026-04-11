@@ -191,6 +191,7 @@ var De = map[string]string{
 	"flash.logged_out":              "Du wurdest abgemeldet.",
 	"flash.email_password_required": "E-Mail und Passwort sind erforderlich.",
 	"flash.garmin_invalid":          "Garmin-Zugangsdaten sind ungültig. Bitte überprüfe sie und versuche es erneut.",
+	"flash.garmin_mfa_required":     "Garmin erfordert eine zusätzliche Verifizierung (MFA/CAPTCHA). Melde dich zuerst in deinem Browser bei Garmin Connect an und versuche es dann hier erneut.",
 	"flash.save_credentials_failed": "Zugangsdaten konnten nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.garmin_saved":            "Garmin-Zugangsdaten erfolgreich gespeichert.",
 	"flash.delete_credentials_failed": "Zugangsdaten konnten nicht gelöscht werden.",

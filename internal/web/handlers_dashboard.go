@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -153,7 +154,11 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 	if err := s.garmin.ValidateCredentials(context.Background(), creds); err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
-		setFlash(w, "flash.garmin_invalid")
+		if errors.Is(err, garmin.ErrGarminMFARequired) {
+			setFlash(w, "flash.garmin_mfa_required")
+		} else {
+			setFlash(w, "flash.garmin_invalid")
+		}
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}

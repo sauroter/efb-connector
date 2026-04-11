@@ -543,53 +543,37 @@ func TestTokenEncryptionRoundTrip(t *testing.T) {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 
-	// Simulate a tokenstore with plaintext token files.
+	// Simulate a tokenstore with a plaintext token file (garminconnect 0.3.x format).
 	tokenStoreDir := t.TempDir()
-	oauth1 := []byte(`{"oauth_token":"tok1","oauth_token_secret":"sec1"}`)
-	oauth2 := []byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`)
+	tokens := []byte(`{"di_token":"at","di_refresh_token":"rt","di_client_id":"cid"}`)
 
-	if err := os.WriteFile(filepath.Join(tokenStoreDir, "oauth1_token.json"), oauth1, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tokenStoreDir, "oauth2_token.json"), oauth2, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tokenStoreDir, "garmin_tokens.json"), tokens, 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	// Encrypt the tokens.
 	encryptTokenStore(key, tokenStoreDir, tokenStoreDir)
 
-	// Verify .enc files exist.
-	for _, name := range []string{"oauth1_token.json.enc", "oauth2_token.json.enc"} {
-		if _, err := os.Stat(filepath.Join(tokenStoreDir, name)); err != nil {
-			t.Errorf("expected %s to exist: %v", name, err)
-		}
+	// Verify .enc file exists.
+	if _, err := os.Stat(filepath.Join(tokenStoreDir, "garmin_tokens.json.enc")); err != nil {
+		t.Errorf("expected garmin_tokens.json.enc to exist: %v", err)
 	}
 
-	// Verify plaintext files were removed.
-	for _, name := range []string{"oauth1_token.json", "oauth2_token.json"} {
-		if _, err := os.Stat(filepath.Join(tokenStoreDir, name)); err == nil {
-			t.Errorf("expected %s to be removed after encryption", name)
-		}
+	// Verify plaintext file was removed.
+	if _, err := os.Stat(filepath.Join(tokenStoreDir, "garmin_tokens.json")); err == nil {
+		t.Error("expected garmin_tokens.json to be removed after encryption")
 	}
 
 	// Decrypt to a new directory and verify contents match.
 	decryptDir := t.TempDir()
 	decryptTokenStore(key, tokenStoreDir, decryptDir)
 
-	got1, err := os.ReadFile(filepath.Join(decryptDir, "oauth1_token.json"))
+	got, err := os.ReadFile(filepath.Join(decryptDir, "garmin_tokens.json"))
 	if err != nil {
-		t.Fatalf("failed to read decrypted oauth1_token.json: %v", err)
+		t.Fatalf("failed to read decrypted garmin_tokens.json: %v", err)
 	}
-	if string(got1) != string(oauth1) {
-		t.Errorf("oauth1_token.json: got %q, want %q", got1, oauth1)
-	}
-
-	got2, err := os.ReadFile(filepath.Join(decryptDir, "oauth2_token.json"))
-	if err != nil {
-		t.Fatalf("failed to read decrypted oauth2_token.json: %v", err)
-	}
-	if string(got2) != string(oauth2) {
-		t.Errorf("oauth2_token.json: got %q, want %q", got2, oauth2)
+	if string(got) != string(tokens) {
+		t.Errorf("garmin_tokens.json: got %q, want %q", got, tokens)
 	}
 }
 
@@ -618,7 +602,7 @@ func TestTokenEncryption_CorruptedFileSkipped(t *testing.T) {
 	dstDir := t.TempDir()
 
 	// Write garbage as an encrypted file.
-	if err := os.WriteFile(filepath.Join(srcDir, "oauth1_token.json.enc"), []byte("corrupted"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "garmin_tokens.json.enc"), []byte("corrupted"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -626,7 +610,37 @@ func TestTokenEncryption_CorruptedFileSkipped(t *testing.T) {
 	decryptTokenStore(key, srcDir, dstDir)
 
 	// The decrypted file should not exist.
-	if _, err := os.Stat(filepath.Join(dstDir, "oauth1_token.json")); err == nil {
-		t.Error("expected oauth1_token.json to not be created from corrupted .enc file")
+	if _, err := os.Stat(filepath.Join(dstDir, "garmin_tokens.json")); err == nil {
+		t.Error("expected garmin_tokens.json to not be created from corrupted .enc file")
+	}
+}
+
+func TestCleanupLegacyTokens(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create legacy garth-era token files.
+	for _, name := range []string{"oauth1_token.json.enc", "oauth2_token.json.enc", "oauth1_token.json", "oauth2_token.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Create the new-format token file that should be preserved.
+	if err := os.WriteFile(filepath.Join(dir, "garmin_tokens.json.enc"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupLegacyTokens(dir)
+
+	// Legacy files should be gone.
+	for _, name := range []string{"oauth1_token.json.enc", "oauth2_token.json.enc", "oauth1_token.json", "oauth2_token.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("expected %s to be removed", name)
+		}
+	}
+
+	// New-format file should be preserved.
+	if _, err := os.Stat(filepath.Join(dir, "garmin_tokens.json.enc")); err != nil {
+		t.Errorf("expected garmin_tokens.json.enc to be preserved: %v", err)
 	}
 }
