@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -189,6 +190,12 @@ func (s *Server) handleGarminSettingsDelete(w http.ResponseWriter, r *http.Reque
 		setFlash(w, "flash.delete_credentials_failed")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
+	}
+
+	// Remove cached token files so stale tokens don't survive a re-connect.
+	tokenDir := s.garminTokenStorePath(userID)
+	if err := os.RemoveAll(tokenDir); err != nil {
+		s.logger.Warn("failed to remove garmin token store", "user_id", userID, "error", err)
 	}
 
 	s.logger.Info("garmin credentials deleted", "user_id", userID)
