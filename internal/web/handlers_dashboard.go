@@ -446,6 +446,12 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Remove cached Garmin token files from disk.
+	tokenDir := s.garminTokenStorePath(userID)
+	if err := os.RemoveAll(tokenDir); err != nil {
+		s.logger.Warn("failed to remove garmin token store", "user_id", userID, "error", err)
+	}
+
 	// Clear the session cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
