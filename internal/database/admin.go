@@ -22,6 +22,7 @@ type UserStatus struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	IsActive        bool       `json:"is_active"`
 	SyncEnabled     bool       `json:"sync_enabled"`
+	PreferredLang   string     `json:"preferred_lang"`
 	GarminConnected bool       `json:"garmin_connected"`
 	GarminValid     bool       `json:"garmin_valid"`
 	EFBConnected    bool       `json:"efb_connected"`
@@ -72,6 +73,7 @@ func (d *DB) GetAllUsersWithStatus() ([]UserStatus, error) {
 	rows, err := d.db.Query(`
 		SELECT
 			u.id, u.email, u.created_at, u.is_active, u.sync_enabled,
+			u.preferred_lang,
 			COALESCE(gc.user_id, 0) > 0 AS garmin_connected,
 			COALESCE(gc.is_valid, 0) AS garmin_valid,
 			COALESCE(ec.user_id, 0) > 0 AS efb_connected,
@@ -102,6 +104,7 @@ func (d *DB) GetAllUsersWithStatus() ([]UserStatus, error) {
 
 		err := rows.Scan(
 			&us.ID, &us.Email, &createdAt, &isActive, &syncEnabled,
+			&us.PreferredLang,
 			&garminConn, &garminValid, &efbConn, &efbValid,
 			&lastSyncAt, &lastSyncStatus,
 		)

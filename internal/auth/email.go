@@ -23,22 +23,15 @@ func (s *AuthService) isDevMode() bool {
 		s.resendAPIKey == "placeholder"
 }
 
-func (s *AuthService) SendMagicLinkEmail(to, token, baseURL, lang string) error {
-	link := baseURL + "/auth/verify?token=" + token
-
+// SendEmail sends an email via the Resend HTTP API.  In dev mode the email is
+// logged instead of sent.
+func (s *AuthService) SendEmail(to, subject, htmlBody string) error {
 	if s.isDevMode() {
-		slog.Warn("DEV MODE: magic link email not sent — click the link below to log in",
+		slog.Warn("DEV MODE: email not sent",
 			"to", to,
-			"link", link,
+			"subject", subject,
 		)
 		return nil
-	}
-
-	subject := "Your EFB Connector Login Link"
-	htmlBody := fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link)
-	if lang == "de" {
-		subject = "Dein EFB Connector Login-Link"
-		htmlBody = fmt.Sprintf(`<p>Klicke hier, um dich anzumelden: <a href="%s">Bei EFB Connector anmelden</a></p><p>Dieser Link ist 15 Minuten gültig.</p>`, link)
 	}
 
 	payload := map[string]interface{}{
@@ -73,4 +66,26 @@ func (s *AuthService) SendMagicLinkEmail(to, token, baseURL, lang string) error 
 	}
 
 	return nil
+}
+
+// SendMagicLinkEmail sends a magic link login email to the given address.
+func (s *AuthService) SendMagicLinkEmail(to, token, baseURL, lang string) error {
+	link := baseURL + "/auth/verify?token=" + token
+
+	if s.isDevMode() {
+		slog.Warn("DEV MODE: magic link email not sent — click the link below to log in",
+			"to", to,
+			"link", link,
+		)
+		return nil
+	}
+
+	subject := "Your EFB Connector Login Link"
+	htmlBody := fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link)
+	if lang == "de" {
+		subject = "Dein EFB Connector Login-Link"
+		htmlBody = fmt.Sprintf(`<p>Klicke hier, um dich anzumelden: <a href="%s">Bei EFB Connector anmelden</a></p><p>Dieser Link ist 15 Minuten gültig.</p>`, link)
+	}
+
+	return s.SendEmail(to, subject, htmlBody)
 }

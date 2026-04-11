@@ -145,6 +145,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)
 	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
+	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireInternalAuth(w, r) {

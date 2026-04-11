@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 )
@@ -112,4 +113,62 @@ func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(runs)
+}
+
+// handleAdminNotifyGarminUpgrade sends a notification email to all users with
+// Garmin credentials about the garminconnect library upgrade.
+func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	users, err := s.db.GetAllUsersWithStatus()
+	if err != nil {
+		s.logger.Error("admin: get users for notification", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	var sent int
+	var errs []string
+	for _, u := range users {
+		if !u.GarminConnected {
+			continue
+		}
+
+		subject, body := garminUpgradeEmail(u.PreferredLang, s.configBaseURL)
+		if err := s.auth.SendEmail(u.Email, subject, body); err != nil {
+			s.logger.Error("admin: send upgrade notification", "user_id", u.ID, "error", err)
+			errs = append(errs, fmt.Sprintf("user %d: %v", u.ID, err))
+			continue
+		}
+		sent++
+		s.logger.Info("admin: sent garmin upgrade notification", "user_id", u.ID, "email", u.Email)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"sent":   sent,
+		"errors": errs,
+	})
+}
+
+func garminUpgradeEmail(lang, baseURL string) (subject, body string) {
+	settingsURL := baseURL + "/settings/garmin"
+
+	if lang == "de" {
+		return "EFB Connector: Garmin-Integration aktualisiert",
+			fmt.Sprintf(`<p>Hallo,</p>
+<p>wir haben die Garmin-Integration des EFB Connectors aktualisiert, um eine bessere Kompatibilität mit Garmin Connect sicherzustellen.</p>
+<p>Deine Verbindung wird beim nächsten Sync automatisch neu aufgebaut. Falls dabei Probleme auftreten, kannst du deine Garmin-Zugangsdaten unter dem folgenden Link neu eingeben:</p>
+<p><a href="%s">Garmin-Einstellungen öffnen</a></p>
+<p>Viele Grüße,<br>EFB Connector</p>`, settingsURL)
+	}
+
+	return "EFB Connector: Garmin Integration Updated",
+		fmt.Sprintf(`<p>Hi,</p>
+<p>We've updated the EFB Connector's Garmin integration to improve compatibility with Garmin Connect.</p>
+<p>Your connection will be re-established automatically on the next sync. If you experience any issues, you can re-enter your Garmin credentials here:</p>
+<p><a href="%s">Open Garmin Settings</a></p>
+<p>Best,<br>EFB Connector</p>`, settingsURL)
 }

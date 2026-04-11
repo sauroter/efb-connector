@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -153,7 +155,11 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 	if err := s.garmin.ValidateCredentials(context.Background(), creds); err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
-		setFlash(w, "flash.garmin_invalid")
+		if errors.Is(err, garmin.ErrGarminMFARequired) {
+			setFlash(w, "flash.garmin_mfa_required")
+		} else {
+			setFlash(w, "flash.garmin_invalid")
+		}
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
 	}
@@ -184,6 +190,12 @@ func (s *Server) handleGarminSettingsDelete(w http.ResponseWriter, r *http.Reque
 		setFlash(w, "flash.delete_credentials_failed")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
+	}
+
+	// Remove cached token files so stale tokens don't survive a re-connect.
+	tokenDir := s.garminTokenStorePath(userID)
+	if err := os.RemoveAll(tokenDir); err != nil {
+		s.logger.Warn("failed to remove garmin token store", "user_id", userID, "error", err)
 	}
 
 	s.logger.Info("garmin credentials deleted", "user_id", userID)
@@ -432,6 +444,12 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 		setFlash(w, "flash.delete_account_failed")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
+	}
+
+	// Remove cached Garmin token files from disk.
+	tokenDir := s.garminTokenStorePath(userID)
+	if err := os.RemoveAll(tokenDir); err != nil {
+		s.logger.Warn("failed to remove garmin token store", "user_id", userID, "error", err)
 	}
 
 	// Clear the session cookie.
