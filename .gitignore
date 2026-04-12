@@ -34,6 +34,16 @@ config.json
 # Infrastructure secrets
 infrastructure/secrets.sh
 
+# Sensitive files
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
 # Brainstorming artifacts
 .superpowers/
 
