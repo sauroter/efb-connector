@@ -15,11 +15,8 @@ primary_region = "fra"
   destination = "/data"
 
 [metrics]
-  port = 8080
+  port = 9091
   path = "/metrics"
-
-  [metrics.headers]
-    Authorization = "Bearer ${INTERNAL_SECRET}"
 
 [env]
   PORT = "8080"

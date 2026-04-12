@@ -18,8 +18,6 @@ import (
 	"efb-connector/internal/i18n"
 	"efb-connector/internal/metrics"
 	"efb-connector/internal/sync"
-
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server holds all dependencies needed by the HTTP handlers.
@@ -147,12 +145,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
 	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !s.requireInternalAuth(w, r) {
-			return
-		}
-		promhttp.Handler().ServeHTTP(w, r)
-	})
 
 	// Wrap the entire mux in middleware: i18n → security → logging → recovery.
 	return s.recovery(s.logging(securityHeaders(i18n.Middleware(s)(mux))))
