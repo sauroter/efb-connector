@@ -125,7 +125,7 @@ func NormalizePath(path string) string {
 	case "/", "/login", "/dashboard", "/impressum", "/privacy",
 		"/settings/garmin", "/settings/efb", "/settings/garmin/delete", "/settings/efb/delete",
 		"/sync/trigger", "/sync/status", "/sync/history",
-		"/account/delete", "/health", "/metrics", "/favicon.ico":
+		"/account/delete", "/health", "/favicon.ico":
 		return path
 	}
 	return "/other"

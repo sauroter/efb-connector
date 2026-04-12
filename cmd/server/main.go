@@ -29,6 +29,8 @@ import (
 	"efb-connector/internal/rivermap"
 	syncsvc "efb-connector/internal/sync"
 	"efb-connector/internal/web"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var version = "dev"
@@ -166,6 +168,21 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// ── Metrics-only server (internal port, no auth) ──
+	metricsPort := envOr("METRICS_PORT", "9091")
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("GET /metrics", promhttp.Handler())
+	metricsServer := &http.Server{
+		Addr:    ":" + metricsPort,
+		Handler: metricsMux,
+	}
+	go func() {
+		logger.Info("metrics server starting", "addr", metricsServer.Addr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server error", "error", err)
+		}
+	}()
+
 	// ── Periodic cleanup of expired sessions and magic links ──
 
 	stopCleanup := make(chan struct{})
@@ -212,6 +229,9 @@ func run(logger *slog.Logger) error {
 
 	close(stopCleanup)
 	logger.Info("shutting down server")
+	if err := metricsServer.Shutdown(ctx); err != nil {
+		logger.Warn("metrics server shutdown error", "error", err)
+	}
 	if err := httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
