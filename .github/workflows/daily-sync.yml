@@ -11,6 +11,14 @@ jobs:
     steps:
       - name: Trigger daily sync
         run: |
-          curl --fail --max-time 900 -X POST \
+          RESPONSE=$(curl --max-time 900 -s -X POST \
             -H "Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}" \
-            "${{ secrets.BASE_URL }}/internal/sync/run-all"
+            "${{ secrets.BASE_URL }}/internal/sync/run-all")
+          echo "$RESPONSE"
+          # The endpoint streams NDJSON progress. The last line contains
+          # the final status. Fail the job if it is not "completed".
+          LAST_LINE=$(echo "$RESPONSE" | tail -1)
+          if echo "$LAST_LINE" | grep -q '"status":"error"'; then
+            echo "::error::Sync failed"
+            exit 1
+          fi
