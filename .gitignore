@@ -40,6 +40,9 @@ infrastructure/secrets.sh
 # Playwright MCP
 .playwright-mcp/
 
+# Node
+node_modules/
+
 # Build artifacts
 cli
 server
