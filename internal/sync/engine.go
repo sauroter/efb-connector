@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	stdsync "sync"
 	"time"
 
 	"efb-connector/internal/database"
@@ -514,35 +515,116 @@ func (s *SyncEngine) buildEnrichment(ctx context.Context, act activityToSync, lo
 	return enrichment
 }
 
-// SyncAllUsers syncs all eligible users with staggered delays.
+// UserSyncResult holds the outcome of a single user's sync run, used for
+// streaming progress back to callers.
+type UserSyncResult struct {
+	UserID  int64  `json:"user_id"`
+	Email   string `json:"email"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
+	Found   int    `json:"found"`
+	Synced  int    `json:"synced"`
+	Skipped int    `json:"skipped"`
+	Failed  int    `json:"failed"`
+	Trips   int    `json:"trips_created"`
+}
+
+// SyncAllUsers syncs all eligible users sequentially. It delegates to
+// SyncAllUsersProgress with a single worker and no progress callback.
 func (s *SyncEngine) SyncAllUsers(ctx context.Context) error {
+	return s.SyncAllUsersProgress(ctx, 1, nil)
+}
+
+// SyncAllUsersProgress syncs all eligible users using a pool of concurrent
+// workers. After each user completes, onProgress is called (if non-nil) with
+// the result. The worker count limits concurrency to avoid overloading
+// external APIs.
+func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onProgress func(UserSyncResult)) error {
 	users, err := s.db.GetSyncableUsers()
 	if err != nil {
 		return fmt.Errorf("sync: get syncable users: %w", err)
 	}
 
-	s.logger.Info("starting sync for all users", "user_count", len(users))
+	if workers < 1 {
+		workers = 1
+	}
+
+	s.logger.Info("starting sync for all users", "user_count", len(users), "workers", workers)
+
+	// Feed users into a work channel.
+	work := make(chan database.User, len(users))
+	for _, u := range users {
+		work <- u
+	}
+	close(work)
+
+	// Collect results.
+	type indexedResult struct {
+		idx    int
+		result UserSyncResult
+	}
+	results := make(chan indexedResult, len(users))
+
+	// Spawn workers.
+	var wg stdsync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for user := range work {
+				if ctx.Err() != nil {
+					return
+				}
+
+				log := s.logger.With("user_id", user.ID, "email", user.Email)
+				log.Info("syncing user")
+
+				runID, syncErr := s.SyncUser(ctx, user.ID, "scheduled")
+
+				result := UserSyncResult{
+					UserID: user.ID,
+					Email:  user.Email,
+				}
+
+				if syncErr != nil {
+					log.Error("sync failed for user", "error", syncErr, "run_id", runID)
+					result.Status = "failed"
+					result.Error = syncErr.Error()
+				}
+
+				// Read the sync run from DB to get accurate counters.
+				if runID > 0 {
+					if run, err := s.db.GetSyncRun(runID); err == nil && run != nil {
+						result.Status = run.Status
+						result.Found = run.ActivitiesFound
+						result.Synced = run.ActivitiesSynced
+						result.Skipped = run.ActivitiesSkipped
+						result.Failed = run.ActivitiesFailed
+						result.Trips = run.TripsCreated
+					}
+				}
+
+				if onProgress != nil {
+					onProgress(result)
+				}
+
+				results <- indexedResult{result: result}
+			}
+		}()
+	}
+
+	// Wait for all workers to finish, then close results.
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
 	var totalSynced, totalFailed int
-	for i, user := range users {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		log := s.logger.With("user_id", user.ID, "email", user.Email)
-		log.Info("syncing user")
-
-		runID, err := s.SyncUser(ctx, user.ID, "scheduled")
-		if err != nil {
-			log.Error("sync failed for user", "error", err, "run_id", runID)
+	for r := range results {
+		if r.result.Status == "failed" {
 			totalFailed++
 		} else {
 			totalSynced++
-		}
-
-		// Stagger between users (30-60 seconds).
-		if i < len(users)-1 {
-			s.sleepFunc(30*time.Second, 60*time.Second)
 		}
 	}
 
@@ -551,6 +633,11 @@ func (s *SyncEngine) SyncAllUsers(ctx context.Context) error {
 		"synced", totalSynced,
 		"failed", totalFailed,
 	)
+
+	// If context was cancelled, report it.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	return nil
 }
