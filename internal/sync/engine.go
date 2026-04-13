@@ -595,12 +595,16 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 				// Read the sync run from DB to get accurate counters.
 				if runID > 0 {
 					if run, err := s.db.GetSyncRun(runID); err == nil && run != nil {
-						result.Status = run.Status
 						result.Found = run.ActivitiesFound
 						result.Synced = run.ActivitiesSynced
 						result.Skipped = run.ActivitiesSkipped
 						result.Failed = run.ActivitiesFailed
 						result.Trips = run.TripsCreated
+						// Only use DB status when SyncUser succeeded —
+						// otherwise keep the "failed" status set above.
+						if syncErr == nil {
+							result.Status = run.Status
+						}
 					}
 				}
 
