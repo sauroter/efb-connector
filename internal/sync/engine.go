@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	stdsync "sync"
 	"time"
 
@@ -322,7 +323,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	// 7c. Login to EFB (once per sync run).
 	if err := s.efb.Login(ctx, efbUser, efbPass); err != nil {
-		log.Warn("efb login failure, invalidating credentials", "error", err)
+		log.Warn("efb login failed, invalidating credentials", "error", err)
 		if invErr := s.db.InvalidateEFBCredentials(userID, err.Error()); invErr != nil {
 			log.Error("failed to invalidate efb credentials", "error", invErr)
 		}
@@ -335,6 +336,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 		return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login: %w", err)
 	}
+	log.Info("efb login successful")
 
 	// 7. Process each activity.
 	for i, act := range toSync {
@@ -361,7 +363,10 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		filename := fmt.Sprintf("garmin_%s.gpx", act.garminID)
 		uploadErr := s.efb.Upload(ctx, gpxData, filename)
 		if uploadErr != nil {
-			log.Error("failed to upload GPX to EFB", "error", uploadErr)
+			log.Error("failed to upload GPX to EFB",
+				"error", uploadErr,
+				"error_category", classifyEFBError(uploadErr),
+			)
 			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", uploadErr.Error()); recErr != nil {
 				log.Error("failed to record activity", "error", recErr)
 			}
@@ -373,17 +378,25 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			}
 			failed++
 
-			// 7d: On 5xx, stop this user's sync.
-			if isServer5xxError(uploadErr) {
-				log.Warn("EFB returned 5xx, stopping sync for this user")
-				// Mark remaining activities as failed.
+			// On session expiry or 5xx, stop this user's sync — remaining
+			// uploads would fail identically.
+			cat := classifyEFBError(uploadErr)
+			if cat == "session_expired" || cat == "server_error" {
+				log.Warn("EFB non-recoverable error, stopping sync for this user", "error_category", cat)
+				reason := fmt.Sprintf("skipped: EFB %s", cat)
 				for _, remaining := range toSync[i+1:] {
-					if recErr := s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", "skipped due to EFB 5xx"); recErr != nil {
+					if recErr := s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", reason); recErr != nil {
 						log.Error("failed to record activity", "activity_id", remaining.garminID, "error", recErr)
 					}
 					failed++
 				}
-				return found, synced, skipped, failed, tripsCreated, fmt.Errorf("sync: EFB 5xx error, aborting: %w", uploadErr)
+				if cat == "session_expired" {
+					log.Warn("invalidating EFB credentials due to session expiry")
+					if invErr := s.db.InvalidateEFBCredentials(userID, uploadErr.Error()); invErr != nil {
+						log.Error("failed to invalidate efb credentials", "error", invErr)
+					}
+				}
+				return found, synced, skipped, failed, tripsCreated, fmt.Errorf("sync: EFB %s, aborting: %w", cat, uploadErr)
 			}
 			continue
 		}
@@ -661,4 +674,31 @@ func isServer5xxError(err error) bool {
 		return false
 	}
 	return server5xxRe.MatchString(err.Error())
+}
+
+// classifyEFBError returns a short category string for an EFB error, suitable
+// for use as a structured log field. Categories:
+//
+//	"session_expired" — the EFB session is invalid (got login page)
+//	"server_error"    — EFB returned a 5xx status
+//	"upload_rejected" — EFB returned 200 but without the success marker
+//	"network"         — connection/timeout error
+//	"unknown"         — anything else
+func classifyEFBError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "session expired"):
+		return "session_expired"
+	case isServer5xxError(err):
+		return "server_error"
+	case strings.Contains(msg, "upload did not succeed"):
+		return "upload_rejected"
+	case strings.Contains(msg, "upload request failed"):
+		return "network"
+	default:
+		return "unknown"
+	}
 }
