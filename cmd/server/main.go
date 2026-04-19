@@ -70,6 +70,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("ENCRYPTION_KEY must decode to 32 bytes, got %d", len(encryptionKey))
 	}
 
+	feedbackEmail := envOr("FEEDBACK_EMAIL", "")
+
 	resendAPIKey := os.Getenv("RESEND_API_KEY")
 	internalSecret := os.Getenv("INTERNAL_SECRET")
 
@@ -152,6 +154,7 @@ func run(logger *slog.Logger) error {
 		RateLimiter:    rateLimiter,
 		InternalSecret: internalSecret,
 		BaseURL:        baseURL,
+		FeedbackEmail:  feedbackEmail,
 		Logger:         logger,
 		TemplatesDir:   "templates",
 		Version:        version,

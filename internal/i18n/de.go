@@ -181,6 +181,18 @@ var De = map[string]string{
 	"history.trigger_manual_custom": "manuell (Zeitraum)",
 	"history.no_runs": "Noch keine Synchronisierungen. Gehe zum Dashboard, um deine erste Synchronisierung zu starten.",
 
+	// ── Feedback ──
+	"feedback.cta":                 "Feedback geben",
+	"feedback.heading":             "Feedback senden",
+	"feedback.category_label":      "Kategorie",
+	"feedback.category_general":    "Allgemeines Feedback",
+	"feedback.category_bug":        "Fehlermeldung",
+	"feedback.category_feature":    "Feature-Wunsch",
+	"feedback.message_label":       "Deine Nachricht",
+	"feedback.message_placeholder": "Was liegt dir auf dem Herzen?",
+	"feedback.cancel":              "Abbrechen",
+	"feedback.submit":              "Feedback senden",
+
 	// ── Flash messages ──
 	"flash.email_required":          "Bitte gib deine E-Mail-Adresse ein.",
 	"flash.login_rate_limited":      "Zu viele Anmeldeversuche. Bitte versuche es später erneut.",
@@ -210,5 +222,9 @@ var De = map[string]string{
 	"flash.start_before_end":        "Das Startdatum muss vor dem Enddatum liegen.",
 	"flash.date_range_exceeded":     "Der Zeitraum darf 365 Tage nicht überschreiten.",
 	"flash.sync_started":            "Synchronisierung gestartet. Dies kann einige Minuten dauern.",
+	"flash.feedback_sent":             "Vielen Dank für dein Feedback!",
+	"flash.feedback_message_required": "Bitte gib eine Nachricht ein.",
+	"flash.feedback_message_too_long": "Nachricht ist zu lang (max. 2000 Zeichen).",
+	"flash.feedback_rate_limited":     "Du hast heute zu viel Feedback gesendet. Bitte versuche es morgen erneut.",
 
 }

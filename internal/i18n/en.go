@@ -181,6 +181,18 @@ var En = map[string]string{
 	"history.trigger_manual_custom": "manual (custom)",
 	"history.no_runs": "No sync runs yet. Go to the dashboard to trigger your first sync.",
 
+	// ── Feedback ──
+	"feedback.cta":                 "Got feedback? Let us know!",
+	"feedback.heading":             "Send us feedback",
+	"feedback.category_label":      "Category",
+	"feedback.category_general":    "General feedback",
+	"feedback.category_bug":        "Bug report",
+	"feedback.category_feature":    "Feature request",
+	"feedback.message_label":       "Your message",
+	"feedback.message_placeholder": "What's on your mind?",
+	"feedback.cancel":              "Cancel",
+	"feedback.submit":              "Send feedback",
+
 	// ── Flash messages ──
 	"flash.email_required":          "Please enter your email address.",
 	"flash.login_rate_limited":      "Too many login attempts. Please try again later.",
@@ -210,5 +222,9 @@ var En = map[string]string{
 	"flash.start_before_end":        "Start date must be before end date.",
 	"flash.date_range_exceeded":     "Date range cannot exceed 365 days.",
 	"flash.sync_started":            "Sync started. This may take a few minutes.",
+	"flash.feedback_sent":             "Thank you for your feedback!",
+	"flash.feedback_message_required": "Please enter a message.",
+	"flash.feedback_message_too_long": "Message is too long (max 2000 characters).",
+	"flash.feedback_rate_limited":     "You've sent too much feedback today. Please try again tomorrow.",
 
 }
