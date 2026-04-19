@@ -499,8 +499,8 @@ func TestSyncUser_EFB5xx(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for EFB 5xx")
 	}
-	if !strings.Contains(err.Error(), "5xx") {
-		t.Errorf("error should mention 5xx, got: %v", err)
+	if !strings.Contains(err.Error(), "server_error") {
+		t.Errorf("error should mention server_error, got: %v", err)
 	}
 
 	run, _ := db.GetSyncRun(runID)

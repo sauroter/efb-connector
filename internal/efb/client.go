@@ -171,15 +171,32 @@ func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("efb: upload failed with status %d: %s",
-			resp.StatusCode, truncateBody(respBody))
+			resp.StatusCode, summariseResponse(respBody))
 	}
+
+	respText := string(respBody)
 
 	// The portal returns a page containing "Datenbank gespeichert" on success.
-	if !strings.Contains(string(respBody), "Datenbank gespeichert") {
-		return fmt.Errorf("efb: upload did not succeed: %s", truncateBody(respBody))
+	if strings.Contains(respText, "Datenbank gespeichert") {
+		return nil
 	}
 
-	return nil
+	// Detect session expiry: the portal redirected us to the login page.
+	if isLoginPage(respText) {
+		return fmt.Errorf("efb: session expired during upload (got login page)")
+	}
+
+	return fmt.Errorf("efb: upload did not succeed: %s", summariseResponse(respBody))
+}
+
+// isLoginPage returns true if the HTML body looks like the EFB login page,
+// indicating that the session has expired or was never established.
+func isLoginPage(body string) bool {
+	return strings.Contains(body, "Benutzername hier eingeben") ||
+		(strings.Contains(body, "<title>") &&
+			strings.Contains(body, "eFB") &&
+			strings.Contains(body, "username") &&
+			strings.Contains(body, "password"))
 }
 
 // UploadFile is a convenience wrapper around Upload that reads a GPX file
@@ -255,7 +272,7 @@ func (c *EFBClient) FindUnassociatedTrack(ctx context.Context, gpxFilename strin
 	}
 
 	// Detect if we were redirected to the login page.
-	if strings.Contains(string(body), "Benutzername hier eingeben") {
+	if isLoginPage(string(body)) {
 		return "", fmt.Errorf("efb: session expired, got login page instead of tracks")
 	}
 
@@ -472,6 +489,29 @@ func parseFormFields(html string) url.Values {
 	}
 
 	return vals
+}
+
+// titleRe extracts the content of the first <title> tag.
+var titleRe = regexp.MustCompile(`(?i)<title[^>]*>\s*(.*?)\s*</title>`)
+
+// summariseResponse returns a concise summary of an HTML response body for
+// use in error messages. It extracts the page title when present, falling
+// back to truncated body text. This avoids dumping raw HTML into structured
+// logs.
+func summariseResponse(b []byte) string {
+	s := string(b)
+	if m := titleRe.FindStringSubmatch(s); m != nil {
+		title := strings.TrimSpace(m[1])
+		if title != "" {
+			return fmt.Sprintf("page title: %q (%d bytes)", title, len(b))
+		}
+	}
+	// Not HTML or no title — truncate the raw body.
+	const maxLen = 200
+	if len(b) <= maxLen {
+		return s
+	}
+	return string(b[:maxLen]) + "…"
 }
 
 // truncateBody returns up to 500 bytes of body as a string, preventing full
