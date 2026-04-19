@@ -30,6 +30,7 @@ type Server struct {
 	rateLimiter    *auth.RateLimiter
 	internalSecret string
 	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
+	feedbackEmail  string // receives feedback notifications (empty = no email)
 	logger         *slog.Logger
 	templates      *template.Template
 	version        string
@@ -45,6 +46,7 @@ type ServerDeps struct {
 	RateLimiter    *auth.RateLimiter
 	InternalSecret string
 	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
+	FeedbackEmail  string // receives feedback notifications (optional)
 	Logger         *slog.Logger
 	TemplatesDir   string // path to the templates/ directory
 	Version        string // build version (set via ldflags)
@@ -69,6 +71,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		rateLimiter:    deps.RateLimiter,
 		internalSecret: deps.InternalSecret,
 		configBaseURL:  deps.BaseURL,
+		feedbackEmail:  deps.FeedbackEmail,
 		logger:         deps.Logger,
 		templates:      tmpl,
 		version:        deps.Version,
@@ -135,6 +138,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
 	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))
 	mux.Handle("GET /sync/history", protect(s.handleSyncHistory))
+	mux.Handle("POST /feedback", protect(s.handleFeedbackSubmit))
 
 	// ── Internal / admin routes ──
 	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
@@ -143,6 +147,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)
 	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
+	mux.HandleFunc("GET /internal/admin/feedback", s.handleAdminFeedback)
 	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
 	mux.HandleFunc("GET /health", s.handleHealth)
 

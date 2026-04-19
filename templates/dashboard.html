@@ -182,6 +182,38 @@
       <p><small style="color: var(--pico-muted-color);">{{call .T "sync.connect_both"}}</small></p>
       {{end}}
     </section>
+
+    <section style="margin-top: 2rem; text-align: center;">
+      <button class="outline secondary" onclick="document.getElementById('feedback-dialog').showModal()">
+        {{call .T "feedback.cta"}}
+      </button>
+    </section>
+
+    <dialog id="feedback-dialog">
+      <article>
+        <header>
+          <button aria-label="Close" rel="prev" onclick="this.closest('dialog').close()"></button>
+          <h3>{{call .T "feedback.heading"}}</h3>
+        </header>
+        <form method="POST" action="/feedback">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <label>{{call .T "feedback.category_label"}}
+            <select name="category">
+              <option value="general">{{call .T "feedback.category_general"}}</option>
+              <option value="bug">{{call .T "feedback.category_bug"}}</option>
+              <option value="feature">{{call .T "feedback.category_feature"}}</option>
+            </select>
+          </label>
+          <label>{{call .T "feedback.message_label"}}
+            <textarea name="message" rows="5" placeholder="{{call .T "feedback.message_placeholder"}}" maxlength="2000" required></textarea>
+          </label>
+          <footer>
+            <button type="button" class="secondary" onclick="this.closest('dialog').close()">{{call .T "feedback.cancel"}}</button>
+            <button type="submit">{{call .T "feedback.submit"}}</button>
+          </footer>
+        </form>
+      </article>
+    </dialog>
   </main>
 
   {{template "footer" .}}

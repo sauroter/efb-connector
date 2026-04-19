@@ -97,4 +97,13 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
 	// 0006 – add preferred_lang user preference (empty = auto-detect)
 	`ALTER TABLE users ADD COLUMN preferred_lang TEXT NOT NULL DEFAULT '';`,
+
+	// 0007 – feedback table
+	`CREATE TABLE IF NOT EXISTS feedback (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category   TEXT    NOT NULL DEFAULT 'general',
+    message    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);`,
 }
