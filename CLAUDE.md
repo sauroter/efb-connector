@@ -55,6 +55,10 @@ The server is configured via environment variables:
 | `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
 | `DEV_MODE` | Set to `true` for local dev (mock EFB + Garmin, relaxed env requirements) |
 
+## API Documentation
+
+The full REST API is documented in [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1). A validation test in `tests/openapi/` ensures the spec stays in sync with registered routes — add new endpoints to both `server.go` and `openapi.yaml`.
+
 ## CLI Tool (preserved)
 
 The original CLI tool is preserved at `cmd/cli/`:

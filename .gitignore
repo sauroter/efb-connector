@@ -5,6 +5,9 @@ efb-connector
 # Config (contains personal 1Password account details)
 config.json
 
+# Environment secrets
+.env
+
 # GPX files (personal GPS data)
 *.gpx
 

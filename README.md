@@ -111,6 +111,10 @@ fly deploy
 
 See [`infrastructure/README.md`](infrastructure/README.md) for detailed deployment and operations instructions.
 
+## API Documentation
+
+The full REST API (public, authenticated, and internal endpoints) is documented in [`openapi.yaml`](openapi.yaml) using the OpenAPI 3.1 specification. You can view it with any OpenAPI-compatible tool (Swagger UI, Redoc, etc.).
+
 ## CLI Tool
 
 The original CLI tool is preserved at `cmd/cli/` for standalone GPX uploads:

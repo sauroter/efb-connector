@@ -1,0 +1,1019 @@
+openapi: 3.1.0
+info:
+  title: EFB Connector API
+  description: |
+    Multi-tenant portal for syncing GPS tracks from Garmin Connect to the
+    Kanu-EFB portal. Provides magic-link authentication, encrypted credential
+    storage, and scheduled sync.
+  version: 1.0.0
+  contact:
+    url: https://efb-connector.sauroter.de
+
+servers:
+  - url: https://efb-connector.sauroter.de
+    description: Production
+
+tags:
+  - name: Public
+    description: Unauthenticated endpoints (landing, login, legal pages, health)
+  - name: Dashboard
+    description: Authenticated user endpoints (session cookie + CSRF)
+  - name: Internal
+    description: Admin/system endpoints (Bearer token)
+
+# ---------------------------------------------------------------------------
+# Security schemes
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session cookie set after magic-link verification.
+    internalBearer:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <INTERNAL_SECRET>` — constant-time validated.
+
+  # -------------------------------------------------------------------------
+  # Reusable schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, unhealthy]
+        version:
+          type: string
+        error:
+          type: string
+      required: [status]
+
+    SystemStats:
+      type: object
+      properties:
+        total_users:
+          type: integer
+        active_users:
+          type: integer
+        syncable_users:
+          type: integer
+        db_size_bytes:
+          type: integer
+          format: int64
+        db_path:
+          type: string
+      required: [total_users, active_users, syncable_users, db_size_bytes, db_path]
+
+    UserStatus:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        sync_enabled:
+          type: boolean
+        preferred_lang:
+          type: string
+        garmin_connected:
+          type: boolean
+        garmin_valid:
+          type: boolean
+        efb_connected:
+          type: boolean
+        efb_valid:
+          type: boolean
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_sync_status:
+          type: string
+      required:
+        - id
+        - email
+        - created_at
+        - is_active
+        - sync_enabled
+        - preferred_lang
+        - garmin_connected
+        - garmin_valid
+        - efb_connected
+        - efb_valid
+
+    SyncRun:
+      description: |
+        Mirrors the sync_runs table. The Go struct has no JSON tags, so
+        fields are PascalCase in JSON output.
+      type: object
+      properties:
+        ID:
+          type: integer
+          format: int64
+        UserID:
+          type: integer
+          format: int64
+        Trigger:
+          type: string
+        StartedAt:
+          type: string
+          format: date-time
+        FinishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        Status:
+          type: string
+          enum: [running, completed, failed, partial]
+        ActivitiesFound:
+          type: integer
+        ActivitiesSynced:
+          type: integer
+        ActivitiesSkipped:
+          type: integer
+        ActivitiesFailed:
+          type: integer
+        TripsCreated:
+          type: integer
+        ErrorMessage:
+          type: string
+      required:
+        - ID
+        - UserID
+        - Trigger
+        - StartedAt
+        - Status
+        - ActivitiesFound
+        - ActivitiesSynced
+        - ActivitiesSkipped
+        - ActivitiesFailed
+        - TripsCreated
+        - ErrorMessage
+
+    UserSyncResult:
+      description: Streamed as one NDJSON line per user during sync-all.
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        status:
+          type: string
+          enum: [success, error]
+        error:
+          type: string
+        found:
+          type: integer
+        synced:
+          type: integer
+        skipped:
+          type: integer
+        failed:
+          type: integer
+        trips_created:
+          type: integer
+      required: [user_id, email, status, found, synced, skipped, failed, trips_created]
+
+    Feedback:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        user_email:
+          type: string
+        category:
+          type: string
+          enum: [bug, feature, general]
+        message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, user_id, category, message, created_at]
+
+    AdminSyncResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [completed, error]
+        run_id:
+          type: integer
+          format: int64
+        error:
+          type: string
+      required: [status, run_id]
+
+    NotifyResponse:
+      type: object
+      properties:
+        sent:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+          nullable: true
+      required: [sent]
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  # ── Public ──────────────────────────────────────────────────────────────
+
+  /:
+    get:
+      tags: [Public]
+      summary: Landing page
+      description: Renders the landing page. Redirects to /dashboard if already authenticated.
+      operationId: getLanding
+      responses:
+        "200":
+          description: HTML landing page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /login:
+    get:
+      tags: [Public]
+      summary: Login form
+      operationId: getLoginForm
+      responses:
+        "200":
+          description: HTML login form
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [Public]
+      summary: Submit login (send magic link)
+      description: |
+        Sends a magic-link email to the provided address.
+        Rate-limited by email + IP.
+      operationId: postLogin
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+              required: [email]
+      responses:
+        "303":
+          description: Redirect to confirmation page
+        "400":
+          description: Invalid email
+        "429":
+          description: Rate limit exceeded
+
+  /auth/verify:
+    get:
+      tags: [Public]
+      summary: Verify magic link
+      description: Validates the token, creates a session, and redirects to /dashboard.
+      operationId: getVerifyMagicLink
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirect to /dashboard with session cookie set
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+
+  /impressum:
+    get:
+      tags: [Public]
+      summary: Legal notice (Impressum)
+      description: Renders DE or EN version based on language context.
+      operationId: getImpressum
+      responses:
+        "200":
+          description: HTML legal notice
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /privacy:
+    get:
+      tags: [Public]
+      summary: Privacy policy
+      description: Renders DE or EN version based on language context.
+      operationId: getPrivacy
+      responses:
+        "200":
+          description: HTML privacy policy
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /favicon.ico:
+    get:
+      tags: [Public]
+      summary: Favicon
+      operationId: getFavicon
+      responses:
+        "200":
+          description: SVG favicon
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+
+  /static/{path}:
+    get:
+      tags: [Public]
+      summary: Static files
+      operationId: getStaticFile
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Static file content
+        "404":
+          description: File not found
+
+  /health:
+    get:
+      tags: [Public]
+      summary: Health check
+      description: Checks database connectivity. Returns 503 if unhealthy.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ── Dashboard (authenticated) ──────────────────────────────────────────
+
+  /auth/logout:
+    post:
+      tags: [Dashboard]
+      summary: Logout
+      description: Destroys the session and clears the cookie.
+      operationId: postLogout
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to / with flash message
+
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard
+      description: |
+        Shows connection status, last sync stats, and a setup wizard
+        if the user has not completed initial configuration.
+      operationId: getDashboard
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML dashboard
+          content:
+            text/html:
+              schema:
+                type: string
+        "303":
+          description: Redirect to /login if unauthenticated
+
+  /settings:
+    get:
+      tags: [Dashboard]
+      summary: Settings page
+      description: Consolidated settings view with tabs for Garmin, EFB, and preferences.
+      operationId: getSettings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML settings page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /settings/garmin:
+    get:
+      tags: [Dashboard]
+      summary: Garmin settings form
+      operationId: getGarminSettings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML form for Garmin credentials
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [Dashboard]
+      summary: Save Garmin credentials
+      description: |
+        Validates credentials against Garmin Connect, then encrypts and stores them.
+        Handles MFA errors.
+      operationId: postGarminSettings
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+                csrf_token:
+                  type: string
+              required: [email, password, csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard on success or /settings/garmin on error
+        "400":
+          description: Missing required fields
+
+  /settings/garmin/delete:
+    post:
+      tags: [Dashboard]
+      summary: Delete Garmin credentials
+      description: Removes encrypted Garmin credentials and token cache.
+      operationId: postGarminDelete
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings/garmin
+
+  /settings/efb:
+    get:
+      tags: [Dashboard]
+      summary: EFB settings form
+      operationId: getEFBSettings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML form for EFB credentials
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [Dashboard]
+      summary: Save EFB credentials
+      description: Validates credentials against the EFB portal, then encrypts and stores them.
+      operationId: postEFBSettings
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                csrf_token:
+                  type: string
+              required: [username, password, csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard on success or /settings/efb on error
+        "400":
+          description: Missing required fields
+
+  /settings/efb/delete:
+    post:
+      tags: [Dashboard]
+      summary: Delete EFB credentials
+      description: Removes encrypted EFB credentials from the database.
+      operationId: postEFBDelete
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings/efb
+
+  /settings/auto-create-trips:
+    post:
+      tags: [Dashboard]
+      summary: Toggle auto-create trips
+      operationId: postAutoCreateTrips
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: string
+                  description: '"1" for enabled, absent for disabled'
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings or /dashboard
+
+  /settings/enrich-trips:
+    post:
+      tags: [Dashboard]
+      summary: Toggle trip enrichment (Rivermap)
+      operationId: postEnrichTrips
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: string
+                  description: '"1" for enabled, absent for disabled'
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings or /dashboard
+
+  /settings/language:
+    post:
+      tags: [Dashboard]
+      summary: Save language preference
+      operationId: postLanguage
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                lang:
+                  type: string
+                  enum: [en, de]
+                csrf_token:
+                  type: string
+              required: [lang, csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings. Also sets a `lang` cookie (365 days).
+
+  /setup/configure:
+    post:
+      tags: [Dashboard]
+      summary: Complete initial setup
+      description: Saves auto-create and enrich preferences and marks setup as completed.
+      operationId: postSetupConfigure
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                auto_create_trips:
+                  type: string
+                  description: '"1" for enabled'
+                enrich_trips:
+                  type: string
+                  description: '"1" for enabled'
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard
+
+  /account/delete:
+    post:
+      tags: [Dashboard]
+      summary: Delete account
+      description: |
+        Destroys the session, deletes the user and all cascaded data,
+        and removes the Garmin token cache from disk.
+      operationId: postAccountDelete
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to / with flash message
+
+  /sync/trigger:
+    post:
+      tags: [Dashboard]
+      summary: Trigger manual sync
+      description: |
+        Launches a background sync for the current user.
+        Rate-limited to 1 sync per hour. Optional date range (max 120 days).
+        Returns an HTMX partial if `HX-Request` header is present.
+      operationId: postSyncTrigger
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                start_date:
+                  type: string
+                  format: date
+                  description: ISO 8601 date (YYYY-MM-DD), optional
+                end_date:
+                  type: string
+                  format: date
+                  description: ISO 8601 date (YYYY-MM-DD), optional
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "200":
+          description: HTMX partial (when HX-Request header present)
+          content:
+            text/html:
+              schema:
+                type: string
+        "303":
+          description: Redirect to /dashboard with flash message
+        "400":
+          description: Invalid date range
+        "429":
+          description: Rate limit exceeded (1 per hour)
+
+  /sync/status:
+    get:
+      tags: [Dashboard]
+      summary: Get sync status
+      description: Returns an HTML partial for HTMX polling from the dashboard.
+      operationId: getSyncStatus
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML partial with sync status
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /sync/history:
+    get:
+      tags: [Dashboard]
+      summary: Sync history
+      operationId: getSyncHistory
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: HTML page listing sync runs
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /feedback:
+    post:
+      tags: [Dashboard]
+      summary: Submit feedback
+      description: |
+        Rate-limited to 3 per calendar day per user.
+        Sends email notification if FEEDBACK_EMAIL is configured.
+      operationId: postFeedback
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                category:
+                  type: string
+                  enum: [bug, feature, general]
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: UTF-8, 1-2000 runes
+                csrf_token:
+                  type: string
+              required: [category, message, csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard with flash message
+        "400":
+          description: Invalid category or message length
+        "429":
+          description: Rate limit exceeded (3 per day)
+
+  # ── Internal / Admin ───────────────────────────────────────────────────
+
+  /internal/admin/status:
+    get:
+      tags: [Internal]
+      summary: System statistics
+      operationId: getAdminStatus
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Aggregate system stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStats"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/users:
+    get:
+      tags: [Internal]
+      summary: List all users
+      operationId: getAdminUsers
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: All users with credential and sync status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserStatus"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/users/{id}/sync-history:
+    get:
+      tags: [Internal]
+      summary: User sync history
+      description: Returns the 50 most recent sync runs for a specific user.
+      operationId: getAdminUserSyncHistory
+      security:
+        - internalBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List of sync runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SyncRun"
+        "400":
+          description: Invalid user ID
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/users/{id}/sync:
+    post:
+      tags: [Internal]
+      summary: Trigger user sync
+      description: Triggers an immediate sync for a specific user, bypassing the rate limiter.
+      operationId: postAdminUserSync
+      security:
+        - internalBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSyncResponse"
+        "400":
+          description: Invalid user ID
+        "401":
+          description: Unauthorized
+        "500":
+          description: Sync failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSyncResponse"
+
+  /internal/admin/errors:
+    get:
+      tags: [Internal]
+      summary: Recent errors
+      description: Returns the 50 most recent failed or partial sync runs across all users.
+      operationId: getAdminErrors
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Failed/partial sync runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SyncRun"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/feedback:
+    get:
+      tags: [Internal]
+      summary: List feedback
+      description: Returns up to 100 most recent feedback entries with user emails.
+      operationId: getAdminFeedback
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Feedback entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Feedback"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/notify-garmin-upgrade:
+    post:
+      tags: [Internal]
+      summary: Notify Garmin upgrade
+      description: |
+        Sends a language-aware notification email to all users with Garmin
+        credentials about a Garmin integration upgrade.
+      operationId: postAdminNotifyGarminUpgrade
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Notification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotifyResponse"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/sync/run-all:
+    post:
+      tags: [Internal]
+      summary: Sync all users
+      description: |
+        Triggers a sync for all eligible users using a worker pool of 2.
+        Streams NDJSON progress lines (one per user). Final line indicates
+        overall status. Total timeout: 15 minutes.
+      operationId: postSyncAll
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: NDJSON stream of per-user results followed by a final status line
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/UserSyncResult"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
