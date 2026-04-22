@@ -414,7 +414,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			trackID, findErr := s.efb.FindUnassociatedTrack(ctx, filename)
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
-			} else if trackID != "" {
+			} else if trackID == "" {
+				log.Warn("track not found on EFB for trip creation", "filename", filename)
+			} else {
 				// Build enrichment from Rivermap if available and enabled.
 				var enrichment *efb.TripEnrichment
 				if enrichTrips && s.rivermap != nil {
