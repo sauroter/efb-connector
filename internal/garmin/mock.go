@@ -87,12 +87,14 @@ func (m *MockGarminProvider) ValidateWithMFA(_ context.Context, userID int64, _ 
 }
 
 func (m *MockGarminProvider) CompleteMFA(userID int64, _ string) error {
+	if m.mfaPending == nil || !m.mfaPending[userID] {
+		return fmt.Errorf("garmin: no MFA session for user %d", userID)
+	}
 	if m.MFAErr != nil {
+		delete(m.mfaPending, userID)
 		return m.MFAErr
 	}
-	if m.mfaPending != nil {
-		delete(m.mfaPending, userID)
-	}
+	delete(m.mfaPending, userID)
 	return nil
 }
 

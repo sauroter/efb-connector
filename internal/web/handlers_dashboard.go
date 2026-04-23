@@ -246,6 +246,9 @@ func (s *Server) handleGarminMFASubmit(w http.ResponseWriter, r *http.Request) {
 	// Mark credentials as valid (they were saved with is_valid=0 before MFA).
 	if err := s.db.RevalidateGarminCredentials(userID); err != nil {
 		s.logger.Error("failed to mark garmin credentials valid after MFA", "user_id", userID, "error", err)
+		setFlash(w, "flash.save_credentials_failed")
+		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+		return
 	}
 
 	s.logger.Info("garmin credentials saved after MFA", "user_id", userID)
