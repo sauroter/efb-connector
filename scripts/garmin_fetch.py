@@ -261,6 +261,92 @@ def validate_credentials(config):
         sys.exit(1)
 
 
+def validate_mfa():
+    """Interactive MFA-aware credential validation via stdin protocol.
+
+    Reads credentials JSON from stdin line 1. If MFA is required, writes
+    {"status": "needs_mfa"} to stdout and waits for a second stdin line
+    containing {"mfa_code": "..."}.
+
+    Exit codes:
+        0 - credentials are valid (with or without MFA)
+        1 - authentication failed
+    """
+    # Read credentials from stdin (always required for this subcommand).
+    try:
+        line = sys.stdin.readline().strip()
+        if not line:
+            print(json.dumps({"status": "error", "message": "No credentials on stdin"}))
+            sys.exit(1)
+        data = json.loads(line)
+        email = data.get("email")
+        password = data.get("password")
+        tokenstore = data.get("tokenstore")
+    except (json.JSONDecodeError, IOError) as e:
+        print(json.dumps({"status": "error", "message": f"Invalid stdin JSON: {e}"}))
+        sys.exit(1)
+
+    if not email or not password:
+        print(json.dumps({"status": "error", "message": "Email and password required"}))
+        sys.exit(1)
+
+    if not tokenstore:
+        tokenstore = get_tokenstore_path()
+
+    try:
+        Path(tokenstore).mkdir(parents=True, exist_ok=True)
+        client = Garmin(email, password, return_on_mfa=True)
+        mfa_status, _ = client.login(tokenstore=tokenstore)
+
+        if mfa_status == "needs_mfa":
+            # Signal MFA required and wait for code.
+            print(json.dumps({"status": "needs_mfa"}), flush=True)
+
+            # Read MFA code from stdin line 2.
+            mfa_line = sys.stdin.readline().strip()
+            if not mfa_line:
+                print(json.dumps({"status": "error", "message": "No MFA code received"}))
+                sys.exit(1)
+
+            try:
+                mfa_data = json.loads(mfa_line)
+                mfa_code = mfa_data.get("mfa_code", "")
+            except json.JSONDecodeError:
+                print(json.dumps({"status": "error", "message": "Invalid MFA JSON"}))
+                sys.exit(1)
+
+            if not mfa_code:
+                print(json.dumps({"status": "error", "message": "Empty MFA code"}))
+                sys.exit(1)
+
+            # Complete the MFA login.
+            client.resume_login({}, mfa_code)
+
+            # Persist tokens.
+            tokenstore_path = str(Path(tokenstore).expanduser().resolve())
+            client.client.dump(tokenstore_path)
+
+            print(json.dumps({"status": "ok"}))
+            sys.exit(0)
+
+        # No MFA required — login succeeded directly.
+        # Tokens are already dumped by Garmin.login() when tokenstore is set
+        # and return_on_mfa is False, but with return_on_mfa=True the library
+        # returns early. Dump tokens explicitly.
+        tokenstore_path = str(Path(tokenstore).expanduser().resolve())
+        client.client.dump(tokenstore_path)
+
+        print(json.dumps({"status": "ok"}))
+        sys.exit(0)
+
+    except GarminConnectAuthenticationError as e:
+        print(json.dumps({"status": "error", "message": str(e)}))
+        sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"status": "error", "message": str(e)}))
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch GPX files from Garmin Connect")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -284,6 +370,9 @@ def main():
     # Validate command
     subparsers.add_parser("validate", help="Validate Garmin credentials")
 
+    # Validate-MFA command (interactive stdin protocol)
+    subparsers.add_parser("validate-mfa", help="Validate Garmin credentials with MFA support (interactive stdin)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -294,6 +383,10 @@ def main():
 
     if args.command == "validate":
         validate_credentials(config)
+        return
+
+    if args.command == "validate-mfa":
+        validate_mfa()
         return
 
     client = connect_garmin(config)

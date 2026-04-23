@@ -495,6 +495,55 @@ paths:
         "400":
           description: Missing required fields
 
+  /settings/garmin/mfa:
+    get:
+      tags: [Dashboard]
+      summary: Garmin MFA code entry form
+      description: |
+        Renders a form for entering the 6-digit MFA verification code.
+        Redirects to /settings/garmin if no MFA session is pending.
+      operationId: getGarminMFA
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: HTML form for MFA code entry
+          content:
+            text/html:
+              schema:
+                type: string
+        "303":
+          description: Redirect to /settings/garmin if no MFA session
+    post:
+      tags: [Dashboard]
+      summary: Submit Garmin MFA code
+      description: |
+        Completes the MFA verification started during credential validation.
+        On success, marks credentials as valid and redirects to /dashboard.
+        On failure, redirects to /settings/garmin with an error flash.
+      operationId: postGarminMFA
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                mfa_code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+                  description: 6-digit verification code from authenticator app
+                csrf_token:
+                  type: string
+              required: [mfa_code, csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard on success or /settings/garmin on error
+        "400":
+          description: Missing required fields
+
   /settings/garmin/delete:
     post:
       tags: [Dashboard]

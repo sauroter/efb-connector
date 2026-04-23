@@ -1,29 +1,42 @@
 package garmin
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"efb-connector/internal/crypto"
 )
 
+// MFASession holds a running Python subprocess that is waiting for an MFA
+// code on stdin.  The Go side keeps it alive between the credential-submission
+// HTTP request and the MFA-code-submission HTTP request.
+type MFASession struct {
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	stdout        *bufio.Scanner
+	stderr        bytes.Buffer
+	created       time.Time
+	tmpTokenDir   string // temp dir with decrypted tokens (empty if encryption disabled)
+	realTokenDir  string // permanent token store for re-encryption
+	encryptionKey []byte // AES key for re-encryption (nil if disabled)
+}
+
 // PythonGarminProvider implements GarminProvider by shelling out to the
 // garmin_fetch.py script.  Credentials are passed to the subprocess via stdin
 // as a JSON object — never via environment variables — so that the process
 // table remains clean in a multi-tenant environment.
-//
-// NOTE: The Python script does not yet read credentials from stdin (that
-// change happens in Task 12).  The Go code is already written correctly;
-// end-to-end operation will work once Task 12 is completed.
 type PythonGarminProvider struct {
 	// scriptPath is the absolute or relative path to garmin_fetch.py.
 	scriptPath string
@@ -32,13 +45,50 @@ type PythonGarminProvider struct {
 	// OAuth token files at rest.  When nil, token encryption is disabled
 	// (useful for tests).
 	encryptionKey []byte
+
+	// mfaSessions holds active MFA sessions keyed by user ID.
+	mfaSessions   map[int64]*MFASession
+	mfaSessionsMu sync.Mutex
+
+	// stopCleanup signals the cleanup goroutine to exit.
+	stopCleanup chan struct{}
 }
 
 // NewPythonGarminProvider returns a PythonGarminProvider that invokes the
 // Python script at scriptPath.  encryptionKey is the AES-256 key used to
 // encrypt Garmin OAuth tokens at rest; pass nil to disable token encryption.
 func NewPythonGarminProvider(scriptPath string, encryptionKey []byte) *PythonGarminProvider {
-	return &PythonGarminProvider{scriptPath: scriptPath, encryptionKey: encryptionKey}
+	p := &PythonGarminProvider{
+		scriptPath:    scriptPath,
+		encryptionKey: encryptionKey,
+		mfaSessions:   make(map[int64]*MFASession),
+		stopCleanup:   make(chan struct{}),
+	}
+	go p.cleanupStaleMFASessions()
+	return p
+}
+
+// Close stops the background cleanup goroutine and kills any active MFA
+// sessions.  Safe to call multiple times.
+func (p *PythonGarminProvider) Close() {
+	select {
+	case <-p.stopCleanup:
+		// already closed
+	default:
+		close(p.stopCleanup)
+	}
+
+	p.mfaSessionsMu.Lock()
+	for uid, s := range p.mfaSessions {
+		s.stdin.Close()
+		s.cmd.Process.Kill()
+		s.cmd.Wait()
+		if s.tmpTokenDir != "" {
+			os.RemoveAll(s.tmpTokenDir)
+		}
+		delete(p.mfaSessions, uid)
+	}
+	p.mfaSessionsMu.Unlock()
 }
 
 // stdinCreds is the JSON envelope written to the subprocess's stdin.
@@ -199,6 +249,268 @@ func (p *PythonGarminProvider) ValidateCredentials(
 		return classifyError(err, stderr)
 	}
 	return nil
+}
+
+// mfaStatusResponse is the JSON envelope returned by the validate-mfa
+// subprocess on stdout.
+type mfaStatusResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ValidateWithMFA starts an interactive validation that supports MFA.  It
+// returns "ok" when the credentials are accepted without MFA, or "needs_mfa"
+// when the subprocess is waiting for an MFA code (the session is stored for
+// later completion via CompleteMFA).
+func (p *PythonGarminProvider) ValidateWithMFA(
+	ctx context.Context,
+	userID int64,
+	creds GarminCredentials,
+) (string, error) {
+	// Cancel any existing MFA session for this user.
+	p.cancelMFASession(userID)
+
+	// ── Token encryption: decrypt existing tokens to a temp dir ──
+
+	tokenStoreForSubprocess := creds.TokenStorePath
+	useEncryption := creds.TokenStorePath != "" && p.encryptionKey != nil
+
+	var tmpTokenDir string
+	cleanupTmpDir := true // deferred cleanup; set false when MFA session takes ownership
+	if useEncryption {
+		var err error
+		tmpTokenDir, err = os.MkdirTemp("", "garmin-tokens-*")
+		if err != nil {
+			return "", fmt.Errorf("garmin: create temp token dir: %w", err)
+		}
+		defer func() {
+			if cleanupTmpDir && tmpTokenDir != "" {
+				os.RemoveAll(tmpTokenDir)
+			}
+		}()
+
+		decryptTokenStore(p.encryptionKey, creds.TokenStorePath, tmpTokenDir)
+		cleanupLegacyTokens(creds.TokenStorePath)
+		tokenStoreForSubprocess = tmpTokenDir
+	}
+
+	// ── Build and start the subprocess ──
+
+	cmdArgs := []string{p.scriptPath, "validate-mfa"}
+	cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
+
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("garmin: create stdin pipe: %w", err)
+	}
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("garmin: create stdout pipe: %w", err)
+	}
+
+	session := &MFASession{
+		cmd:     cmd,
+		stdin:   stdinPipe,
+		stdout:  bufio.NewScanner(stdoutPipe),
+		created: time.Now(),
+	}
+	cmd.Stderr = &session.stderr
+
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"PYTHONPATH=" + os.Getenv("PYTHONPATH"),
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("garmin: start validate-mfa subprocess: %w", err)
+	}
+
+	// killAndWait is a helper for error paths after the subprocess has started.
+	killAndWait := func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}
+
+	// Write credentials JSON to stdin (do NOT close stdin yet).
+	credsJSON, err := json.Marshal(stdinCreds{
+		Email:      creds.Email,
+		Password:   creds.Password,
+		TokenStore: tokenStoreForSubprocess,
+	})
+	if err != nil {
+		killAndWait()
+		return "", fmt.Errorf("garmin: marshal credentials: %w", err)
+	}
+
+	if _, err := stdinPipe.Write(append(credsJSON, '\n')); err != nil {
+		killAndWait()
+		return "", fmt.Errorf("garmin: write credentials to stdin: %w", err)
+	}
+
+	// Read the first response line from stdout.
+	if !session.stdout.Scan() {
+		cmd.Wait()
+		return "", classifyError(fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
+	}
+
+	var resp mfaStatusResponse
+	if err := json.Unmarshal(session.stdout.Bytes(), &resp); err != nil {
+		killAndWait()
+		return "", fmt.Errorf("garmin: parse validate-mfa response: %w", err)
+	}
+
+	switch resp.Status {
+	case "ok":
+		// Credentials valid, no MFA. Wait for process to exit.
+		cmd.Wait()
+
+		// Re-encrypt tokens if needed (tmpTokenDir cleaned up by defer).
+		if useEncryption {
+			encryptTokenStore(p.encryptionKey, tmpTokenDir, creds.TokenStorePath)
+		}
+		return "ok", nil
+
+	case "needs_mfa":
+		// MFA session takes ownership of tmpTokenDir — prevent deferred cleanup.
+		cleanupTmpDir = false
+		if useEncryption {
+			session.tmpTokenDir = tmpTokenDir
+			session.realTokenDir = creds.TokenStorePath
+			session.encryptionKey = p.encryptionKey
+		}
+		p.mfaSessionsMu.Lock()
+		p.mfaSessions[userID] = session
+		p.mfaSessionsMu.Unlock()
+		return "needs_mfa", nil
+
+	case "error":
+		killAndWait()
+		return "", classifyError(fmt.Errorf("garmin: %s", resp.Message), session.stderr.String())
+
+	default:
+		killAndWait()
+		return "", fmt.Errorf("garmin: unexpected validate-mfa status: %q", resp.Status)
+	}
+}
+
+// CompleteMFA sends the MFA code to a previously started validate-mfa
+// subprocess and returns nil on success.
+func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
+	p.mfaSessionsMu.Lock()
+	session, ok := p.mfaSessions[userID]
+	delete(p.mfaSessions, userID)
+	p.mfaSessionsMu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("garmin: no MFA session for user %d", userID)
+	}
+
+	defer func() {
+		if session.tmpTokenDir != "" {
+			os.RemoveAll(session.tmpTokenDir)
+		}
+	}()
+
+	// Write the MFA code to stdin and close it.
+	mfaJSON, _ := json.Marshal(map[string]string{"mfa_code": code})
+	_, writeErr := session.stdin.Write(append(mfaJSON, '\n'))
+	session.stdin.Close()
+
+	if writeErr != nil {
+		session.cmd.Process.Kill()
+		session.cmd.Wait()
+		return fmt.Errorf("garmin: write MFA code: %w", writeErr)
+	}
+
+	// Read the response.
+	if !session.stdout.Scan() {
+		session.cmd.Wait()
+		return classifyError(
+			fmt.Errorf("garmin: no response after MFA code"),
+			session.stderr.String(),
+		)
+	}
+
+	var resp mfaStatusResponse
+	if err := json.Unmarshal(session.stdout.Bytes(), &resp); err != nil {
+		session.cmd.Process.Kill()
+		session.cmd.Wait()
+		return fmt.Errorf("garmin: parse MFA response: %w", err)
+	}
+
+	// Wait for the process to finish.
+	session.cmd.Wait()
+
+	if resp.Status != "ok" {
+		return classifyError(
+			fmt.Errorf("garmin: MFA verification failed: %s", resp.Message),
+			session.stderr.String(),
+		)
+	}
+
+	// Re-encrypt tokens from the temp dir back to the real tokenstore.
+	if session.tmpTokenDir != "" && session.encryptionKey != nil {
+		encryptTokenStore(session.encryptionKey, session.tmpTokenDir, session.realTokenDir)
+	}
+
+	return nil
+}
+
+// cancelMFASession kills and cleans up any existing MFA session for the user.
+func (p *PythonGarminProvider) cancelMFASession(userID int64) {
+	p.mfaSessionsMu.Lock()
+	session, ok := p.mfaSessions[userID]
+	delete(p.mfaSessions, userID)
+	p.mfaSessionsMu.Unlock()
+
+	if ok {
+		session.stdin.Close()
+		session.cmd.Process.Kill()
+		session.cmd.Wait()
+		if session.tmpTokenDir != "" {
+			os.RemoveAll(session.tmpTokenDir)
+		}
+	}
+}
+
+// HasMFASession reports whether an active MFA session exists for the user.
+func (p *PythonGarminProvider) HasMFASession(userID int64) bool {
+	p.mfaSessionsMu.Lock()
+	defer p.mfaSessionsMu.Unlock()
+	_, ok := p.mfaSessions[userID]
+	return ok
+}
+
+// cleanupStaleMFASessions periodically kills MFA sessions that have been
+// waiting for a code for too long (5 minutes).
+func (p *PythonGarminProvider) cleanupStaleMFASessions() {
+	const maxAge = 5 * time.Minute
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.stopCleanup:
+			return
+		case <-ticker.C:
+			p.mfaSessionsMu.Lock()
+			for uid, s := range p.mfaSessions {
+				if time.Since(s.created) > maxAge {
+					slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
+					s.stdin.Close()
+					s.cmd.Process.Kill()
+					s.cmd.Wait()
+					if s.tmpTokenDir != "" {
+						os.RemoveAll(s.tmpTokenDir)
+					}
+					delete(p.mfaSessions, uid)
+				}
+			}
+			p.mfaSessionsMu.Unlock()
+		}
+	}
 }
 
 // run executes `python <scriptPath> <args...>`, writes the credentials JSON to
@@ -364,17 +676,26 @@ func classifyError(err error, stderr string) error {
 	if err == nil {
 		return nil
 	}
-	lower := strings.ToLower(stderr)
-	if strings.Contains(lower, "mfa") ||
-		strings.Contains(lower, "captcha") ||
-		strings.Contains(lower, "two-factor") ||
-		strings.Contains(lower, "2fa") {
+	// Check both stderr and the error message for keywords.
+	combined := strings.ToLower(stderr + " " + err.Error())
+
+	if strings.Contains(combined, "mfa") ||
+		strings.Contains(combined, "two-factor") ||
+		strings.Contains(combined, "2fa") {
 		return fmt.Errorf("%w: %s", ErrGarminMFARequired, stderr)
 	}
-	if strings.Contains(lower, "authentication") ||
-		strings.Contains(lower, "invalid credentials") ||
-		strings.Contains(lower, "login failed") ||
-		strings.Contains(lower, "unauthorized") {
+	if strings.Contains(combined, "429") ||
+		strings.Contains(combined, "rate limit") ||
+		strings.Contains(combined, "too many") ||
+		strings.Contains(combined, "strategies exhausted") ||
+		strings.Contains(combined, "strategies rate limited") {
+		return fmt.Errorf("%w: %s", ErrGarminUnavailable, combined)
+	}
+	if strings.Contains(combined, "authentication") ||
+		strings.Contains(combined, "invalid credentials") ||
+		strings.Contains(combined, "invalid username or password") ||
+		strings.Contains(combined, "login failed") ||
+		strings.Contains(combined, "unauthorized") {
 		return fmt.Errorf("%w: %s", ErrGarminAuth, stderr)
 	}
 	if stderr != "" {

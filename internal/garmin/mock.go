@@ -25,6 +25,16 @@ type MockGarminProvider struct {
 
 	// ValidateErr, if set, is returned by ValidateCredentials.
 	ValidateErr error
+
+	// SimulateMFA, if true, causes ValidateWithMFA to return "needs_mfa"
+	// and accept any code in CompleteMFA.
+	SimulateMFA bool
+
+	// MFAErr, if set, is returned by CompleteMFA.
+	MFAErr error
+
+	// mfaPending tracks users with pending MFA sessions.
+	mfaPending map[int64]bool
 }
 
 // NewMockGarminProvider returns a MockGarminProvider with sample activities.
@@ -60,6 +70,39 @@ func (m *MockGarminProvider) DownloadGPX(_ context.Context, _ GarminCredentials,
 
 func (m *MockGarminProvider) ValidateCredentials(_ context.Context, _ GarminCredentials) error {
 	return m.ValidateErr
+}
+
+func (m *MockGarminProvider) ValidateWithMFA(_ context.Context, userID int64, _ GarminCredentials) (string, error) {
+	if m.ValidateErr != nil {
+		return "", m.ValidateErr
+	}
+	if m.SimulateMFA {
+		if m.mfaPending == nil {
+			m.mfaPending = make(map[int64]bool)
+		}
+		m.mfaPending[userID] = true
+		return "needs_mfa", nil
+	}
+	return "ok", nil
+}
+
+func (m *MockGarminProvider) CompleteMFA(userID int64, _ string) error {
+	if m.mfaPending == nil || !m.mfaPending[userID] {
+		return fmt.Errorf("garmin: no MFA session for user %d", userID)
+	}
+	if m.MFAErr != nil {
+		delete(m.mfaPending, userID)
+		return m.MFAErr
+	}
+	delete(m.mfaPending, userID)
+	return nil
+}
+
+func (m *MockGarminProvider) HasMFASession(userID int64) bool {
+	if m.mfaPending == nil {
+		return false
+	}
+	return m.mfaPending[userID]
 }
 
 func defaultActivities() []Activity {

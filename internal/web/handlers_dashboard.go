@@ -146,17 +146,18 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Validate credentials with the Garmin provider.
+	// Validate credentials with MFA support.
 	tokenStorePath := s.garminTokenStorePath(userID)
 	creds := garmin.GarminCredentials{
 		Email:          email,
 		Password:       password,
 		TokenStorePath: tokenStorePath,
 	}
-	if err := s.garmin.ValidateCredentials(context.Background(), creds); err != nil {
+	status, err := s.garmin.ValidateWithMFA(context.Background(), userID, creds)
+	if err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
-		if errors.Is(err, garmin.ErrGarminMFARequired) {
-			setFlash(w, "flash.garmin_mfa_required")
+		if errors.Is(err, garmin.ErrGarminUnavailable) {
+			setFlash(w, "flash.garmin_unavailable")
 		} else {
 			setFlash(w, "flash.garmin_invalid")
 		}
@@ -164,7 +165,24 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Save encrypted credentials.
+	if status == "needs_mfa" {
+		// Save credentials (not yet valid) so they persist across the
+		// redirect to the MFA form.  They'll be marked valid once MFA
+		// completes.
+		if err := s.db.SaveGarminCredentials(userID, email, password); err != nil {
+			s.logger.Error("failed to save garmin credentials", "user_id", userID, "error", err)
+			setFlash(w, "flash.save_credentials_failed")
+			http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+			return
+		}
+		if err := s.db.InvalidateGarminCredentials(userID, "MFA verification pending"); err != nil {
+			s.logger.Error("failed to invalidate garmin credentials for MFA", "user_id", userID, "error", err)
+		}
+		http.Redirect(w, r, "/settings/garmin/mfa", http.StatusSeeOther)
+		return
+	}
+
+	// Save encrypted credentials (already validated).
 	if err := s.db.SaveGarminCredentials(userID, email, password); err != nil {
 		s.logger.Error("failed to save garmin credentials", "user_id", userID, "error", err)
 		setFlash(w, "flash.save_credentials_failed")
@@ -173,6 +191,67 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 
 	s.logger.Info("garmin credentials saved", "user_id", userID)
+	setFlash(w, "flash.garmin_saved")
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// handleGarminMFA renders the MFA code entry form.
+func (s *Server) handleGarminMFA(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if !s.garmin.HasMFASession(userID) {
+		setFlash(w, "flash.garmin_mfa_expired")
+		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+		return
+	}
+
+	s.render(w, r, "settings_garmin_mfa.html", map[string]any{
+		"Flash":     flash(w, r),
+		"CSRFToken": s.auth.CSRFToken(r),
+	})
+}
+
+// handleGarminMFASubmit completes the MFA verification.
+func (s *Server) handleGarminMFASubmit(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	code := strings.TrimSpace(r.FormValue("mfa_code"))
+	if code == "" {
+		setFlash(w, "flash.garmin_mfa_invalid")
+		http.Redirect(w, r, "/settings/garmin/mfa", http.StatusSeeOther)
+		return
+	}
+
+	if err := s.garmin.CompleteMFA(userID, code); err != nil {
+		s.logger.Warn("garmin MFA verification failed", "user_id", userID, "error", err)
+		setFlash(w, "flash.garmin_mfa_invalid")
+		// The MFA session is consumed on failure, redirect to re-enter credentials.
+		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+		return
+	}
+
+	// Mark credentials as valid (they were saved with is_valid=0 before MFA).
+	if err := s.db.RevalidateGarminCredentials(userID); err != nil {
+		s.logger.Error("failed to mark garmin credentials valid after MFA", "user_id", userID, "error", err)
+		setFlash(w, "flash.save_credentials_failed")
+		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
+		return
+	}
+
+	s.logger.Info("garmin credentials saved after MFA", "user_id", userID)
 	setFlash(w, "flash.garmin_saved")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }

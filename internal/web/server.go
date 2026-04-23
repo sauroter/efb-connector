@@ -127,6 +127,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /settings/garmin", protect(s.handleGarminSettingsForm))
 	mux.Handle("POST /settings/garmin", protect(s.handleGarminSettingsSave))
 	mux.Handle("POST /settings/garmin/delete", protect(s.handleGarminSettingsDelete))
+	mux.Handle("GET /settings/garmin/mfa", protect(s.handleGarminMFA))
+	mux.Handle("POST /settings/garmin/mfa", protect(s.handleGarminMFASubmit))
 	mux.Handle("GET /settings/efb", protect(s.handleEFBSettingsForm))
 	mux.Handle("POST /settings/efb", protect(s.handleEFBSettingsSave))
 	mux.Handle("POST /settings/efb/delete", protect(s.handleEFBSettingsDelete))

@@ -28,6 +28,8 @@ var De = map[string]string{
 	"landing.feat_enrich_desc":  "Fahrteinträge werden mit Flussabschnitt, Schwierigkeitsgrad und aktuellen Pegelständen von Rivermap angereichert.",
 	"landing.feat_auth_title":   "Passwortlose Anmeldung",
 	"landing.feat_auth_desc":    "Kein Passwort erstellen oder merken. Melde dich mit einem Magic Link an, der an deine E-Mail gesendet wird.",
+	"landing.feat_mfa_title":    "Garmin-MFA-Unterstützung *",
+	"landing.feat_mfa_desc":     "Zwei-Faktor-Authentifizierung bei Garmin aktiviert? Kein Problem — gib deinen Verifizierungscode bei der Einrichtung ein und du bist verbunden.",
 	"landing.feat_encrypt_title": "Verschlüsselte Zugangsdaten",
 	"landing.feat_encrypt_desc":  "Deine Garmin- und EFB-Zugangsdaten werden mit AES-256-GCM verschlüsselt gespeichert. Du kannst sie jederzeit entfernen.",
 	"landing.feat_manual_title":  "Manuelle Synchronisierung & Verlauf",
@@ -44,12 +46,13 @@ var De = map[string]string{
 	"landing.step1_title":        "Anmelden",
 	"landing.step1_desc":         "Gib deine E-Mail ein und klicke auf den Magic Link — kein Passwort nötig.",
 	"landing.step2_title":        "Konten verbinden",
-	"landing.step2_desc":         "Verknüpfe deine Garmin Connect und Kanu-EFB Zugangsdaten. Verschlüsselt gespeichert.",
+	"landing.step2_desc":         "Verknüpfe deine Garmin Connect und Kanu-EFB Zugangsdaten. MFA/2FA unterstützt. Verschlüsselt gespeichert.",
 	"landing.step3_title":        "Einstellungen wählen",
 	"landing.step3_desc":         "Wähle, ob Fahrtenbucheinträge automatisch erstellt und mit Flussdaten angereichert werden sollen.",
 	"landing.step4_title":        "Zurücklehnen",
 	"landing.step4_desc":         "Deine Aktivitäten werden jeden Tag automatisch synchronisiert. Schau jederzeit ins Dashboard.",
 	"landing.cta_footer":         "Keine Kreditkarte. Kein Passwort. Nur deine E-Mail.",
+	"landing.beta_note":          "* Beta — funktioniert mit den meisten Authenticator-Apps. Probleme bitte über Feedback melden.",
 
 	// ── Login ──
 	"login.title":          "Anmelden — EFB Connector",
@@ -150,6 +153,13 @@ var De = map[string]string{
 	"garmin.password_label":  "Passwort",
 	"garmin.submit":          "Testen & Speichern",
 
+	// ── MFA-Verifizierung ──
+	"settings.mfa_heading":     "Verifizierungscode",
+	"settings.mfa_description": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
+	"settings.mfa_placeholder": "000000",
+	"settings.mfa_submit":      "Verifizieren",
+	"settings.mfa_cancel":      "Abbrechen",
+
 	// ── EFB settings ──
 	"efb.title":             "EFB-Einstellungen — EFB Connector",
 	"efb.heading":           "Kanu-EFB",
@@ -203,7 +213,9 @@ var De = map[string]string{
 	"flash.logged_out":              "Du wurdest abgemeldet.",
 	"flash.email_password_required": "E-Mail und Passwort sind erforderlich.",
 	"flash.garmin_invalid":          "Garmin-Zugangsdaten sind ungültig. Bitte überprüfe sie und versuche es erneut.",
-	"flash.garmin_mfa_required":     "Garmin erfordert eine zusätzliche Verifizierung (MFA/CAPTCHA). Melde dich zuerst in deinem Browser bei Garmin Connect an und versuche es dann hier erneut.",
+	"flash.garmin_unavailable":      "Garmin blockiert vorübergehend Verbindungen. Das löst sich normalerweise innerhalb weniger Minuten — bitte versuche es später erneut.",
+	"flash.garmin_mfa_invalid":      "Ungültiger Verifizierungscode. Bitte gib deine Zugangsdaten erneut ein und versuche es noch einmal.",
+	"flash.garmin_mfa_expired":      "Verifizierungssitzung abgelaufen. Bitte gib deine Zugangsdaten erneut ein.",
 	"flash.save_credentials_failed": "Zugangsdaten konnten nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.garmin_saved":            "Garmin-Zugangsdaten erfolgreich gespeichert.",
 	"flash.delete_credentials_failed": "Zugangsdaten konnten nicht gelöscht werden.",

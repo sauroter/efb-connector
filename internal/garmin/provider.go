@@ -16,9 +16,14 @@ var (
 	// credentials.
 	ErrGarminAuth = errors.New("garmin: authentication failed")
 
-	// ErrGarminMFARequired is returned when Garmin requires an MFA or CAPTCHA
+	// ErrGarminMFARequired is returned when Garmin requires an MFA
 	// challenge that cannot be satisfied automatically.
-	ErrGarminMFARequired = errors.New("garmin: MFA or CAPTCHA verification required")
+	ErrGarminMFARequired = errors.New("garmin: MFA verification required")
+
+	// ErrGarminUnavailable is returned when Garmin is temporarily blocking
+	// connections (rate limiting, CAPTCHA, Cloudflare challenges).  The user
+	// cannot do anything about this — it resolves on its own.
+	ErrGarminUnavailable = errors.New("garmin: temporarily unavailable")
 )
 
 // GarminCredentials holds the authentication material and optional token
@@ -90,4 +95,18 @@ type GarminProvider interface {
 	// by Garmin Connect.  It returns ErrGarminAuth when the credentials are
 	// wrong and ErrGarminMFARequired when an interactive challenge is needed.
 	ValidateCredentials(ctx context.Context, creds GarminCredentials) error
+
+	// ValidateWithMFA starts an interactive credential validation that
+	// supports MFA.  It returns "ok" when credentials are accepted without
+	// MFA, or "needs_mfa" when the user must supply an MFA code via
+	// CompleteMFA.
+	ValidateWithMFA(ctx context.Context, userID int64, creds GarminCredentials) (string, error)
+
+	// CompleteMFA sends the MFA code to complete a previously started
+	// interactive validation.  Returns ErrGarminAuth on invalid code.
+	CompleteMFA(userID int64, code string) error
+
+	// HasMFASession reports whether an active MFA session exists for the
+	// given user.
+	HasMFASession(userID int64) bool
 }
