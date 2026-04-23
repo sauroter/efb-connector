@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 log() { echo "$@" >&2; }
+throttle() { sleep 0.25; }  # Resend rate limit: 5 req/s
 
 json_val() {
   python3 -c "import sys,json; print(json.loads(sys.argv[1])[sys.argv[2]])" "$1" "$2"
@@ -66,6 +67,7 @@ if sys.argv[3]:
 print(json.dumps(d))
 " "$key" "$type" "$fallback")
     local resp
+    throttle
     resp=$(curl -sSf -X POST "$API/contact-properties" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -95,6 +97,7 @@ ensure_segment() {
     echo "$existing"
   else
     local resp
+    throttle
     resp=$(curl -sSf -X POST "$API/segments" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -139,6 +142,7 @@ if sys.argv[3]:
     d['variables'] = json.loads(sys.argv[3])
 print(json.dumps(d))
 " "$subject" "$html" "$variables_json")
+    throttle
     curl -sSf -X PATCH "$API/templates/$alias" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -153,6 +157,7 @@ if sys.argv[5]:
     d['variables'] = json.loads(sys.argv[5])
 print(json.dumps(d))
 " "$name" "$alias" "$subject" "$html" "$variables_json")
+    throttle
     curl -sSf -X POST "$API/templates" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -183,6 +188,7 @@ log "=== Publishing Templates ==="
 
 publish_template() {
   local alias="$1"
+  throttle
   curl -sSf -X POST "$API/templates/$alias/publish" \
     -H "$AUTH" > /dev/null
   log "  ok '$alias'"
