@@ -51,6 +51,7 @@ var registeredRoutes = []string{
 	"GET /internal/admin/errors",
 	"GET /internal/admin/feedback",
 	"POST /internal/admin/notify-garmin-upgrade",
+	"POST /internal/admin/sync-resend-contacts",
 	"GET /health",
 }
 

@@ -15,6 +15,23 @@ cp secrets.sh.example secrets.sh
 # ENCRYPTION_KEY, RESEND_API_KEY, INTERNAL_SECRET, BASE_URL
 ```
 
+## Resend Infrastructure
+
+The `resend-setup.sh` script manages Resend segments and email templates as code.
+It is idempotent — creates resources if missing, updates existing ones.
+
+```bash
+# Local: creates segments/templates, prints IDs
+export RESEND_API_KEY="re_..."
+./resend-setup.sh
+
+# CI: also stages Fly secrets automatically (requires FLY_API_TOKEN)
+```
+
+This runs automatically in the CD workflow on every release.
+
+Template HTML files live in `infrastructure/templates/`.
+
 ## Deploy
 
 ```bash
