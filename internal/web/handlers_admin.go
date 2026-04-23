@@ -144,6 +144,10 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Stream NDJSON progress to keep the connection alive through Fly's proxy.
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, _ := w.(http.Flusher)
+
 	var synced, activeCount, setupCount int
 	var errs []string
 
@@ -157,32 +161,48 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		}
 
 		if err := s.resend.CreateContact(u.Email, props); err != nil {
-			errs = append(errs, fmt.Sprintf("user %d (%s): create contact: %v", u.ID, u.Email, err))
+			errMsg := fmt.Sprintf("user %d (%s): create contact: %v", u.ID, u.Email, err)
+			errs = append(errs, errMsg)
+			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+			if flusher != nil {
+				flusher.Flush()
+			}
 			continue
 		}
 
 		isActive := u.GarminConnected && u.GarminValid && u.EFBConnected && u.EFBValid
 		if err := s.resend.SyncUserSegment(u.Email, isActive, s.resendSegActive, s.resendSegSetup); err != nil {
-			errs = append(errs, fmt.Sprintf("user %d (%s): sync segment: %v", u.ID, u.Email, err))
+			errMsg := fmt.Sprintf("user %d (%s): sync segment: %v", u.ID, u.Email, err)
+			errs = append(errs, errMsg)
+			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+			if flusher != nil {
+				flusher.Flush()
+			}
 			continue
 		}
 
 		synced++
+		segment := "needs_setup"
 		if isActive {
 			activeCount++
+			segment = "active"
 		} else {
 			setupCount++
+		}
+		json.NewEncoder(w).Encode(map[string]string{"synced": u.Email, "segment": segment})
+		if flusher != nil {
+			flusher.Flush()
 		}
 	}
 
 	s.logger.Info("admin: resend contacts synced", "synced", synced, "active", activeCount, "needs_setup", setupCount, "errors", len(errs))
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"status":      "done",
 		"synced":      synced,
 		"active":      activeCount,
 		"needs_setup": setupCount,
-		"errors":      errs,
+		"errors":      len(errs),
 	})
 }
 
