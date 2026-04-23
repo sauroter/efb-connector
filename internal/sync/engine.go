@@ -26,8 +26,12 @@ import (
 type SyncEngine struct {
 	db     *database.DB
 	garmin garmin.GarminProvider
-	efb    efb.EFBProvider
 	logger *slog.Logger
+
+	// newEFBSession creates a fresh EFBProvider for each user sync. Each
+	// instance gets its own cookie jar / session, which prevents concurrent
+	// workers from overwriting each other's EFB sessions.
+	newEFBSession func() efb.EFBProvider
 
 	// tokenStoreBase is the base directory for per-user Garmin token stores.
 	tokenStoreBase string
@@ -40,7 +44,10 @@ type SyncEngine struct {
 }
 
 // NewSyncEngine creates a SyncEngine with the given dependencies.
-func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec efb.EFBProvider, logger *slog.Logger) *SyncEngine {
+// newEFBSession is called once per user sync to obtain a fresh EFBProvider
+// with its own session state, avoiding cookie-jar collisions between
+// concurrent workers.
+func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func() efb.EFBProvider, logger *slog.Logger) *SyncEngine {
 	var tokenBase string
 	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
 		tokenBase = "/data/garmin_tokens"
@@ -51,7 +58,7 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, ec efb.EFBProvider
 	return &SyncEngine{
 		db:             db,
 		garmin:         gp,
-		efb:            ec,
+		newEFBSession:  newEFBSession,
 		logger:         logger,
 		tokenStoreBase: tokenBase,
 		sleepFunc: func(min, max time.Duration) {
@@ -321,8 +328,12 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		return found, 0, skipped, 0, 0, fmt.Errorf("sync: get efb credentials: %w", err)
 	}
 
+	// Create a fresh EFB session for this user to avoid cookie-jar
+	// collisions when multiple workers sync concurrently.
+	efbClient := s.newEFBSession()
+
 	// 7c. Login to EFB (once per sync run).
-	if err := s.efb.Login(ctx, efbUser, efbPass); err != nil {
+	if err := efbClient.Login(ctx, efbUser, efbPass); err != nil {
 		log.Warn("efb login failed, invalidating credentials", "error", err)
 		if invErr := s.db.InvalidateEFBCredentials(userID, err.Error()); invErr != nil {
 			log.Error("failed to invalidate efb credentials", "error", invErr)
@@ -361,7 +372,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 		// 7d. Upload GPX to EFB.
 		filename := fmt.Sprintf("garmin_%s.gpx", act.garminID)
-		uploadErr := s.efb.Upload(ctx, gpxData, filename)
+		uploadErr := efbClient.Upload(ctx, gpxData, filename)
 		if uploadErr != nil {
 			log.Error("failed to upload GPX to EFB",
 				"error", uploadErr,
@@ -411,7 +422,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		// 7e: Create trip from the uploaded track (if enabled).
 		// Trip creation failure is non-fatal — log and continue.
 		if autoCreateTrips && !act.startTime.IsZero() {
-			trackID, findErr := s.efb.FindUnassociatedTrack(ctx, filename)
+			trackID, findErr := efbClient.FindUnassociatedTrack(ctx, filename)
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
 			} else if trackID == "" {
@@ -422,7 +433,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				if enrichTrips && s.rivermap != nil {
 					enrichment = s.buildEnrichment(ctx, act, log)
 				}
-				if tripErr := s.efb.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment); tripErr != nil {
+				if tripErr := efbClient.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment); tripErr != nil {
 					log.Warn("failed to create trip from track", "error", tripErr)
 				} else {
 					log.Info("trip created from track", "track_id", trackID)

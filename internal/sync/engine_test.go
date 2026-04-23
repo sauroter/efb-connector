@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	stdsync "sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,7 +276,7 @@ func makeActivities(n int) []garmin.Activity {
 
 // newEngine creates a SyncEngine with noSleep for testing.
 func newEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient) *SyncEngine {
-	e := NewSyncEngine(db, gp, ec, discardLogger())
+	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ec }, discardLogger())
 	e.sleepFunc = noSleep
 	return e
 }
@@ -695,6 +696,130 @@ func TestSyncAllUsers_ContextCancelled(t *testing.T) {
 	}
 }
 
+// TestSyncAllUsersProgress_ConcurrentSessionIsolation is a regression test for
+// a bug where a single shared EFBClient (with one cookie jar) was used by all
+// concurrent sync workers. When Worker A logged in as UserA and Worker B logged
+// in as UserB, the second Login overwrote the shared cookie jar, causing
+// Worker A's uploads to use UserB's session (and vice versa). The fix creates a
+// fresh EFBClient per user sync via the newEFBSession factory.
+func TestSyncAllUsersProgress_ConcurrentSessionIsolation(t *testing.T) {
+	// EFB server that stores the username in the session cookie and tracks
+	// which session performed each upload.
+	var mu stdsync.Mutex
+	uploadsByUser := map[string]int{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			_ = r.ParseForm()
+			username := r.FormValue("username")
+			http.SetCookie(w, &http.Cookie{Name: "efb_session", Value: username})
+			http.Redirect(w, r, "/", http.StatusFound)
+
+		case r.URL.Path == "/interpretation/usersmap" && r.Method == http.MethodPost:
+			cookie, err := r.Cookie("efb_session")
+			if err != nil || cookie.Value == "" {
+				// No session → return login page.
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`<html><title>eFB</title>Benutzername hier eingeben</html>`))
+				return
+			}
+			mu.Lock()
+			uploadsByUser[cookie.Value]++
+			mu.Unlock()
+			_ = r.ParseMultipartForm(10 << 20)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Datenbank gespeichert"))
+
+		case r.URL.Path == "/interpretation/usersmap" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>home</html>"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	db := openTestDB(t)
+
+	// Two users with DIFFERENT EFB credentials so we can distinguish sessions.
+	u1, err := db.CreateUser("user1-iso@example.com")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := db.SaveGarminCredentials(u1.ID, "g1@example.com", "gp1"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := db.SaveEFBCredentials(u1.ID, "efbuser1", "ep1"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+
+	u2, err := db.CreateUser("user2-iso@example.com")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := db.SaveGarminCredentials(u2.ID, "g2@example.com", "gp2"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := db.SaveEFBCredentials(u2.ID, "efbuser2", "ep2"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+
+	// Factory creates a fresh EFBClient per user sync — the fix under test.
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger())
+	engine.sleepFunc = noSleep
+
+	// Run with 2 concurrent workers (the configuration that triggered the bug).
+	err = engine.SyncAllUsersProgress(context.Background(), 2, nil)
+	if err != nil {
+		t.Fatalf("SyncAllUsersProgress: %v", err)
+	}
+
+	// Both users must complete successfully.
+	for _, uid := range []int64{u1.ID, u2.ID} {
+		history, err := db.GetSyncHistory(uid, 1)
+		if err != nil {
+			t.Fatalf("GetSyncHistory(%d): %v", uid, err)
+		}
+		if len(history) != 1 {
+			t.Errorf("user %d: expected 1 sync run, got %d", uid, len(history))
+			continue
+		}
+		if history[0].Status != "completed" {
+			t.Errorf("user %d: status = %q, want completed", uid, history[0].Status)
+		}
+		if history[0].ActivitiesSynced != 2 {
+			t.Errorf("user %d: synced = %d, want 2", uid, history[0].ActivitiesSynced)
+		}
+	}
+
+	// Verify each user's uploads used their OWN session, not someone else's.
+	// With the old shared-client bug, one user's uploads would appear under
+	// the other user's session cookie.
+	mu.Lock()
+	defer mu.Unlock()
+	if uploadsByUser["efbuser1"] != 2 {
+		t.Errorf("efbuser1: expected 2 uploads via own session, got %d", uploadsByUser["efbuser1"])
+	}
+	if uploadsByUser["efbuser2"] != 2 {
+		t.Errorf("efbuser2: expected 2 uploads via own session, got %d", uploadsByUser["efbuser2"])
+	}
+	// No uploads should have gone through an unknown or swapped session.
+	total := 0
+	for _, count := range uploadsByUser {
+		total += count
+	}
+	if total != 4 {
+		t.Errorf("total uploads = %d, want 4 (2 per user)", total)
+	}
+}
+
 func TestSyncUser_UserNotFound(t *testing.T) {
 	db := openTestDB(t)
 	srv := newMockEFBServer(t)
@@ -858,8 +983,10 @@ func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string,
 }
 
 // newEngineWithProvider creates a SyncEngine with a custom EFB provider and noSleep.
+// The provider is wrapped in a factory that returns the same instance, which is
+// safe because tests run single-worker (sequential).
 func newEngineWithProvider(db *database.DB, gp garmin.GarminProvider, ep efb.EFBProvider) *SyncEngine {
-	e := NewSyncEngine(db, gp, ep, discardLogger())
+	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, discardLogger())
 	e.sleepFunc = noSleep
 	return e
 }

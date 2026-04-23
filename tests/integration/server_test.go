@@ -47,7 +47,7 @@ func newTestServer(t *testing.T) *testServer {
 	rateLimiter := auth.NewRateLimiter()
 	gp := garmin.NewMockGarminProvider()
 	ep := efb.NewMockEFBProvider(logger)
-	syncEngine := syncsvc.NewSyncEngine(db, gp, ep, logger)
+	syncEngine := syncsvc.NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, logger)
 	syncEngine.DisableSleep()
 
 	s, err := web.NewServer(web.ServerDeps{

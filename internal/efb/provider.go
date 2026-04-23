@@ -7,7 +7,9 @@ import (
 )
 
 // EFBProvider is the interface that wraps access to the Kanu-EFB portal.
-// Implementations must be safe for concurrent use by multiple goroutines.
+// Implementations are NOT safe for concurrent use across different user
+// sessions — callers must create a separate instance per user (see
+// SyncEngine.newEFBSession).
 type EFBProvider interface {
 	// Login authenticates with the EFB portal. On success the session is
 	// retained for subsequent Upload calls.

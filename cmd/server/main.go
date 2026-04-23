@@ -109,13 +109,16 @@ func run(logger *slog.Logger) error {
 
 	var garminProvider garmin.GarminProvider
 	var efbProvider efb.EFBProvider
+	var newEFBSession func() efb.EFBProvider
 
 	if devMode {
 		garminProvider = garmin.NewMockGarminProvider()
 		efbProvider = efb.NewMockEFBProvider(logger)
+		newEFBSession = func() efb.EFBProvider { return efb.NewMockEFBProvider(logger) }
 	} else {
 		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py", encryptionKey)
 		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
+		newEFBSession = func() efb.EFBProvider { return efb.NewEFBClient(efb.DefaultBaseURL) }
 	}
 
 	// Optional: Rivermap enrichment
@@ -135,7 +138,7 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, efbProvider, logger)
+	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, newEFBSession, logger)
 	if rivermapClient != nil {
 		syncEngine.SetRivermapClient(rivermapClient)
 	}
