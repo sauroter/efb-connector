@@ -82,6 +82,7 @@ ensure_template() {
   local name="$2"
   local subject="$3"
   local html_file="$4"
+  local variables_json="$5"  # JSON array of variable declarations
 
   local html
   html=$(cat "$html_file")
@@ -94,8 +95,11 @@ ensure_template() {
     local payload
     payload=$(python3 -c "
 import json, sys
-print(json.dumps({'subject': sys.argv[1], 'html': sys.argv[2]}))
-" "$subject" "$html")
+d = {'subject': sys.argv[1], 'html': sys.argv[2]}
+if sys.argv[3]:
+    d['variables'] = json.loads(sys.argv[3])
+print(json.dumps(d))
+" "$subject" "$html" "$variables_json")
     curl -sSf -X PATCH "$API/templates/$alias" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -105,8 +109,11 @@ print(json.dumps({'subject': sys.argv[1], 'html': sys.argv[2]}))
     local payload
     payload=$(python3 -c "
 import json, sys
-print(json.dumps({'name': sys.argv[1], 'alias': sys.argv[2], 'subject': sys.argv[3], 'html': sys.argv[4]}))
-" "$name" "$alias" "$subject" "$html")
+d = {'name': sys.argv[1], 'alias': sys.argv[2], 'subject': sys.argv[3], 'html': sys.argv[4]}
+if sys.argv[5]:
+    d['variables'] = json.loads(sys.argv[5])
+print(json.dumps(d))
+" "$name" "$alias" "$subject" "$html" "$variables_json")
     curl -sSf -X POST "$API/templates" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
@@ -114,17 +121,21 @@ print(json.dumps({'name': sys.argv[1], 'alias': sys.argv[2], 'subject': sys.argv
   fi
 }
 
+SETTINGS_URL_VAR='[{"key":"SETTINGS_URL","type":"string","fallback_value":"https://efb-connector.sauroter.de/settings/garmin"}]'
+
 ensure_template \
   "garmin-upgrade-de" \
   "Garmin Upgrade (DE)" \
   "EFB Connector: Garmin-Integration aktualisiert" \
-  "$SCRIPT_DIR/templates/garmin-upgrade-de.html"
+  "$SCRIPT_DIR/templates/garmin-upgrade-de.html" \
+  "$SETTINGS_URL_VAR"
 
 ensure_template \
   "garmin-upgrade-en" \
   "Garmin Upgrade (EN)" \
   "EFB Connector: Garmin Integration Updated" \
-  "$SCRIPT_DIR/templates/garmin-upgrade-en.html"
+  "$SCRIPT_DIR/templates/garmin-upgrade-en.html" \
+  "$SETTINGS_URL_VAR"
 
 # ── Publish Templates ────────────────────────────────────────────────────────
 
