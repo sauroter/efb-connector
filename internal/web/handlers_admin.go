@@ -146,7 +146,11 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 
 	// Stream NDJSON progress to keep the connection alive through Fly's proxy.
 	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
 
 	var synced, activeCount, setupCount int
 	var errs []string
