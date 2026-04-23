@@ -233,6 +233,22 @@ components:
           nullable: true
       required: [sent]
 
+    ResendSyncResponse:
+      type: object
+      properties:
+        synced:
+          type: integer
+        active:
+          type: integer
+        needs_setup:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+          nullable: true
+      required: [synced, active, needs_setup]
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -1039,6 +1055,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotifyResponse"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /internal/admin/sync-resend-contacts:
+    post:
+      tags: [Internal]
+      summary: Sync users to Resend contacts
+      description: |
+        Creates or updates all users as Resend contacts and assigns them
+        to "Active Syncers" or "Needs Setup" segments based on their
+        current credential state. Idempotent — safe to call repeatedly.
+        Requires RESEND_SEGMENT_ACTIVE and RESEND_SEGMENT_NEEDS_SETUP
+        environment variables.
+      operationId: postAdminSyncResendContacts
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Sync results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResendSyncResponse"
+        "400":
+          description: Segment IDs not configured
         "401":
           description: Unauthorized
         "500":

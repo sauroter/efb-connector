@@ -115,6 +115,68 @@ func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(runs)
 }
 
+// handleAdminSyncResendContacts creates/updates all users as Resend contacts
+// and assigns them to the appropriate segment ("Active Syncers" or "Needs
+// Setup") based on their current credential state.
+func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	if s.resend == nil {
+		http.Error(w, "Resend client not configured", http.StatusBadRequest)
+		return
+	}
+	if s.resendSegActive == "" || s.resendSegSetup == "" {
+		http.Error(w, "RESEND_SEGMENT_ACTIVE and RESEND_SEGMENT_NEEDS_SETUP must be set", http.StatusBadRequest)
+		return
+	}
+
+	users, err := s.db.GetAllUsersWithStatus()
+	if err != nil {
+		s.logger.Error("admin: get users for resend sync", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	var synced, activeCount, setupCount int
+	var errs []string
+
+	for _, u := range users {
+		props := map[string]string{
+			"preferred_lang": u.PreferredLang,
+		}
+
+		if err := s.resend.CreateContact(u.Email, props); err != nil {
+			errs = append(errs, fmt.Sprintf("user %d (%s): create contact: %v", u.ID, u.Email, err))
+			continue
+		}
+
+		isActive := u.GarminConnected && u.GarminValid && u.EFBConnected && u.EFBValid
+		if err := s.resend.SyncUserSegment(u.Email, isActive, s.resendSegActive, s.resendSegSetup); err != nil {
+			errs = append(errs, fmt.Sprintf("user %d (%s): sync segment: %v", u.ID, u.Email, err))
+			continue
+		}
+
+		synced++
+		if isActive {
+			activeCount++
+		} else {
+			setupCount++
+		}
+	}
+
+	s.logger.Info("admin: resend contacts synced", "synced", synced, "active", activeCount, "needs_setup", setupCount, "errors", len(errs))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"synced":      synced,
+		"active":      activeCount,
+		"needs_setup": setupCount,
+		"errors":      errs,
+	})
+}
+
 // handleAdminNotifyGarminUpgrade sends a notification email to all users with
 // Garmin credentials about the garminconnect library upgrade.
 func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.Request) {

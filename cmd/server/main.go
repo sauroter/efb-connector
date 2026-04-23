@@ -26,6 +26,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/resend"
 	"efb-connector/internal/rivermap"
 	syncsvc "efb-connector/internal/sync"
 	"efb-connector/internal/web"
@@ -104,7 +105,13 @@ func run(logger *slog.Logger) error {
 	}
 	defer db.Close()
 
+	resendClient := resend.NewClient(resendAPIKey, logger)
+	resendSegActive := envOr("RESEND_SEGMENT_ACTIVE", "")
+	resendSegSetup := envOr("RESEND_SEGMENT_NEEDS_SETUP", "")
+
 	authService := auth.NewAuthService(db, resendAPIKey, baseURL, emailFrom, encryptionKey)
+	authService.Resend = resendClient
+	authService.ResendSegSetup = resendSegSetup
 	rateLimiter := auth.NewRateLimiter()
 
 	var garminProvider garmin.GarminProvider
@@ -149,18 +156,21 @@ func run(logger *slog.Logger) error {
 	// ── Create server ──
 
 	srv, err := web.NewServer(web.ServerDeps{
-		DB:             db,
-		Auth:           authService,
-		SyncEngine:     syncEngine,
-		Garmin:         garminProvider,
-		EFB:            efbProvider,
-		RateLimiter:    rateLimiter,
-		InternalSecret: internalSecret,
-		BaseURL:        baseURL,
-		FeedbackEmail:  feedbackEmail,
-		Logger:         logger,
-		TemplatesDir:   "templates",
-		Version:        version,
+		DB:              db,
+		Auth:            authService,
+		SyncEngine:      syncEngine,
+		Garmin:          garminProvider,
+		EFB:             efbProvider,
+		RateLimiter:     rateLimiter,
+		InternalSecret:  internalSecret,
+		BaseURL:         baseURL,
+		FeedbackEmail:   feedbackEmail,
+		Logger:          logger,
+		TemplatesDir:    "templates",
+		Version:         version,
+		Resend:          resendClient,
+		ResendSegActive: resendSegActive,
+		ResendSegSetup:  resendSegSetup,
 	})
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)

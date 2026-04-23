@@ -8,9 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"efb-connector/internal/database"
+	"efb-connector/internal/resend"
 )
 
 // AuthService is the central authentication service. It bridges the database
@@ -21,6 +23,10 @@ type AuthService struct {
 	baseURL       string
 	emailFrom     string
 	encryptionKey []byte // used to derive CSRF secret via HKDF
+
+	// Resend contacts integration (nil = disabled).
+	Resend         *resend.Client
+	ResendSegSetup string // segment ID for "Needs Setup" users
 }
 
 // NewAuthService creates a new AuthService.
@@ -86,6 +92,20 @@ func (s *AuthService) ValidateMagicLink(token string) (userID int64, err error) 
 		user, err = s.db.CreateUser(email)
 		if err != nil {
 			return 0, fmt.Errorf("auth: auto-create user: %w", err)
+		}
+
+		// Best-effort: add new user to Resend as a "Needs Setup" contact.
+		if s.Resend != nil && s.ResendSegSetup != "" {
+			segID := s.ResendSegSetup
+			go func() {
+				if err := s.Resend.CreateContact(email, nil); err != nil {
+					slog.Warn("resend: create contact failed", "email", email, "error", err)
+					return
+				}
+				if err := s.Resend.AddToSegment(email, segID); err != nil {
+					slog.Warn("resend: add to needs-setup segment failed", "email", email, "error", err)
+				}
+			}()
 		}
 	}
 

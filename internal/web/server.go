@@ -17,6 +17,7 @@ import (
 	"efb-connector/internal/garmin"
 	"efb-connector/internal/i18n"
 	"efb-connector/internal/metrics"
+	"efb-connector/internal/resend"
 	"efb-connector/internal/sync"
 )
 
@@ -34,6 +35,11 @@ type Server struct {
 	logger         *slog.Logger
 	templates      *template.Template
 	version        string
+
+	// Resend contacts integration.
+	resend          *resend.Client
+	resendSegActive string // segment ID for "Active Syncers"
+	resendSegSetup  string // segment ID for "Needs Setup"
 }
 
 // ServerDeps bundles the dependencies required to construct a Server.
@@ -50,6 +56,11 @@ type ServerDeps struct {
 	Logger         *slog.Logger
 	TemplatesDir   string // path to the templates/ directory
 	Version        string // build version (set via ldflags)
+
+	// Resend contacts integration (all optional).
+	Resend          *resend.Client
+	ResendSegActive string // env: RESEND_SEGMENT_ACTIVE
+	ResendSegSetup  string // env: RESEND_SEGMENT_NEEDS_SETUP
 }
 
 // NewServer creates a Server with the given dependencies and parses all
@@ -63,18 +74,21 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	metrics.RegisterDBGauges(deps.DB)
 
 	return &Server{
-		db:             deps.DB,
-		auth:           deps.Auth,
-		syncEngine:     deps.SyncEngine,
-		garmin:         deps.Garmin,
-		efb:            deps.EFB,
-		rateLimiter:    deps.RateLimiter,
-		internalSecret: deps.InternalSecret,
-		configBaseURL:  deps.BaseURL,
-		feedbackEmail:  deps.FeedbackEmail,
-		logger:         deps.Logger,
-		templates:      tmpl,
-		version:        deps.Version,
+		db:              deps.DB,
+		auth:            deps.Auth,
+		syncEngine:      deps.SyncEngine,
+		garmin:          deps.Garmin,
+		efb:             deps.EFB,
+		rateLimiter:     deps.RateLimiter,
+		internalSecret:  deps.InternalSecret,
+		configBaseURL:   deps.BaseURL,
+		feedbackEmail:   deps.FeedbackEmail,
+		logger:          deps.Logger,
+		templates:       tmpl,
+		version:         deps.Version,
+		resend:          deps.Resend,
+		resendSegActive: deps.ResendSegActive,
+		resendSegSetup:  deps.ResendSegSetup,
 	}, nil
 }
 
@@ -151,6 +165,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("GET /internal/admin/feedback", s.handleAdminFeedback)
 	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
+	mux.HandleFunc("POST /internal/admin/sync-resend-contacts", s.handleAdminSyncResendContacts)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Wrap the entire mux in middleware: i18n → security → logging → recovery.

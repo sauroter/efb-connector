@@ -439,6 +439,22 @@ func (s *Server) handleSetupConfigure(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to update setup_completed", "user_id", userID, "error", err)
 	}
 
+	// Best-effort: move user from "Needs Setup" to "Active Syncers" in Resend.
+	if s.resend != nil && s.resendSegActive != "" {
+		user, _ := s.db.GetUserByID(userID)
+		if user != nil {
+			segActive := s.resendSegActive
+			segSetup := s.resendSegSetup
+			email := user.Email
+			logger := s.logger
+			go func() {
+				if err := s.resend.SyncUserSegment(email, true, segActive, segSetup); err != nil {
+					logger.Warn("resend: sync segment failed on setup completion", "email", email, "error", err)
+				}
+			}()
+		}
+	}
+
 	s.logger.Info("setup preferences configured", "user_id", userID, "auto_create_trips", autoCreateTrips, "enrich_trips", enrichTrips)
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
@@ -517,12 +533,28 @@ func (s *Server) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 		_ = s.auth.DestroySession(cookie.Value)
 	}
 
+	// Capture email before deletion for Resend cleanup.
+	var userEmail string
+	if user, _ := s.db.GetUserByID(userID); user != nil {
+		userEmail = user.Email
+	}
+
 	// Delete user and all cascaded data.
 	if err := s.db.DeleteUser(userID); err != nil {
 		s.logger.Error("failed to delete user", "user_id", userID, "error", err)
 		setFlash(w, "flash.delete_account_failed")
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
+	}
+
+	// Best-effort: remove contact from Resend.
+	if s.resend != nil && userEmail != "" {
+		logger := s.logger
+		go func() {
+			if err := s.resend.DeleteContact(userEmail); err != nil {
+				logger.Warn("resend: delete contact failed", "email", userEmail, "error", err)
+			}
+		}()
 	}
 
 	// Remove cached Garmin token files from disk.
