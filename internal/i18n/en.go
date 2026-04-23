@@ -28,6 +28,8 @@ var En = map[string]string{
 	"landing.feat_enrich_desc":  "Trip entries are enriched with river section name, difficulty grade, and current gauge readings from Rivermap.",
 	"landing.feat_auth_title":   "Passwordless sign-in",
 	"landing.feat_auth_desc":    "No password to create or remember. Sign in with a magic link sent to your email address.",
+	"landing.feat_mfa_title":    "Garmin MFA support *",
+	"landing.feat_mfa_desc":     "Have two-factor authentication enabled on Garmin? No problem — enter your verification code during setup and you're connected.",
 	"landing.feat_encrypt_title": "Encrypted credentials",
 	"landing.feat_encrypt_desc":  "Your Garmin and EFB credentials are encrypted at rest using AES-256-GCM. You can remove them at any time.",
 	"landing.feat_manual_title":  "Manual sync & history",
@@ -44,12 +46,13 @@ var En = map[string]string{
 	"landing.step1_title":        "Sign in",
 	"landing.step1_desc":         "Enter your email and click the magic link — no password needed.",
 	"landing.step2_title":        "Connect accounts",
-	"landing.step2_desc":         "Link your Garmin Connect and Kanu-EFB credentials. Stored encrypted.",
+	"landing.step2_desc":         "Link your Garmin Connect and Kanu-EFB credentials. MFA/2FA supported. Stored encrypted.",
 	"landing.step3_title":        "Set preferences",
 	"landing.step3_desc":         "Choose whether to auto-create trip entries and enrich them with river data.",
 	"landing.step4_title":        "Relax",
 	"landing.step4_desc":         "Your activities sync automatically every day. Check the dashboard anytime.",
 	"landing.cta_footer":         "No credit card. No password. Just your email.",
+	"landing.beta_note":          "* Beta — works with most authenticator apps. Please report issues via feedback.",
 
 	// ── Login ──
 	"login.title":          "Sign in — EFB Connector",

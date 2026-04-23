@@ -28,6 +28,8 @@ var De = map[string]string{
 	"landing.feat_enrich_desc":  "Fahrteinträge werden mit Flussabschnitt, Schwierigkeitsgrad und aktuellen Pegelständen von Rivermap angereichert.",
 	"landing.feat_auth_title":   "Passwortlose Anmeldung",
 	"landing.feat_auth_desc":    "Kein Passwort erstellen oder merken. Melde dich mit einem Magic Link an, der an deine E-Mail gesendet wird.",
+	"landing.feat_mfa_title":    "Garmin-MFA-Unterstützung *",
+	"landing.feat_mfa_desc":     "Zwei-Faktor-Authentifizierung bei Garmin aktiviert? Kein Problem — gib deinen Verifizierungscode bei der Einrichtung ein und du bist verbunden.",
 	"landing.feat_encrypt_title": "Verschlüsselte Zugangsdaten",
 	"landing.feat_encrypt_desc":  "Deine Garmin- und EFB-Zugangsdaten werden mit AES-256-GCM verschlüsselt gespeichert. Du kannst sie jederzeit entfernen.",
 	"landing.feat_manual_title":  "Manuelle Synchronisierung & Verlauf",
@@ -44,12 +46,13 @@ var De = map[string]string{
 	"landing.step1_title":        "Anmelden",
 	"landing.step1_desc":         "Gib deine E-Mail ein und klicke auf den Magic Link — kein Passwort nötig.",
 	"landing.step2_title":        "Konten verbinden",
-	"landing.step2_desc":         "Verknüpfe deine Garmin Connect und Kanu-EFB Zugangsdaten. Verschlüsselt gespeichert.",
+	"landing.step2_desc":         "Verknüpfe deine Garmin Connect und Kanu-EFB Zugangsdaten. MFA/2FA unterstützt. Verschlüsselt gespeichert.",
 	"landing.step3_title":        "Einstellungen wählen",
 	"landing.step3_desc":         "Wähle, ob Fahrtenbucheinträge automatisch erstellt und mit Flussdaten angereichert werden sollen.",
 	"landing.step4_title":        "Zurücklehnen",
 	"landing.step4_desc":         "Deine Aktivitäten werden jeden Tag automatisch synchronisiert. Schau jederzeit ins Dashboard.",
 	"landing.cta_footer":         "Keine Kreditkarte. Kein Passwort. Nur deine E-Mail.",
+	"landing.beta_note":          "* Beta — funktioniert mit den meisten Authenticator-Apps. Probleme bitte über Feedback melden.",
 
 	// ── Login ──
 	"login.title":          "Anmelden — EFB Connector",

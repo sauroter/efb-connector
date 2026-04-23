@@ -11,6 +11,7 @@ A multi-tenant web service that automatically syncs water sport activities from 
 - **River data enrichment** — trip entries enriched with river section name, difficulty grade, and gauge readings via [Rivermap](https://rivermap.ch)
 - **Manual sync & history** — trigger syncs on demand, sync custom date ranges, and review a full sync log with detailed status
 - **Passwordless authentication** — sign in with a magic link sent to your email
+- **Garmin MFA support** *(beta)* — two-factor authentication on Garmin? Enter your verification code during setup
 - **Encrypted credential storage** — Garmin and EFB credentials encrypted at rest with AES-256-GCM
 - **Guided onboarding** — 4-step setup wizard walks new users through connecting accounts and configuring preferences
 - **Self-service management** — connect/disconnect accounts, manage preferences, view history, delete your data
