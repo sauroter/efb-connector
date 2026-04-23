@@ -44,7 +44,7 @@ print(matches[0] if matches else '')
 
 log "=== Segments ==="
 
-SEGMENTS_LIST=$(curl -sf -H "$AUTH" "$API/segments")
+SEGMENTS_LIST=$(curl -sSf -H "$AUTH" "$API/segments")
 
 ensure_segment() {
   local name="$1"
@@ -56,7 +56,7 @@ ensure_segment() {
     echo "$existing"
   else
     local resp
-    resp=$(curl -sf -X POST "$API/segments" \
+    resp=$(curl -sSf -X POST "$API/segments" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
       -d "{\"name\": \"$name\"}")
@@ -75,7 +75,7 @@ SETUP_ID=$(ensure_segment "Needs Setup")
 log ""
 log "=== Templates ==="
 
-TEMPLATES_LIST=$(curl -sf -H "$AUTH" "$API/templates")
+TEMPLATES_LIST=$(curl -sSf -H "$AUTH" "$API/templates")
 
 ensure_template() {
   local alias="$1"
@@ -96,7 +96,7 @@ ensure_template() {
 import json, sys
 print(json.dumps({'subject': sys.argv[1], 'html': sys.argv[2]}))
 " "$subject" "$html")
-    curl -sf -X PATCH "$API/templates/$alias" \
+    curl -sSf -X PATCH "$API/templates/$alias" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
       -d "$payload" > /dev/null
@@ -107,7 +107,7 @@ print(json.dumps({'subject': sys.argv[1], 'html': sys.argv[2]}))
 import json, sys
 print(json.dumps({'name': sys.argv[1], 'alias': sys.argv[2], 'subject': sys.argv[3], 'html': sys.argv[4]}))
 " "$name" "$alias" "$subject" "$html")
-    curl -sf -X POST "$API/templates" \
+    curl -sSf -X POST "$API/templates" \
       -H "$AUTH" \
       -H "Content-Type: application/json" \
       -d "$payload" > /dev/null
@@ -133,7 +133,7 @@ log "=== Publishing Templates ==="
 
 publish_template() {
   local alias="$1"
-  curl -sf -X POST "$API/templates/$alias/publish" \
+  curl -sSf -X POST "$API/templates/$alias/publish" \
     -H "$AUTH" > /dev/null
   log "  ok '$alias'"
 }
