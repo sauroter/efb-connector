@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // handleAdminStatus returns system-wide statistics.
@@ -142,7 +143,11 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 	var synced, activeCount, setupCount int
 	var errs []string
 
-	for _, u := range users {
+	for i, u := range users {
+		if i > 0 {
+			time.Sleep(250 * time.Millisecond) // Resend rate limit: 5 req/s
+		}
+
 		props := map[string]string{
 			"preferred_lang": u.PreferredLang,
 		}

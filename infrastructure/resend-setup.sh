@@ -40,8 +40,47 @@ print(matches[0] if matches else '')
 " "$1" "$2" "$3"
 }
 
+# ── Contact Properties ────────────────────────────────────────────────────────
+
+log "=== Contact Properties ==="
+
+PROPS_LIST=$(curl -sSf -H "$AUTH" "$API/contact-properties")
+
+ensure_property() {
+  local key="$1"
+  local type="$2"
+  local fallback="$3"
+
+  local existing
+  existing=$(json_find "$PROPS_LIST" key "$key")
+
+  if [ -n "$existing" ]; then
+    log "  ok '$key': $existing"
+  else
+    local payload
+    payload=$(python3 -c "
+import json, sys
+d = {'key': sys.argv[1], 'type': sys.argv[2]}
+if sys.argv[3]:
+    d['fallback_value'] = sys.argv[3]
+print(json.dumps(d))
+" "$key" "$type" "$fallback")
+    local resp
+    resp=$(curl -sSf -X POST "$API/contact-properties" \
+      -H "$AUTH" \
+      -H "Content-Type: application/json" \
+      -d "$payload")
+    local id
+    id=$(json_val "$resp" id)
+    log "  ++ '$key': $id"
+  fi
+}
+
+ensure_property "preferred_lang" "string" ""
+
 # ── Segments ─────────────────────────────────────────────────────────────────
 
+log ""
 log "=== Segments ==="
 
 SEGMENTS_LIST=$(curl -sSf -H "$AUTH" "$API/segments")
