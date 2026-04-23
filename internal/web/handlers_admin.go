@@ -133,6 +133,10 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Extend the write deadline — bulk sync with rate limiting can take minutes.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+
 	users, err := s.db.GetAllUsersWithStatus()
 	if err != nil {
 		s.logger.Error("admin: get users for resend sync", "error", err)
