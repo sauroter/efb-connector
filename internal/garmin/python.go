@@ -249,15 +249,18 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	useEncryption := creds.TokenStorePath != "" && p.encryptionKey != nil
 
 	var tmpTokenDir string
+	cleanupTmpDir := true // deferred cleanup; set false when MFA session takes ownership
 	if useEncryption {
 		var err error
 		tmpTokenDir, err = os.MkdirTemp("", "garmin-tokens-*")
 		if err != nil {
 			return "", fmt.Errorf("garmin: create temp token dir: %w", err)
 		}
-		// NOTE: tmpTokenDir cleanup is deferred only on non-MFA paths.
-		// When MFA is needed, the session holds a reference and cleanup
-		// happens in cancelMFASession / CompleteMFA.
+		defer func() {
+			if cleanupTmpDir && tmpTokenDir != "" {
+				os.RemoveAll(tmpTokenDir)
+			}
+		}()
 
 		decryptTokenStore(p.encryptionKey, creds.TokenStorePath, tmpTokenDir)
 		cleanupLegacyTokens(creds.TokenStorePath)
@@ -271,17 +274,11 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
 		return "", fmt.Errorf("garmin: create stdin pipe: %w", err)
 	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
 		return "", fmt.Errorf("garmin: create stdout pipe: %w", err)
 	}
 
@@ -300,10 +297,13 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	}
 
 	if err := cmd.Start(); err != nil {
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
 		return "", fmt.Errorf("garmin: start validate-mfa subprocess: %w", err)
+	}
+
+	// killAndWait is a helper for error paths after the subprocess has started.
+	killAndWait := func() {
+		cmd.Process.Kill()
+		cmd.Wait()
 	}
 
 	// Write credentials JSON to stdin (do NOT close stdin yet).
@@ -313,41 +313,24 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 		TokenStore: tokenStoreForSubprocess,
 	})
 	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
+		killAndWait()
 		return "", fmt.Errorf("garmin: marshal credentials: %w", err)
 	}
 
 	if _, err := stdinPipe.Write(append(credsJSON, '\n')); err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
+		killAndWait()
 		return "", fmt.Errorf("garmin: write credentials to stdin: %w", err)
 	}
 
 	// Read the first response line from stdout.
 	if !session.stdout.Scan() {
-		// Process exited or pipe closed without output.
 		cmd.Wait()
-		stderr := session.stderr.String()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
-		return "", classifyError(fmt.Errorf("garmin: no output from validate-mfa"), stderr)
+		return "", classifyError(fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
 	}
 
 	var resp mfaStatusResponse
 	if err := json.Unmarshal(session.stdout.Bytes(), &resp); err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
+		killAndWait()
 		return "", fmt.Errorf("garmin: parse validate-mfa response: %w", err)
 	}
 
@@ -356,40 +339,31 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 		// Credentials valid, no MFA. Wait for process to exit.
 		cmd.Wait()
 
-		// Re-encrypt tokens if needed.
+		// Re-encrypt tokens if needed (tmpTokenDir cleaned up by defer).
 		if useEncryption {
 			encryptTokenStore(p.encryptionKey, tmpTokenDir, creds.TokenStorePath)
-			os.RemoveAll(tmpTokenDir)
 		}
 		return "ok", nil
 
 	case "needs_mfa":
-		// Store encryption metadata on session for CompleteMFA.
+		// MFA session takes ownership of tmpTokenDir — prevent deferred cleanup.
+		cleanupTmpDir = false
 		if useEncryption {
 			session.tmpTokenDir = tmpTokenDir
 			session.realTokenDir = creds.TokenStorePath
 			session.encryptionKey = p.encryptionKey
 		}
-		// Store session for CompleteMFA. Keep subprocess alive.
 		p.mfaSessionsMu.Lock()
 		p.mfaSessions[userID] = session
 		p.mfaSessionsMu.Unlock()
 		return "needs_mfa", nil
 
 	case "error":
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
+		killAndWait()
 		return "", classifyError(fmt.Errorf("garmin: %s", resp.Message), session.stderr.String())
 
 	default:
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tmpTokenDir != "" {
-			os.RemoveAll(tmpTokenDir)
-		}
+		killAndWait()
 		return "", fmt.Errorf("garmin: unexpected validate-mfa status: %q", resp.Status)
 	}
 }
