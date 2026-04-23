@@ -73,6 +73,18 @@ func (m *mockGarminProvider) ValidateCredentials(_ context.Context, _ garmin.Gar
 	return m.validateErr
 }
 
+func (m *mockGarminProvider) ValidateWithMFA(_ context.Context, _ int64, _ garmin.GarminCredentials) (string, error) {
+	return "ok", m.validateErr
+}
+
+func (m *mockGarminProvider) CompleteMFA(_ int64, _ string) error {
+	return nil
+}
+
+func (m *mockGarminProvider) HasMFASession(_ int64) bool {
+	return false
+}
+
 // newMockEFBServer creates a test HTTP server simulating the EFB portal.
 // It accepts login with username "efbuser" / password "efbpass".
 // Uploads return "Datenbank gespeichert" on success.

@@ -150,6 +150,13 @@ var En = map[string]string{
 	"garmin.password_label":  "Password",
 	"garmin.submit":          "Test & Save",
 
+	// ── MFA verification ──
+	"settings.mfa_heading":     "Verification Code",
+	"settings.mfa_description": "Enter the 6-digit code from your authenticator app.",
+	"settings.mfa_placeholder": "000000",
+	"settings.mfa_submit":      "Verify",
+	"settings.mfa_cancel":      "Cancel",
+
 	// ── EFB settings ──
 	"efb.title":             "EFB Settings — EFB Connector",
 	"efb.heading":           "Kanu-EFB",
@@ -203,7 +210,9 @@ var En = map[string]string{
 	"flash.logged_out":              "You have been logged out.",
 	"flash.email_password_required": "Email and password are required.",
 	"flash.garmin_invalid":          "Garmin credentials are invalid. Please check and try again.",
-	"flash.garmin_mfa_required":     "Garmin requires additional verification (MFA/CAPTCHA). Try logging into Garmin Connect in your browser first, then retry here.",
+	"flash.garmin_unavailable":      "Garmin is temporarily blocking connections. This usually resolves within a few minutes — please try again later.",
+	"flash.garmin_mfa_invalid":      "Invalid verification code. Please re-enter your credentials and try again.",
+	"flash.garmin_mfa_expired":      "Verification session expired. Please re-enter your credentials.",
 	"flash.save_credentials_failed": "Failed to save credentials. Please try again.",
 	"flash.garmin_saved":            "Garmin credentials saved successfully.",
 	"flash.delete_credentials_failed": "Failed to delete credentials.",

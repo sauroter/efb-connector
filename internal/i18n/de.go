@@ -150,6 +150,13 @@ var De = map[string]string{
 	"garmin.password_label":  "Passwort",
 	"garmin.submit":          "Testen & Speichern",
 
+	// ── MFA-Verifizierung ──
+	"settings.mfa_heading":     "Verifizierungscode",
+	"settings.mfa_description": "Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
+	"settings.mfa_placeholder": "000000",
+	"settings.mfa_submit":      "Verifizieren",
+	"settings.mfa_cancel":      "Abbrechen",
+
 	// ── EFB settings ──
 	"efb.title":             "EFB-Einstellungen — EFB Connector",
 	"efb.heading":           "Kanu-EFB",
@@ -203,7 +210,9 @@ var De = map[string]string{
 	"flash.logged_out":              "Du wurdest abgemeldet.",
 	"flash.email_password_required": "E-Mail und Passwort sind erforderlich.",
 	"flash.garmin_invalid":          "Garmin-Zugangsdaten sind ungültig. Bitte überprüfe sie und versuche es erneut.",
-	"flash.garmin_mfa_required":     "Garmin erfordert eine zusätzliche Verifizierung (MFA/CAPTCHA). Melde dich zuerst in deinem Browser bei Garmin Connect an und versuche es dann hier erneut.",
+	"flash.garmin_unavailable":      "Garmin blockiert vorübergehend Verbindungen. Das löst sich normalerweise innerhalb weniger Minuten — bitte versuche es später erneut.",
+	"flash.garmin_mfa_invalid":      "Ungültiger Verifizierungscode. Bitte gib deine Zugangsdaten erneut ein und versuche es noch einmal.",
+	"flash.garmin_mfa_expired":      "Verifizierungssitzung abgelaufen. Bitte gib deine Zugangsdaten erneut ein.",
 	"flash.save_credentials_failed": "Zugangsdaten konnten nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.garmin_saved":            "Garmin-Zugangsdaten erfolgreich gespeichert.",
 	"flash.delete_credentials_failed": "Zugangsdaten konnten nicht gelöscht werden.",

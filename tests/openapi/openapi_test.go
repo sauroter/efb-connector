@@ -29,6 +29,8 @@ var registeredRoutes = []string{
 	"GET /settings/garmin",
 	"POST /settings/garmin",
 	"POST /settings/garmin/delete",
+	"GET /settings/garmin/mfa",
+	"POST /settings/garmin/mfa",
 	"GET /settings/efb",
 	"POST /settings/efb",
 	"POST /settings/efb/delete",

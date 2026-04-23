@@ -1,0 +1,41 @@
+{{define "settings_garmin_mfa.html"}}<!DOCTYPE html>
+<html lang="{{.Lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>{{call .T "settings.mfa_heading"}}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .settings-card { max-width: 540px; }
+  </style>
+</head>
+<body>
+  {{template "nav" .}}
+
+  <main class="container">
+    {{if .Flash}}
+    <div role="alert" class="flash-message">{{.Flash}}</div>
+    {{end}}
+
+    <article class="settings-card">
+      <header><strong>{{call .T "settings.mfa_heading"}}</strong></header>
+      <p>{{call .T "settings.mfa_description"}}</p>
+      <form method="POST" action="/settings/garmin/mfa">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="text" id="mfa_code" name="mfa_code"
+               placeholder="{{call .T "settings.mfa_placeholder"}}"
+               maxlength="6" pattern="[0-9]{6}" inputmode="numeric"
+               autocomplete="one-time-code" required autofocus
+               aria-label="{{call .T "settings.mfa_heading"}}">
+        <button type="submit">{{call .T "settings.mfa_submit"}}</button>
+      </form>
+      <p style="text-align: center;"><a href="/settings/garmin">{{call .T "settings.mfa_cancel"}}</a></p>
+    </article>
+
+  </main>
+
+  {{template "footer" .}}
+</body>
+</html>{{end}}

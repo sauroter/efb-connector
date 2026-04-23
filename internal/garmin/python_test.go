@@ -425,7 +425,7 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 sub.add_parser("validate")
 parser.parse_args()
-print("CAPTCHA required", file=sys.stderr)
+print("MFA required", file=sys.stderr)
 sys.exit(1)
 `)
 

@@ -92,6 +92,20 @@ func (d *DB) InvalidateGarminCredentials(userID int64, errMsg string) error {
 	return nil
 }
 
+// RevalidateGarminCredentials marks previously saved Garmin credentials as
+// valid again (e.g. after successful MFA completion).
+func (d *DB) RevalidateGarminCredentials(userID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE garmin_credentials
+		   SET is_valid = 1, last_error = NULL, updated_at = datetime('now')
+		 WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("database: revalidate garmin credentials for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // ──────────────────────────────────────────────
 // EFB credentials
 // ──────────────────────────────────────────────
