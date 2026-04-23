@@ -11,7 +11,7 @@ primary_region = "fra"
   min_machines_running = 0
 
   [http_service.http_options]
-    idle_timeout = "5m"
+    idle_timeout = 300
 
 [mounts]
   source = "efb_data"
