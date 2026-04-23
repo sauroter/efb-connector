@@ -49,6 +49,9 @@ type PythonGarminProvider struct {
 	// mfaSessions holds active MFA sessions keyed by user ID.
 	mfaSessions   map[int64]*MFASession
 	mfaSessionsMu sync.Mutex
+
+	// stopCleanup signals the cleanup goroutine to exit.
+	stopCleanup chan struct{}
 }
 
 // NewPythonGarminProvider returns a PythonGarminProvider that invokes the
@@ -59,9 +62,33 @@ func NewPythonGarminProvider(scriptPath string, encryptionKey []byte) *PythonGar
 		scriptPath:    scriptPath,
 		encryptionKey: encryptionKey,
 		mfaSessions:   make(map[int64]*MFASession),
+		stopCleanup:   make(chan struct{}),
 	}
 	go p.cleanupStaleMFASessions()
 	return p
+}
+
+// Close stops the background cleanup goroutine and kills any active MFA
+// sessions.  Safe to call multiple times.
+func (p *PythonGarminProvider) Close() {
+	select {
+	case <-p.stopCleanup:
+		// already closed
+	default:
+		close(p.stopCleanup)
+	}
+
+	p.mfaSessionsMu.Lock()
+	for uid, s := range p.mfaSessions {
+		s.stdin.Close()
+		s.cmd.Process.Kill()
+		s.cmd.Wait()
+		if s.tmpTokenDir != "" {
+			os.RemoveAll(s.tmpTokenDir)
+		}
+		delete(p.mfaSessions, uid)
+	}
+	p.mfaSessionsMu.Unlock()
 }
 
 // stdinCreds is the JSON envelope written to the subprocess's stdin.
@@ -463,21 +490,26 @@ func (p *PythonGarminProvider) cleanupStaleMFASessions() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		p.mfaSessionsMu.Lock()
-		for uid, s := range p.mfaSessions {
-			if time.Since(s.created) > maxAge {
-				slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
-				s.stdin.Close()
-				s.cmd.Process.Kill()
-				s.cmd.Wait()
-				if s.tmpTokenDir != "" {
-					os.RemoveAll(s.tmpTokenDir)
+	for {
+		select {
+		case <-p.stopCleanup:
+			return
+		case <-ticker.C:
+			p.mfaSessionsMu.Lock()
+			for uid, s := range p.mfaSessions {
+				if time.Since(s.created) > maxAge {
+					slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
+					s.stdin.Close()
+					s.cmd.Process.Kill()
+					s.cmd.Wait()
+					if s.tmpTokenDir != "" {
+						os.RemoveAll(s.tmpTokenDir)
+					}
+					delete(p.mfaSessions, uid)
 				}
-				delete(p.mfaSessions, uid)
 			}
+			p.mfaSessionsMu.Unlock()
 		}
-		p.mfaSessionsMu.Unlock()
 	}
 }
 
