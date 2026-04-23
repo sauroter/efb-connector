@@ -34,7 +34,7 @@ jobs:
       - name: Sync Resend infrastructure
         run: ./infrastructure/resend-setup.sh
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_MANAGEMENT_KEY: ${{ secrets.RESEND_MANAGEMENT_KEY }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy to Fly.io

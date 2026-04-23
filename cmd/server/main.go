@@ -105,7 +105,8 @@ func run(logger *slog.Logger) error {
 	}
 	defer db.Close()
 
-	resendClient := resend.NewClient(resendAPIKey, logger)
+	resendMgmtKey := envOr("RESEND_MANAGEMENT_KEY", "")
+	resendClient := resend.NewClient(resendMgmtKey, logger)
 	resendSegActive := envOr("RESEND_SEGMENT_ACTIVE", "")
 	resendSegSetup := envOr("RESEND_SEGMENT_NEEDS_SETUP", "")
 

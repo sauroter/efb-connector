@@ -54,6 +54,7 @@ The server is configured via environment variables:
 | `PORT` | HTTP listen port (default: `8080`) |
 | `DB_PATH` | Path to SQLite database file (default: `efb-connector.db`) |
 | `DEV_MODE` | Set to `true` for local dev (mock EFB + Garmin, relaxed env requirements) |
+| `RESEND_MANAGEMENT_KEY` | Resend full-access API key for contacts/segments (optional) |
 | `RESEND_SEGMENT_ACTIVE` | Resend segment ID for "Active Syncers" (optional) |
 | `RESEND_SEGMENT_NEEDS_SETUP` | Resend segment ID for "Needs Setup" users (optional) |
 

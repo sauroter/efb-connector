@@ -8,17 +8,17 @@
 # Otherwise prints the IDs for manual use.
 #
 # Required env:
-#   RESEND_API_KEY    — Resend API key
+#   RESEND_MANAGEMENT_KEY    — Resend API key
 #
 # Optional env:
 #   FLY_API_TOKEN     — if set, runs `flyctl secrets set` automatically
 #   FLY_APP           — Fly app name (default: efb-connector)
 set -euo pipefail
 
-: "${RESEND_API_KEY:?RESEND_API_KEY required}"
+: "${RESEND_MANAGEMENT_KEY:?RESEND_MANAGEMENT_KEY required}"
 
 API="https://api.resend.com"
-AUTH="Authorization: Bearer ${RESEND_API_KEY}"
+AUTH="Authorization: Bearer ${RESEND_MANAGEMENT_KEY}"
 FLY_APP="${FLY_APP:-efb-connector}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
