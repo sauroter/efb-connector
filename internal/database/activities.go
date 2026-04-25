@@ -151,25 +151,25 @@ func (d *DB) GetRecentFailedActivities(limit int) ([]FailedActivityDetail, error
 
 	var results []FailedActivityDetail
 	for rows.Next() {
-		var d FailedActivityDetail
+		var fa FailedActivityDetail
 		var syncedAt string
 		var errMsg *string
 
 		err := rows.Scan(
-			&d.ID, &d.UserID, &d.GarminActivityID,
-			&d.ActivityName, &d.ActivityType, &d.ActivityDate,
-			&syncedAt, &d.UploadStatus, &d.RetryCount, &errMsg,
-			&d.Email,
+			&fa.ID, &fa.UserID, &fa.GarminActivityID,
+			&fa.ActivityName, &fa.ActivityType, &fa.ActivityDate,
+			&syncedAt, &fa.UploadStatus, &fa.RetryCount, &errMsg,
+			&fa.Email,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("database: scan failed activity: %w", err)
 		}
 
-		d.SyncedAt, _ = parseTime(syncedAt)
+		fa.SyncedAt, _ = parseTime(syncedAt)
 		if errMsg != nil {
-			d.ErrorMessage = *errMsg
+			fa.ErrorMessage = *errMsg
 		}
-		results = append(results, d)
+		results = append(results, fa)
 	}
 	return results, rows.Err()
 }
