@@ -494,19 +494,74 @@ func parseFormFields(html string) url.Values {
 // titleRe extracts the content of the first <title> tag.
 var titleRe = regexp.MustCompile(`(?i)<title[^>]*>\s*(.*?)\s*</title>`)
 
+// alertRe extracts text from Bootstrap-style alert/error divs that the EFB
+// portal uses for user-visible messages.
+var alertRe = regexp.MustCompile(`(?is)<div[^>]*class="[^"]*(?:alert|error|warning)[^"]*"[^>]*>(.*?)</div>`)
+
+// tagStripRe matches HTML tags for stripping.
+var tagStripRe = regexp.MustCompile(`<[^>]+>`)
+
+// efbHints are German-language patterns the EFB portal may embed in its HTML
+// when an upload is silently rejected. Each entry maps a substring to a
+// human-readable hint.
+var efbHints = []struct {
+	pattern string
+	hint    string
+}{
+	{"bereits vorhanden", "duplicate track already exists"},
+	{"existiert bereits", "track already exists"},
+	{"Keine GPS", "no GPS data in file"},
+	{"keine Trackpunkte", "no trackpoints in file"},
+	{"nicht gelesen", "file could not be read"},
+	{"nicht verarbeitet", "file could not be processed"},
+	{"Datei ist zu", "file size rejected"},
+	{"ungültig", "invalid file"},
+	{"Fehler beim", "processing error"},
+}
+
 // summariseResponse returns a concise summary of an HTML response body for
-// use in error messages. It extracts the page title when present, falling
-// back to truncated body text. This avoids dumping raw HTML into structured
-// logs.
+// use in error messages. It extracts the page title, scans for EFB-specific
+// error hints and alert messages, falling back to truncated body text. This
+// avoids dumping raw HTML into structured logs while preserving actionable
+// diagnostic information.
 func summariseResponse(b []byte) string {
 	s := string(b)
+
+	var parts []string
+
+	// Extract page title.
 	if m := titleRe.FindStringSubmatch(s); m != nil {
 		title := strings.TrimSpace(m[1])
 		if title != "" {
-			return fmt.Sprintf("page title: %q (%d bytes)", title, len(b))
+			parts = append(parts, fmt.Sprintf("page title: %q", title))
 		}
 	}
-	// Not HTML or no title — truncate the raw body.
+
+	// Scan for known EFB error/warning patterns.
+	for _, h := range efbHints {
+		if strings.Contains(s, h.pattern) {
+			parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
+			break // one hint is enough
+		}
+	}
+
+	// Extract text from alert/error/warning divs.
+	if m := alertRe.FindStringSubmatch(s); m != nil {
+		text := strings.TrimSpace(tagStripRe.ReplaceAllString(m[1], " "))
+		text = strings.Join(strings.Fields(text), " ") // collapse whitespace
+		if len(text) > 200 {
+			text = text[:200] + "…"
+		}
+		if text != "" {
+			parts = append(parts, fmt.Sprintf("alert: %q", text))
+		}
+	}
+
+	if len(parts) > 0 {
+		return fmt.Sprintf("%s (%d bytes)", strings.Join(parts, "; "), len(b))
+	}
+
+	// Not HTML or no recognisable content — truncate the raw body.
 	const maxLen = 200
 	if len(b) <= maxLen {
 		return s

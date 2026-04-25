@@ -816,6 +816,61 @@ func TestCreateTripFromTrack_WithEnrichment(t *testing.T) {
 // I2: HTML entity unescaping in parseFormFields
 // ---------------------------------------------------------------------------
 
+func TestSummariseResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantSubs []string // substrings that must appear in the result
+	}{
+		{
+			name:     "title only",
+			body:     `<html><title>eFB - elektronisches Fahrtenbuch</title><body>ok</body></html>`,
+			wantSubs: []string{`page title: "eFB - elektronisches Fahrtenbuch"`, "bytes)"},
+		},
+		{
+			name:     "title plus hint",
+			body:     `<html><title>eFB</title><body>Datei existiert bereits im System</body></html>`,
+			wantSubs: []string{`page title: "eFB"`, "hint: track already exists"},
+		},
+		{
+			name:     "title plus alert div",
+			body:     `<html><title>eFB</title><div class="alert alert-danger">Upload fehlgeschlagen</div></html>`,
+			wantSubs: []string{`page title: "eFB"`, `alert: "Upload fehlgeschlagen"`},
+		},
+		{
+			name:     "hint without title",
+			body:     `Keine GPS-Daten in der Datei gefunden`,
+			wantSubs: []string{"hint: no GPS data in file", "bytes)"},
+		},
+		{
+			name:     "no title no hints short body",
+			body:     `just some text`,
+			wantSubs: []string{"just some text"},
+		},
+		{
+			name:     "no title no hints long body truncated",
+			body:     string(make([]byte, 300)),
+			wantSubs: []string{"…"},
+		},
+		{
+			name:     "alert div with nested HTML stripped",
+			body:     `<div class="error"><b>Fehler:</b> Datei <em>ungültig</em></div>`,
+			wantSubs: []string{`alert:`, "Fehler:", "ungültig", "hint: invalid file"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := summariseResponse([]byte(tc.body))
+			for _, sub := range tc.wantSubs {
+				if !strings.Contains(got, sub) {
+					t.Errorf("summariseResponse() = %q, want substring %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
 func TestParseFormFields_HTMLEntityUnescaping(t *testing.T) {
 	html := `<form>
 <input type="hidden" name="location" value="M&uuml;nchen &amp; Berlin">
