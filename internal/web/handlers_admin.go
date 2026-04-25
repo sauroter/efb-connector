@@ -116,6 +116,24 @@ func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(runs)
 }
 
+// handleAdminActivityErrors returns recent failed/permanent_failure activities
+// across all users, with per-activity error details.
+func (s *Server) handleAdminActivityErrors(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	acts, err := s.db.GetRecentFailedActivities(50)
+	if err != nil {
+		s.logger.Error("admin: get recent activity errors", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(acts)
+}
+
 // handleAdminSyncResendContacts creates/updates all users as Resend contacts
 // and assigns them to the appropriate segment ("Active Syncers" or "Needs
 // Setup") based on their current credential state.

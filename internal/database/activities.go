@@ -124,6 +124,56 @@ func (d *DB) MarkPermanentFailure(userID int64, garminID string) error {
 	return nil
 }
 
+// FailedActivityDetail extends SyncedActivity with the user's email for
+// admin views that show failures across all users.
+type FailedActivityDetail struct {
+	SyncedActivity
+	Email string
+}
+
+// GetRecentFailedActivities returns the most recent failed or permanent_failure
+// activities across all users, joined with the user's email.
+func (d *DB) GetRecentFailedActivities(limit int) ([]FailedActivityDetail, error) {
+	rows, err := d.db.Query(`
+		SELECT sa.id, sa.user_id, sa.garmin_activity_id, sa.activity_name,
+		       sa.activity_type, sa.activity_date, sa.synced_at, sa.upload_status,
+		       sa.retry_count, sa.error_message, u.email
+		  FROM synced_activities sa
+		  JOIN users u ON sa.user_id = u.id
+		 WHERE sa.upload_status IN ('failed', 'permanent_failure')
+		 ORDER BY sa.synced_at DESC
+		 LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("database: get recent failed activities: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FailedActivityDetail
+	for rows.Next() {
+		var d FailedActivityDetail
+		var syncedAt string
+		var errMsg *string
+
+		err := rows.Scan(
+			&d.ID, &d.UserID, &d.GarminActivityID,
+			&d.ActivityName, &d.ActivityType, &d.ActivityDate,
+			&syncedAt, &d.UploadStatus, &d.RetryCount, &errMsg,
+			&d.Email,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("database: scan failed activity: %w", err)
+		}
+
+		d.SyncedAt, _ = parseTime(syncedAt)
+		if errMsg != nil {
+			d.ErrorMessage = *errMsg
+		}
+		results = append(results, d)
+	}
+	return results, rows.Err()
+}
+
 // scanActivity scans a *sql.Rows row into a SyncedActivity.
 func scanActivity(rows interface {
 	Scan(...any) error
