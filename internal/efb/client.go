@@ -501,6 +501,14 @@ var alertRe = regexp.MustCompile(`(?is)<div[^>]*class="[^"]*(?:alert|error|warni
 // tagStripRe matches HTML tags for stripping.
 var tagStripRe = regexp.MustCompile(`<[^>]+>`)
 
+// bodyRe extracts the contents of the first <body> tag.
+var bodyRe = regexp.MustCompile(`(?is)<body[^>]*>(.*?)</body>`)
+
+// scriptRe and styleRe match <script>/<style> blocks so they can be stripped
+// from HTML before extracting visible text.
+var scriptRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+var styleRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+
 // efbHints are German-language patterns the EFB portal may embed in its HTML
 // when an upload is silently rejected. Each entry maps a substring to a
 // human-readable hint.
@@ -528,6 +536,7 @@ func summariseResponse(b []byte) string {
 	s := string(b)
 
 	var parts []string
+	var hintFound, alertFound bool
 
 	// Extract page title.
 	if m := titleRe.FindStringSubmatch(s); m != nil {
@@ -541,6 +550,7 @@ func summariseResponse(b []byte) string {
 	for _, h := range efbHints {
 		if strings.Contains(s, h.pattern) {
 			parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
+			hintFound = true
 			break // one hint is enough
 		}
 	}
@@ -554,6 +564,17 @@ func summariseResponse(b []byte) string {
 		}
 		if text != "" {
 			parts = append(parts, fmt.Sprintf("alert: %q", text))
+			alertFound = true
+		}
+	}
+
+	// Fallback: if neither a known hint nor an alert div was found, include a
+	// short excerpt of the visible body text. This surfaces rejection messages
+	// the portal may render outside of recognised structures (e.g. inline <p>
+	// or <span>), so we can later extend efbHints once we see them.
+	if !hintFound && !alertFound {
+		if excerpt := extractBodyExcerpt(s); excerpt != "" {
+			parts = append(parts, fmt.Sprintf("body excerpt: %q", excerpt))
 		}
 	}
 
@@ -567,6 +588,31 @@ func summariseResponse(b []byte) string {
 		return s
 	}
 	return string(b[:maxLen]) + "…"
+}
+
+// extractBodyExcerpt returns up to ~600 characters of visible body text from
+// an HTML response, with <script>/<style> blocks removed and whitespace
+// collapsed. Returns an empty string when the input does not look like HTML
+// or when no printable text could be extracted, so callers fall back to a
+// raw-body truncation.
+func extractBodyExcerpt(s string) string {
+	if !strings.ContainsRune(s, '<') {
+		return ""
+	}
+	body := s
+	if m := bodyRe.FindStringSubmatch(s); m != nil {
+		body = m[1]
+	}
+	body = scriptRe.ReplaceAllString(body, " ")
+	body = styleRe.ReplaceAllString(body, " ")
+	text := tagStripRe.ReplaceAllString(body, " ")
+	text = gohtml.UnescapeString(text)
+	text = strings.Join(strings.Fields(text), " ")
+	const maxLen = 600
+	if len(text) > maxLen {
+		text = text[:maxLen] + "…"
+	}
+	return text
 }
 
 // truncateBody returns up to 500 bytes of body as a string, preventing full
