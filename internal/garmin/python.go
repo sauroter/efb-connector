@@ -133,7 +133,7 @@ func (p *PythonGarminProvider) ListActivities(
 		"--json",
 	)
 	if err != nil {
-		return nil, classifyError(err, stderr)
+		return nil, classifyError(ctx, err, stderr)
 	}
 
 	var raw []listActivityJSON
@@ -207,7 +207,7 @@ func (p *PythonGarminProvider) DownloadGPX(
 		"--output", tmpDir,
 	)
 	if err != nil {
-		return nil, classifyError(err, stderr)
+		return nil, classifyError(ctx, err, stderr)
 	}
 
 	// The script prints the file path to stdout.
@@ -246,7 +246,7 @@ func (p *PythonGarminProvider) ValidateCredentials(
 ) error {
 	_, stderr, err := p.run(ctx, creds, "validate")
 	if err != nil {
-		return classifyError(err, stderr)
+		return classifyError(ctx, err, stderr)
 	}
 	return nil
 }
@@ -352,7 +352,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	// Read the first response line from stdout.
 	if !session.stdout.Scan() {
 		cmd.Wait()
-		return "", classifyError(fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
+		return "", classifyError(ctx, fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
 	}
 
 	var resp mfaStatusResponse
@@ -387,7 +387,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	case "error":
 		killAndWait()
-		return "", classifyError(fmt.Errorf("garmin: %s", resp.Message), session.stderr.String())
+		return "", classifyError(ctx, fmt.Errorf("garmin: %s", resp.Message), session.stderr.String())
 
 	default:
 		killAndWait()
@@ -428,6 +428,7 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 	if !session.stdout.Scan() {
 		session.cmd.Wait()
 		return classifyError(
+			nil,
 			fmt.Errorf("garmin: no response after MFA code"),
 			session.stderr.String(),
 		)
@@ -445,6 +446,7 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 
 	if resp.Status != "ok" {
 		return classifyError(
+			nil,
 			fmt.Errorf("garmin: MFA verification failed: %s", resp.Message),
 			session.stderr.String(),
 		)
@@ -671,8 +673,10 @@ func encryptTokenStore(key []byte, srcDir, dstDir string) {
 }
 
 // classifyError maps subprocess errors and stderr messages to typed sentinel
-// errors where possible.
-func classifyError(err error, stderr string) error {
+// errors where possible. When the supplied context has been canceled, the
+// returned error makes that explicit so callers can distinguish "we killed
+// the subprocess" from "the OS killed the subprocess".
+func classifyError(ctx context.Context, err error, stderr string) error {
 	if err == nil {
 		return nil
 	}
@@ -698,10 +702,24 @@ func classifyError(err error, stderr string) error {
 		strings.Contains(combined, "unauthorized") {
 		return fmt.Errorf("%w: %s", ErrGarminAuth, stderr)
 	}
+	// If the parent context was canceled, the SIGKILL came from us via
+	// exec.CommandContext; surface that distinctly.
+	var ctxErr error
+	if ctx != nil {
+		ctxErr = ctx.Err()
+	}
+	if ctxErr != nil {
+		if stderr != "" {
+			return fmt.Errorf("garmin: subprocess error: %w (parent context: %v)\nstderr: %s", err, ctxErr, stderr)
+		}
+		return fmt.Errorf("garmin: subprocess error: %w (parent context: %v)", err, ctxErr)
+	}
 	if stderr != "" {
 		return fmt.Errorf("garmin: subprocess error: %w\nstderr: %s", err, stderr)
 	}
-	return fmt.Errorf("garmin: subprocess error: %w", err)
+	// Subprocess died with no stderr and an alive parent context — note this
+	// explicitly so the next occurrence is unambiguous.
+	return fmt.Errorf("garmin: subprocess error: %w (no stderr, parent context still alive)", err)
 }
 
 // daysSpan returns the number of whole days that cover the interval [start, end),

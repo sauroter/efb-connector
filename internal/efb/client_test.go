@@ -825,7 +825,26 @@ func TestSummariseResponse(t *testing.T) {
 		{
 			name:     "title only",
 			body:     `<html><title>eFB - elektronisches Fahrtenbuch</title><body>ok</body></html>`,
-			wantSubs: []string{`page title: "eFB - elektronisches Fahrtenbuch"`, "bytes)"},
+			wantSubs: []string{`page title: "eFB - elektronisches Fahrtenbuch"`, "bytes)", `body excerpt: "ok"`},
+		},
+		{
+			name: "title plus body excerpt when no hint or alert",
+			body: `<html><title>eFB</title><body>` +
+				`<script>var x = 1;</script>` +
+				`<p>Bitte wählen Sie ein Gewässer aus der Liste</p>` +
+				`<style>p { color: red }</style>` +
+				`</body></html>`,
+			wantSubs: []string{
+				`page title: "eFB"`,
+				`body excerpt: "Bitte wählen Sie ein Gewässer aus der Liste"`,
+			},
+		},
+		{
+			name: "alert suppresses body excerpt",
+			body: `<html><title>eFB</title>` +
+				`<div class="alert">Upload fehlgeschlagen</div>` +
+				`<body><p>Other text</p></body></html>`,
+			wantSubs: []string{`alert: "Upload fehlgeschlagen"`},
 		},
 		{
 			name:     "title plus hint",
