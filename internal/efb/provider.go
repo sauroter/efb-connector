@@ -31,6 +31,11 @@ type EFBProvider interface {
 	// If enrichment is non-nil, the enrichment text is appended to the
 	// trip comment.
 	CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error
+
+	// CheckConsentGate reports whether the EFB tracks page is currently
+	// rendering the v2026.1 track-usage consent page in place of the
+	// upload form. Caller must already be authenticated.
+	CheckConsentGate(ctx context.Context) (consentRequired bool, err error)
 }
 
 // SectionEnrichment contains river condition data for a single river section.

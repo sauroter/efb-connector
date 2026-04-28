@@ -982,6 +982,10 @@ func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string,
 	return m.createTripErr
 }
 
+func (m *mockEFBProvider) CheckConsentGate(_ context.Context) (bool, error) {
+	return false, nil
+}
+
 // newEngineWithProvider creates a SyncEngine with a custom EFB provider and noSleep.
 // The provider is wrapped in a factory that returns the same instance, which is
 // safe because tests run single-worker (sequential).
@@ -1611,6 +1615,198 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	}
 	if res.Upload.BodySizeBytes != len(body) {
 		t.Errorf("BodySizeBytes = %d, want %d (full size)", res.Upload.BodySizeBytes, len(body))
+	}
+}
+
+// ──────────────────────────────────────────────
+// EFB v2026.1 consent gate
+// ──────────────────────────────────────────────
+
+const consentGateBody = `<html><head><title>eFB</title></head><body>
+<p>Das Hochladen kann erst durchgeführt werden, wenn Ihr
+   der anonymisierten Verwendung Eurer Tracks zugestimmt habt.</p>
+<form method="post"><input type="submit" name="commit_tracks" value="ich stimme zu"/></form>
+</body></html>`
+
+// newMockEFBServerConsentGate authenticates any user/pass and answers
+// every POST/GET on /interpretation/usersmap with the consent-gate page.
+func newMockEFBServerConsentGate(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("username") == "efbuser" && r.FormValue("password") == "efbpass" {
+			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		if err != nil || cookie.Value != "1" {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(consentGateBody))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// fakeEmailSender records every SendEmail call.
+type fakeEmailSender struct {
+	mu    stdsync.Mutex
+	calls []struct{ To, Subject, Body string }
+}
+
+func (f *fakeEmailSender) SendEmail(to, subject, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, struct{ To, Subject, Body string }{to, subject, body})
+	return nil
+}
+
+func (f *fakeEmailSender) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func TestSyncUser_DetectsConsentRequired_SetsFlagAndEmails(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerConsentGate(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	emailer := &fakeEmailSender{}
+	engine.SetEmailSender(emailer)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	required, notifiedAt, err := db.GetEFBConsentState(user.ID)
+	if err != nil {
+		t.Fatalf("GetEFBConsentState: %v", err)
+	}
+	if !required {
+		t.Error("expected consent_required=true after consent-gate sync")
+	}
+	if notifiedAt == nil {
+		t.Error("expected consent_notified_at to be set after first email")
+	}
+
+	if got := emailer.Calls(); got != 1 {
+		t.Errorf("emailer calls = %d, want 1", got)
+	}
+
+	// retry_count must NOT be incremented on consent_required: this isn't
+	// a transient retriable failure, and we don't want activities marked
+	// permanent_failure while the user hasn't seen the banner.
+	failed, _ := db.GetFailedActivities(user.ID)
+	for _, a := range failed {
+		if a.RetryCount != 0 {
+			t.Errorf("activity %s retry_count = %d, want 0 (consent_required suppresses increment)",
+				a.GarminActivityID, a.RetryCount)
+		}
+	}
+}
+
+func TestSyncUser_ConsentRequired_RateLimitsEmail(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerConsentGate(t)
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+	emailer := &fakeEmailSender{}
+	engine.SetEmailSender(emailer)
+
+	// Anchor time and step it deterministically.
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	engine.nowFunc = func() time.Time { return t0 }
+
+	// First sync at t0 → email sent.
+	_, _ = engine.SyncUser(context.Background(), user.ID, "manual")
+	if got := emailer.Calls(); got != 1 {
+		t.Fatalf("after first sync: emailer calls = %d, want 1", got)
+	}
+
+	// Second sync 1 day later → still inside 7-day window, no new email.
+	engine.nowFunc = func() time.Time { return t0.Add(24 * time.Hour) }
+	// Also need to "un-sync" the failed activity so it gets retried.
+	// Simpler: feed a second activity.
+	gp.activities = append(gp.activities, makeActivities(2)[1])
+	_, _ = engine.SyncUser(context.Background(), user.ID, "manual")
+	if got := emailer.Calls(); got != 1 {
+		t.Errorf("inside 7-day window: emailer calls = %d, want 1 (no new send)", got)
+	}
+
+	// Third sync 8 days after the first → outside window, new email.
+	engine.nowFunc = func() time.Time { return t0.Add(8 * 24 * time.Hour) }
+	gp.activities = append(gp.activities, makeActivities(3)[2])
+	_, _ = engine.SyncUser(context.Background(), user.ID, "manual")
+	if got := emailer.Calls(); got != 2 {
+		t.Errorf("outside 7-day window: emailer calls = %d, want 2", got)
+	}
+}
+
+func TestSyncUser_SuccessClearsConsentFlag(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	// Pre-set the consent flag, simulating a prior consent-gated sync.
+	if err := db.MarkEFBConsentRequired(user.ID); err != nil {
+		t.Fatalf("MarkEFBConsentRequired: %v", err)
+	}
+
+	// Now sync against a happy mock — uploads succeed.
+	srv := newMockEFBServer(t)
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	required, _, _ := db.GetEFBConsentState(user.ID)
+	if required {
+		t.Error("expected successful sync to clear consent_required")
+	}
+}
+
+func TestEFBConsentEmail_DEandEN(t *testing.T) {
+	subDe, bodyDe := efbConsentEmail("de")
+	if !strings.Contains(subDe, "Track-Nutzungsvereinbarung") {
+		t.Errorf("DE subject missing topic: %q", subDe)
+	}
+	if !strings.Contains(bodyDe, "ich stimme zu") || !strings.Contains(bodyDe, "kanu-efb.de") {
+		t.Errorf("DE body missing CTA or link: %q", bodyDe)
+	}
+
+	subEn, bodyEn := efbConsentEmail("en")
+	if !strings.Contains(subEn, "track-usage agreement") {
+		t.Errorf("EN subject missing topic: %q", subEn)
+	}
+	if !strings.Contains(bodyEn, "ich stimme zu") || !strings.Contains(bodyEn, "kanu-efb.de") {
+		t.Errorf("EN body missing CTA or link: %q", bodyEn)
+	}
+
+	// Non-de language defaults to English.
+	subFr, _ := efbConsentEmail("fr")
+	if subFr != subEn {
+		t.Errorf("non-de should default to EN; got %q vs %q", subFr, subEn)
 	}
 }
 

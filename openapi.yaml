@@ -1335,6 +1335,44 @@ paths:
         "500":
           description: Internal server error
 
+  /internal/admin/dev/mock-efb/consent-gate:
+    post:
+      tags: [Internal]
+      summary: (Dev only) Toggle MockEFBProvider consent gate
+      description: |
+        Flips the simulated EFB v2026.1 track-usage consent gate on the
+        in-process MockEFBProvider. Effective only when DEV_MODE=true; in
+        production the request returns 404 because the real EFBClient does
+        not implement the gate-control interface.
+
+        Used by the local consent-flow runbook to reproduce the silent
+        rejection without talking to real EFB.
+      operationId: postAdminDevMockEFBConsentGate
+      security:
+        - internalBearer: []
+      parameters:
+        - name: on
+          in: query
+          required: false
+          description: "Set to `1` to enable the gate, anything else (or omit) to clear it."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: New gate state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consent_gate:
+                    type: boolean
+                required: [consent_gate]
+        "401":
+          description: Unauthorized
+        "404":
+          description: Production deployment — mock provider not in use
+
   /internal/sync/run-all:
     post:
       tags: [Internal]

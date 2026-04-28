@@ -75,6 +75,12 @@ var En = map[string]string{
 	"dashboard.heading":       "Dashboard",
 	"dashboard.signed_in_as":  "Signed in as",
 
+	// ── EFB consent banner ──
+	"dashboard.efb_consent_required.heading":   "Action required on EFB",
+	"dashboard.efb_consent_required.body":      "EFB requires you to accept the track-usage agreement before uploads can resume. Open Meine Tracks on EFB and click \"ich stimme zu\" once. The next sync will then run through automatically.",
+	"dashboard.efb_consent_required.open_efb":  "Open Meine Tracks on EFB",
+	"dashboard.efb_consent_required.retry_sync": "Re-run sync",
+
 	// ── Getting started ──
 	"setup.heading":           "Getting Started",
 	"setup.intro":             "Set up your account in four steps:",
@@ -223,6 +229,7 @@ var En = map[string]string{
 	"flash.username_password_required": "Username and password are required.",
 	"flash.efb_invalid":             "EFB credentials are invalid. Please check and try again.",
 	"flash.efb_saved":               "EFB credentials saved successfully.",
+	"flash.efb_saved_consent_required": "EFB credentials saved. Before sync can run, please open Meine Tracks on EFB and click \"ich stimme zu\" to accept the track-usage agreement.",
 	"flash.efb_removed":             "EFB credentials removed.",
 	"flash.save_preferences_failed": "Failed to save preferences. Please try again.",
 	"flash.save_setting_failed":     "Failed to save setting. Please try again.",

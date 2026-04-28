@@ -42,6 +42,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		efbConnected = true
 	}
 
+	// Check whether EFB is currently consent-gated for this user.
+	// Surfaced as a banner so the user knows to click "ich stimme zu"
+	// on the EFB portal before sync can succeed.
+	var efbConsentRequired bool
+	if efbConnected {
+		req, _, csErr := s.db.GetEFBConsentState(userID)
+		if csErr != nil {
+			s.logger.Warn("dashboard: get efb consent state", "user_id", userID, "error", csErr)
+		} else {
+			efbConsentRequired = req
+		}
+	}
+
 	// Get the most recent sync run.
 	syncRuns, err := s.db.GetSyncHistory(userID, 1)
 	if err != nil {
@@ -91,6 +104,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"User":               user,
 		"GarminConnected":    garminConnected,
 		"EFBConnected":       efbConnected,
+		"EFBConsentRequired": efbConsentRequired,
+		"EFBConsentURL":      "https://efb.kanu-efb.de/interpretation/usersmap",
 		"LastSync":           lastSync,
 		"SyncDays":           user.SyncDays,
 		"AutoCreateTrips":    user.AutoCreateTrips,
@@ -343,6 +358,26 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("efb credentials saved", "user_id", userID)
+
+	// Proactive check: EFB v2026.1 added a track-usage consent gate.
+	// The session set up by ValidateCredentials still lives on the
+	// shared EFBProvider's cookie jar, so we can immediately ask EFB
+	// whether the upload form is available for this user. If not,
+	// flag the user so the dashboard banner appears, and use a
+	// consent-aware flash on the redirect.
+	if consentRequired, err := s.efb.CheckConsentGate(context.Background()); err != nil {
+		s.logger.Warn("efb consent check failed (credentials saved anyway)",
+			"user_id", userID, "error", err)
+	} else if consentRequired {
+		if mErr := s.db.MarkEFBConsentRequired(userID); mErr != nil {
+			s.logger.Error("failed to mark efb consent required at save",
+				"user_id", userID, "error", mErr)
+		}
+		setFlash(w, "flash.efb_saved_consent_required")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
 	setFlash(w, "flash.efb_saved")
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
