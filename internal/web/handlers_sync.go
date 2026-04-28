@@ -109,6 +109,16 @@ func (s *Server) handleEFBRecheckConsent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Recheck has its own (more permissive) rate limit, distinct from
+	// the 1/hour user sync limit. Guards against runaway clients
+	// hammering EFB while still letting honest users retry several
+	// times after consenting.
+	if !s.rateLimiter.AllowRecheckConsent(userID) {
+		setFlash(w, "flash.efb_consent_recheck_rate_limited")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 

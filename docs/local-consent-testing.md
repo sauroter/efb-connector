@@ -107,10 +107,20 @@ To exercise the proactive detection in `handleEFBSettingsSave`:
 1. Make sure the gate is **on** (`make dev-consent`, or curl the toggle).
 2. Sign in.
 3. Go to `/settings/efb`, enter any user/pass, save.
-4. You should be redirected to `/dashboard` with the banner visible and
-   the `flash.efb_saved_consent_required` flash message.
-5. Flip the gate **off**, then re-save credentials at `/settings/efb`.
-6. You should see the regular `flash.efb_saved` flash and no banner.
+4. You should be redirected to `/dashboard` with the standard
+   `flash.efb_saved` confirmation flash and the amber "Action required
+   on EFB" banner visible. The banner — not the flash — owns the
+   action ask.
+5. Click **"Ich habe zugestimmt"** in the banner. With the gate still
+   on, the flash becomes `flash.efb_consent_still_required` and the
+   banner stays. The user-facing 1/hour sync rate limit is **not**
+   triggered, no matter how often you click — the recheck endpoint
+   has its own (more permissive) rate limit.
+6. Flip the gate **off**, click "Ich habe zugestimmt" again. The
+   flash becomes `flash.efb_consent_confirmed`, the banner
+   disappears, and a fresh sync run is created in the log.
+7. As a sanity check, re-save credentials at `/settings/efb`. You
+   should see the regular `flash.efb_saved` flash and no banner.
 
 ## Cleaning up
 

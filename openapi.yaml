@@ -943,16 +943,21 @@ paths:
         Used by the dashboard banner after the user clicks "ich stimme
         zu" on the EFB portal. Performs a single GET against EFB to
         verify the consent gate is gone, **bypassing** the per-user
-        sync rate limit so users can confirm immediately after
+        1/hour sync rate limit so users can confirm immediately after
         consenting.
+
+        Has its own (more permissive) per-user rate limit of 6/hour to
+        guard against runaway clients hammering EFB.
 
         - Still gated → flash `flash.efb_consent_still_required`,
           banner remains.
         - Cleared → clear `efb_credentials.consent_required`, kick off
           one immediate sync via `SyncEngine.SyncUser` (also bypassing
-          the rate limit), flash `flash.efb_consent_confirmed`.
+          the sync rate limit), flash `flash.efb_consent_confirmed`.
         - Login or transport failure → flash
           `flash.efb_consent_recheck_failed`, no state change.
+        - Recheck rate limit exceeded (6/hour) → flash
+          `flash.efb_consent_recheck_rate_limited`, no state change.
       operationId: postEFBRecheckConsent
       security:
         - sessionCookie: []
@@ -968,7 +973,11 @@ paths:
               required: [csrf_token]
       responses:
         "303":
-          description: Redirect to /dashboard with one of the flash messages above
+          description: |
+            Redirect to /dashboard with one of the flash messages above
+            (including the rate-limit flash when the 6/hour cap is hit;
+            the response code is still 303 because the user-facing UX
+            is a redirected flash, not an HTTP error).
 
   /sync/status:
     get:
