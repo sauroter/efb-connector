@@ -165,6 +165,14 @@ components:
       description: |
         A failed or permanent_failure activity with the user's email.
         Fields are PascalCase (no JSON tags on the Go struct).
+
+        ResponseStatusCode / ResponseSizeBytes / ResponseBodyExcerpt
+        capture the raw EFB upload response when the failure reached the
+        HTTP layer; ResponseBodyExcerpt is omitted from list responses
+        unless `?include_body=1` is passed. ResponseBodyExcerpt is
+        capped at 16 KB per row, with at most 5 rows total retaining a
+        non-empty value (older excerpts are nulled on insert of new
+        ones to bound DB growth).
       type: object
       properties:
         ID:
@@ -191,6 +199,20 @@ components:
           type: integer
         ErrorMessage:
           type: string
+        ResponseStatusCode:
+          type: integer
+          description: HTTP status code from EFB upload, 0 if no HTTP layer reached.
+        ResponseSizeBytes:
+          type: integer
+          description: Full size in bytes of the EFB response body (uncapped).
+        ResponseBodyExcerpt:
+          type: string
+          description: |
+            Raw EFB response body, capped at 16 KB. Only populated when
+            the upload reached HTTP 200 but did not contain the success
+            marker and no recognised hint pattern matched (i.e. silent
+            rejection). Omitted from list responses unless
+            `?include_body=1` is set.
         Email:
           type: string
       required:
@@ -205,6 +227,61 @@ components:
         - RetryCount
         - ErrorMessage
         - Email
+
+    DebugUploadResult:
+      description: |
+        Output of POST /internal/admin/users/{id}/debug-upload — a one-shot
+        dry-run EFB upload attempt that returns the raw response without
+        mutating any database state.
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        garmin_activity_id:
+          type: string
+        gpx_size_bytes:
+          type: integer
+        upload:
+          $ref: "#/components/schemas/DebugUploadResponse"
+      required: [user_id, garmin_activity_id, gpx_size_bytes, upload]
+
+    DebugUploadResponse:
+      description: Raw EFB upload response captured for debugging.
+      type: object
+      properties:
+        request_url:
+          type: string
+        status_code:
+          type: integer
+        final_url:
+          type: string
+        response_headers:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        response_body:
+          type: string
+          description: Raw response body, capped at 64 KB; see `truncated`.
+        body_size_bytes:
+          type: integer
+          description: Full size of the EFB response body in bytes (uncapped).
+        truncated:
+          type: boolean
+          description: True if response_body was truncated to fit the 64 KB cap.
+        contains_success_marker:
+          type: boolean
+        is_login_page:
+          type: boolean
+      required:
+        - status_code
+        - response_body
+        - body_size_bytes
+        - truncated
+        - contains_success_marker
+        - is_login_page
 
     UserSyncResult:
       description: Streamed as one NDJSON line per user during sync-all.
@@ -1065,10 +1142,25 @@ paths:
     get:
       tags: [Internal]
       summary: Recent activity-level errors
-      description: Returns the 50 most recent failed or permanent_failure activities across all users, with per-activity error details.
+      description: |
+        Returns the 50 most recent failed or permanent_failure activities
+        across all users, with per-activity error details.
+
+        ResponseBodyExcerpt is omitted by default to keep the payload
+        small. Pass `?include_body=1` to include it for inspection of
+        silent EFB rejections that the in-band diagnostics couldn't
+        classify.
       operationId: getAdminActivityErrors
       security:
         - internalBearer: []
+      parameters:
+        - name: include_body
+          in: query
+          required: false
+          description: Set to `1` to include the ResponseBodyExcerpt field on each row.
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
           description: Failed activities with error details
@@ -1082,6 +1174,95 @@ paths:
           description: Unauthorized
         "500":
           description: Internal server error
+
+  /internal/admin/activity-errors/{id}:
+    get:
+      tags: [Internal]
+      summary: Single failed activity by id
+      description: |
+        Returns a single failed/permanent_failure activity by row ID,
+        always including the full ResponseBodyExcerpt. Used to drill into
+        a specific silent rejection.
+      operationId: getAdminActivityError
+      security:
+        - internalBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Failed activity row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailedActivityDetail"
+        "400":
+          description: Invalid id
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+        "500":
+          description: Internal server error
+
+  /internal/admin/users/{id}/debug-upload:
+    post:
+      tags: [Internal]
+      summary: Dry-run EFB upload for debugging
+      description: |
+        Performs a one-shot EFB upload attempt for the given user using
+        their stored credentials, downloads a Garmin activity, and
+        returns the raw EFB HTTP response. Does NOT update
+        synced_activities, sync_runs, or any other state.
+
+        If the request body omits `garmin_activity_id`, the most recent
+        activity in the user's default sync window is used.
+      operationId: postAdminUserDebugUpload
+      security:
+        - internalBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                garmin_activity_id:
+                  type: string
+                  description: Optional. If empty, the most recent activity is used.
+      responses:
+        "200":
+          description: Raw EFB response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugUploadResult"
+        "400":
+          description: Invalid user id or JSON body
+        "401":
+          description: Unauthorized
+        "500":
+          description: Login, GPX download, or upload failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  error:
+                    type: string
 
   /internal/admin/feedback:
     get:

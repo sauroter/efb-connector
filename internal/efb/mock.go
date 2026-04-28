@@ -3,6 +3,7 @@ package efb
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -57,6 +58,28 @@ func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string,
 		"hasEnrichment", enrichment != nil,
 	)
 	return nil
+}
+
+// UploadRaw records the upload like Upload and returns a synthetic
+// success result. Lets DEV_MODE exercise the debug-upload admin endpoint
+// without a real EFB portal.
+func (m *MockEFBProvider) UploadRaw(_ context.Context, gpxData []byte, filename string) (*RawUploadResult, error) {
+	m.mu.Lock()
+	m.uploads = append(m.uploads, UploadRecord{Filename: filename, Size: len(gpxData)})
+	m.mu.Unlock()
+	m.logger.Info("[mock-efb] upload raw", "filename", filename, "size", len(gpxData))
+
+	body := []byte(filename + " in Datenbank gespeichert!")
+	return &RawUploadResult{
+		RequestURL:            "mock://upload",
+		FinalURL:              "mock://upload",
+		StatusCode:            http.StatusOK,
+		Header:                http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+		Body:                  body,
+		BodySize:              len(body),
+		ContainsSuccessMarker: true,
+		IsLoginPage:           false,
+	}, nil
 }
 
 // Uploads returns a copy of all recorded uploads.

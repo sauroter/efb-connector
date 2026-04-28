@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultBaseURL is the base URL for the Kanu-EFB portal.
@@ -121,37 +122,137 @@ func (c *EFBClient) Login(ctx context.Context, username, password string) error 
 	return nil
 }
 
+// MaxResponseBodyExcerpt caps the size of the response body excerpt stored
+// on a [UploadRejectedError] (and persisted to the database). 16 KB
+// comfortably fits the ~12 KB EFB tracks-list page observed for silent
+// rejections in production.
+const MaxResponseBodyExcerpt = 16 * 1024
+
+// RawUploadResult is the unparsed result of an EFB upload POST. It is the
+// return shape of [EFBClient.UploadRaw], used by the sync engine's debug
+// path to surface the full response to operators.
+type RawUploadResult struct {
+	// RequestURL is the URL the upload POST was sent to (the configured
+	// upload endpoint). Stable regardless of redirects.
+	RequestURL string
+	// FinalURL is the URL the response came from after any redirects —
+	// e.g. /login when the session expired. Differs from RequestURL when
+	// EFB redirects an unauthenticated upload back to the login page.
+	FinalURL              string
+	StatusCode            int
+	Header                http.Header
+	Body                  []byte
+	BodySize              int
+	ContainsSuccessMarker bool
+	IsLoginPage           bool
+}
+
+// UploadRejectedError is returned by [EFBClient.Upload] when the server
+// answered with HTTP 200 but the response did not contain the success
+// marker and is not the login page (i.e. a silent rejection). It carries
+// the diagnostic context the engine persists on the failed-activity row.
+type UploadRejectedError struct {
+	StatusCode  int
+	BodySize    int
+	BodyExcerpt string // capped at MaxResponseBodyExcerpt
+	Summary     string // output of summariseResponse, included in Error()
+}
+
+// Error formats the message in the same shape as the previous inline
+// fmt.Errorf so callers (and classifyEFBError) keep working unchanged.
+func (e *UploadRejectedError) Error() string {
+	return "efb: upload did not succeed: " + e.Summary
+}
+
 // Upload sends gpxData to the EFB portal as a multipart file upload.
 // filename is used as the submitted file name (typically the basename of the
 // source file).  The caller must have called Login first.
 //
 // Upload returns an error when the server response does not contain the
-// success marker "Datenbank gespeichert".
+// success marker "Datenbank gespeichert". On a silent rejection the error
+// is a *[UploadRejectedError] with the captured response body excerpt.
 func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string) error {
+	res, err := c.UploadRaw(ctx, gpxData, filename)
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("efb: upload failed with status %d: %s",
+			res.StatusCode, summariseResponse(res.Body))
+	}
+
+	if res.ContainsSuccessMarker {
+		return nil
+	}
+
+	if res.IsLoginPage {
+		return fmt.Errorf("efb: session expired during upload (got login page)")
+	}
+
+	return &UploadRejectedError{
+		StatusCode:  res.StatusCode,
+		BodySize:    res.BodySize,
+		BodyExcerpt: TruncateUTF8(res.Body, MaxResponseBodyExcerpt),
+		Summary:     summariseResponse(res.Body),
+	}
+}
+
+// TruncateUTF8 returns a string of at most n bytes from b, walking back
+// from the byte cap to the nearest UTF-8 rune boundary so the result is
+// always valid UTF-8 (no orphaned multi-byte sequences). EFB pages
+// contain German umlauts (2-byte UTF-8), so a naïve byte slice would
+// otherwise leave invalid bytes that JSON-encode as U+FFFD.
+func TruncateUTF8(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	b = b[:n]
+	for len(b) > 0 && !utf8.RuneStart(b[len(b)-1]) {
+		b = b[:len(b)-1]
+	}
+	// Drop the final start byte too — its trailing bytes were trimmed.
+	if len(b) > 0 {
+		if r, _ := utf8.DecodeLastRune(b); r == utf8.RuneError {
+			b = b[:len(b)-1]
+		}
+	}
+	return string(b)
+}
+
+// UploadRaw performs the same multipart POST as [EFBClient.Upload] but
+// returns the unparsed response (status, final URL, headers, body) instead
+// of classifying success/failure. The caller is responsible for inspecting
+// StatusCode / ContainsSuccessMarker / IsLoginPage.
+//
+// Network and request-construction errors are returned as a non-nil error
+// with a nil result; HTTP-level outcomes (any status code) populate the
+// result and return nil.
+func (c *EFBClient) UploadRaw(ctx context.Context, gpxData []byte, filename string) (*RawUploadResult, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
 	// The portal expects the file in a field named "selectFile".
 	part, err := writer.CreateFormFile("selectFile", filename)
 	if err != nil {
-		return fmt.Errorf("efb: failed to create form file field: %w", err)
+		return nil, fmt.Errorf("efb: failed to create form file field: %w", err)
 	}
 	if _, err = io.Copy(part, bytes.NewReader(gpxData)); err != nil {
-		return fmt.Errorf("efb: failed to write GPX data: %w", err)
+		return nil, fmt.Errorf("efb: failed to write GPX data: %w", err)
 	}
 
 	// The portal requires a submit-button field to trigger processing.
 	if err = writer.WriteField("uploadFile", "Datei hochladen"); err != nil {
-		return fmt.Errorf("efb: failed to write uploadFile field: %w", err)
+		return nil, fmt.Errorf("efb: failed to write uploadFile field: %w", err)
 	}
 
 	if err = writer.Close(); err != nil {
-		return fmt.Errorf("efb: failed to finalise multipart body: %w", err)
+		return nil, fmt.Errorf("efb: failed to finalise multipart body: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.uploadURL, body)
 	if err != nil {
-		return fmt.Errorf("efb: failed to build upload request: %w", err)
+		return nil, fmt.Errorf("efb: failed to build upload request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Connection", "keep-alive")
@@ -160,33 +261,31 @@ func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("efb: upload request failed: %w", err)
+		return nil, fmt.Errorf("efb: upload request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("efb: failed to read upload response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("efb: upload failed with status %d: %s",
-			resp.StatusCode, summariseResponse(respBody))
+		return nil, fmt.Errorf("efb: failed to read upload response: %w", err)
 	}
 
 	respText := string(respBody)
-
-	// The portal returns a page containing "Datenbank gespeichert" on success.
-	if strings.Contains(respText, "Datenbank gespeichert") {
-		return nil
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
 	}
 
-	// Detect session expiry: the portal redirected us to the login page.
-	if isLoginPage(respText) {
-		return fmt.Errorf("efb: session expired during upload (got login page)")
-	}
-
-	return fmt.Errorf("efb: upload did not succeed: %s", summariseResponse(respBody))
+	return &RawUploadResult{
+		RequestURL:            c.uploadURL,
+		FinalURL:              finalURL,
+		StatusCode:            resp.StatusCode,
+		Header:                resp.Header.Clone(),
+		Body:                  respBody,
+		BodySize:              len(respBody),
+		ContainsSuccessMarker: strings.Contains(respText, "Datenbank gespeichert"),
+		IsLoginPage:           isLoginPage(respText),
+	}, nil
 }
 
 // isLoginPage returns true if the HTML body looks like the EFB login page,

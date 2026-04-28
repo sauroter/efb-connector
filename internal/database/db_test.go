@@ -728,3 +728,280 @@ func TestDeleteUser_Cascade(t *testing.T) {
 
 	_ = runID // used above
 }
+
+// ──────────────────────────────────────────────
+// Response diagnostics (migration 0008) tests
+// ──────────────────────────────────────────────
+
+func TestRecordActivityWithResponse_StoresDiagnostics(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("diag@example.com")
+
+	body := "<html><body>silent reject content</body></html>"
+	err := db.RecordActivityWithResponse(
+		u.ID, "act-diag", "A", "kayaking", "2026-04-28",
+		"failed", "efb: upload did not succeed: ...",
+		200, len(body), body,
+	)
+	if err != nil {
+		t.Fatalf("RecordActivityWithResponse: %v", err)
+	}
+
+	got, err := db.GetFailedActivities(u.ID)
+	if err != nil {
+		t.Fatalf("GetFailedActivities: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 failed activity, got %d", len(got))
+	}
+	a := got[0]
+	if a.ResponseStatusCode != 200 {
+		t.Errorf("ResponseStatusCode = %d, want 200", a.ResponseStatusCode)
+	}
+	if a.ResponseSizeBytes != len(body) {
+		t.Errorf("ResponseSizeBytes = %d, want %d", a.ResponseSizeBytes, len(body))
+	}
+	if a.ResponseBodyExcerpt != body {
+		t.Errorf("ResponseBodyExcerpt = %q, want %q", a.ResponseBodyExcerpt, body)
+	}
+}
+
+func TestRecordActivityWithResponse_RotationCap(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("rotation@example.com")
+
+	// Insert 7 silent rejections in order, each with a unique body excerpt.
+	// synced_at uses datetime('now') with second-level precision in SQLite,
+	// so explicitly bump after each insert to make ordering deterministic.
+	for i := 1; i <= 7; i++ {
+		body := "body-" + itoa(i)
+		err := db.RecordActivityWithResponse(
+			u.ID, "act-"+itoa(i), "A", "kayaking", "2026-04-28",
+			"failed", "rejection", 200, len(body), body,
+		)
+		if err != nil {
+			t.Fatalf("RecordActivityWithResponse #%d: %v", i, err)
+		}
+		// Force monotonically increasing synced_at so the most-recent N
+		// keep the most-recent inserts even within the same second.
+		if _, err := db.db.Exec(
+			`UPDATE synced_activities
+			    SET synced_at = datetime('now', '+'||?||' seconds')
+			  WHERE garmin_activity_id = ?`,
+			i, "act-"+itoa(i),
+		); err != nil {
+			t.Fatalf("bump synced_at: %v", err)
+		}
+	}
+
+	// Trigger one more rotation pass so the cap is enforced after the
+	// final synced_at update above (the prune runs inside
+	// RecordActivityWithResponse, which uses the synced_at value at insert
+	// time — so we replay one of the rows to re-prune with the bumped
+	// timestamps).
+	body := "body-final"
+	if err := db.RecordActivityWithResponse(
+		u.ID, "act-7", "A", "kayaking", "2026-04-28",
+		"failed", "rejection", 200, len(body), body,
+	); err != nil {
+		t.Fatalf("RecordActivityWithResponse rotation pass: %v", err)
+	}
+
+	var nonNullCount int
+	if err := db.db.QueryRow(
+		`SELECT COUNT(*) FROM synced_activities WHERE response_body_excerpt IS NOT NULL`,
+	).Scan(&nonNullCount); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if nonNullCount != MaxStoredResponseBodies {
+		t.Errorf("non-null body excerpts = %d, want %d", nonNullCount, MaxStoredResponseBodies)
+	}
+
+	// Status code and size must remain on every failed row, only the body
+	// is rotated out. Expect 7 rows total with non-NULL status code.
+	var withStatus int
+	if err := db.db.QueryRow(
+		`SELECT COUNT(*) FROM synced_activities WHERE response_status_code IS NOT NULL`,
+	).Scan(&withStatus); err != nil {
+		t.Fatalf("count status: %v", err)
+	}
+	if withStatus != 7 {
+		t.Errorf("non-null status codes = %d, want 7", withStatus)
+	}
+}
+
+// TestRecordActivityWithResponse_RotationCap_SameSecond locks in the
+// id-based tiebreak when many inserts collide on the same second-precision
+// synced_at value. SQLite serialises writes (MaxOpenConns=1) and id
+// auto-increments, so the prune query's secondary sort by id DESC must
+// keep the highest-id rows.
+func TestRecordActivityWithResponse_RotationCap_SameSecond(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("same-second@example.com")
+
+	// Record 7 silent rejections back-to-back. datetime('now') likely
+	// returns the same value for all of them, so the id DESC tiebreak
+	// is what determines which 5 keep their excerpts.
+	var ids []int64
+	for i := 1; i <= 7; i++ {
+		body := "body-" + itoa(i)
+		if err := db.RecordActivityWithResponse(
+			u.ID, "act-"+itoa(i), "A", "k", "2026-04-28",
+			"failed", "rejection", 200, len(body), body,
+		); err != nil {
+			t.Fatalf("RecordActivityWithResponse #%d: %v", i, err)
+		}
+		var id int64
+		_ = db.db.QueryRow(
+			`SELECT id FROM synced_activities WHERE garmin_activity_id = ?`,
+			"act-"+itoa(i),
+		).Scan(&id)
+		ids = append(ids, id)
+	}
+
+	// Top-5 highest ids should retain their excerpts.
+	wantKept := map[int64]bool{
+		ids[2]: true, // 3
+		ids[3]: true, // 4
+		ids[4]: true, // 5
+		ids[5]: true, // 6
+		ids[6]: true, // 7
+	}
+
+	rows, err := db.db.Query(
+		`SELECT id, response_body_excerpt FROM synced_activities WHERE user_id = ?`,
+		u.ID,
+	)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var excerpt *string
+		if err := rows.Scan(&id, &excerpt); err != nil {
+			t.Fatal(err)
+		}
+		if wantKept[id] {
+			if excerpt == nil {
+				t.Errorf("id %d: expected excerpt retained, got NULL", id)
+			}
+		} else {
+			if excerpt != nil {
+				t.Errorf("id %d: expected excerpt pruned, got %q", id, *excerpt)
+			}
+		}
+	}
+}
+
+func TestRecordActivityWithResponse_NoExcerptDoesNotPrune(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("no-prune@example.com")
+
+	// Pre-populate 5 rows with full excerpts.
+	for i := 1; i <= MaxStoredResponseBodies; i++ {
+		_ = db.RecordActivityWithResponse(
+			u.ID, "act-"+itoa(i), "A", "k", "2026-04-28",
+			"failed", "rejection", 200, 10, "body",
+		)
+	}
+	// Now record a download failure: empty body excerpt should NOT prune
+	// the existing 5 stored bodies.
+	if err := db.RecordActivityWithResponse(
+		u.ID, "act-dl", "B", "k", "2026-04-28",
+		"failed", "garmin download failed", 0, 0, "",
+	); err != nil {
+		t.Fatalf("RecordActivityWithResponse download: %v", err)
+	}
+
+	var nonNull int
+	_ = db.db.QueryRow(
+		`SELECT COUNT(*) FROM synced_activities WHERE response_body_excerpt IS NOT NULL`,
+	).Scan(&nonNull)
+	if nonNull != MaxStoredResponseBodies {
+		t.Errorf("after empty-excerpt insert, non-null bodies = %d, want %d", nonNull, MaxStoredResponseBodies)
+	}
+}
+
+func TestGetRecentFailedActivities_IncludeBody(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("includebody@example.com")
+	_ = db.RecordActivityWithResponse(
+		u.ID, "act-x", "A", "k", "2026-04-28",
+		"failed", "rejection", 200, 10, "the-body-text",
+	)
+
+	without, _ := db.GetRecentFailedActivities(50, false)
+	if len(without) != 1 || without[0].ResponseBodyExcerpt != "" {
+		t.Errorf("includeBody=false: expected empty body excerpt, got %q", without[0].ResponseBodyExcerpt)
+	}
+	if without[0].ResponseStatusCode != 200 {
+		t.Errorf("includeBody=false: status code should still load, got %d", without[0].ResponseStatusCode)
+	}
+
+	with, _ := db.GetRecentFailedActivities(50, true)
+	if len(with) != 1 || with[0].ResponseBodyExcerpt != "the-body-text" {
+		t.Errorf("includeBody=true: body excerpt = %q, want %q",
+			with[0].ResponseBodyExcerpt, "the-body-text")
+	}
+}
+
+func TestGetFailedActivity_ByID(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("byid@example.com")
+	_ = db.RecordActivityWithResponse(
+		u.ID, "act-byid", "A", "k", "2026-04-28",
+		"failed", "rejection", 200, 10, "body-byid",
+	)
+	all, _ := db.GetRecentFailedActivities(50, true)
+	if len(all) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(all))
+	}
+
+	fa, err := db.GetFailedActivity(all[0].ID)
+	if err != nil {
+		t.Fatalf("GetFailedActivity: %v", err)
+	}
+	if fa == nil {
+		t.Fatal("GetFailedActivity returned nil")
+	}
+	if fa.ResponseBodyExcerpt != "body-byid" {
+		t.Errorf("body excerpt = %q, want %q", fa.ResponseBodyExcerpt, "body-byid")
+	}
+	if fa.Email != "byid@example.com" {
+		t.Errorf("email = %q", fa.Email)
+	}
+
+	// Non-existent ID returns nil, nil.
+	missing, err := db.GetFailedActivity(999_999)
+	if err != nil {
+		t.Errorf("GetFailedActivity missing returned error: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("expected nil for missing id, got %+v", missing)
+	}
+}
+
+// itoa is a tiny test helper to avoid importing strconv just for tests.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	const digits = "0123456789"
+	var b [20]byte
+	bp := len(b)
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	for i > 0 {
+		bp--
+		b[bp] = digits[i%10]
+		i /= 10
+	}
+	if neg {
+		bp--
+		b[bp] = '-'
+	}
+	return string(b[bp:])
+}

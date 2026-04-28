@@ -118,12 +118,18 @@ func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminActivityErrors returns recent failed/permanent_failure activities
 // across all users, with per-activity error details.
+//
+// By default the (potentially large) ResponseBodyExcerpt column is omitted.
+// Pass ?include_body=1 to include it for inspection of silent EFB
+// rejections that the existing diagnostics couldn't classify.
 func (s *Server) handleAdminActivityErrors(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInternalAuth(w, r) {
 		return
 	}
 
-	acts, err := s.db.GetRecentFailedActivities(50)
+	includeBody := r.URL.Query().Get("include_body") == "1"
+
+	acts, err := s.db.GetRecentFailedActivities(50, includeBody)
 	if err != nil {
 		s.logger.Error("admin: get recent activity errors", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -132,6 +138,85 @@ func (s *Server) handleAdminActivityErrors(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(acts)
+}
+
+// handleAdminActivityError returns a single failed activity by row ID,
+// always including the full ResponseBodyExcerpt. Used to drill into a
+// specific silent rejection without dragging back all 50 rows.
+func (s *Server) handleAdminActivityError(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid activity id", http.StatusBadRequest)
+		return
+	}
+
+	fa, err := s.db.GetFailedActivity(id)
+	if err != nil {
+		s.logger.Error("admin: get failed activity", "id", id, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if fa == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fa)
+}
+
+// handleAdminUserDebugUpload performs a one-shot dry-run EFB upload for an
+// admin operator: log in with the user's stored credentials, download a
+// Garmin activity, attempt the upload, return the raw EFB response.
+//
+// Does NOT mutate synced_activities or sync_runs. Used to inspect silent
+// EFB rejections in production.
+func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		GarminActivityID string `json:"garmin_activity_id"`
+	}
+	// Body is optional — empty body / no Content-Length is fine.
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	s.logger.Info("admin: debug upload", "user_id", userID, "garmin_activity_id", req.GarminActivityID)
+
+	// Allow up to 90 s — login + Garmin download + EFB upload can be slow.
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
+	result, err := s.syncEngine.DebugUploadOnce(ctx, userID, req.GarminActivityID)
+	if err != nil {
+		s.logger.Error("admin: debug upload failed", "user_id", userID, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // handleAdminSyncResendContacts creates/updates all users as Resend contacts
