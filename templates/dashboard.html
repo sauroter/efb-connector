@@ -28,9 +28,9 @@
         <a href="{{.EFBConsentURL}}" target="_blank" rel="noopener" role="button">
           {{call .T "dashboard.efb_consent_required.open_efb"}}
         </a>
-        <form method="POST" action="/sync/trigger" style="display: inline-block; margin-left: 0.5rem;">
+        <form method="POST" action="/sync/efb/recheck-consent" style="display: inline-block; margin-left: 0.5rem;">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <button type="submit" class="secondary">{{call .T "dashboard.efb_consent_required.retry_sync"}}</button>
+          <button type="submit" class="secondary">{{call .T "dashboard.efb_consent_required.confirm_consented"}}</button>
         </form>
       </p>
     </article>

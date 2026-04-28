@@ -559,6 +559,34 @@ func (s *SyncEngine) recordUploadFailure(userID int64, act activityToSync, uploa
 	)
 }
 
+// RecheckEFBConsent logs in with the user's stored EFB credentials and
+// runs CheckConsentGate, returning whether the gate is still active.
+// Used by the dashboard "I've accepted" button so the user can confirm
+// consent without triggering a full sync (and burning the rate limit).
+//
+// Routes through newEFBSession so dev mode uses the in-process mock and
+// production gets a fresh per-call EFBClient with its own cookie jar.
+//
+// Returns (consentRequired, nil) on a successful check, or (_, err) for
+// transport / login failures — the caller decides how to surface those.
+func (s *SyncEngine) RecheckEFBConsent(ctx context.Context, userID int64) (bool, error) {
+	username, password, err := s.db.GetEFBCredentials(userID)
+	if err != nil {
+		return false, fmt.Errorf("recheck-consent: get efb credentials: %w", err)
+	}
+
+	client := s.newEFBSession()
+	if err := client.Login(ctx, username, password); err != nil {
+		return false, fmt.Errorf("recheck-consent: efb login: %w", err)
+	}
+
+	consentRequired, err := client.CheckConsentGate(ctx)
+	if err != nil {
+		return false, fmt.Errorf("recheck-consent: check gate: %w", err)
+	}
+	return consentRequired, nil
+}
+
 // DebugUploadResult is the dry-run output of [SyncEngine.DebugUploadOnce]:
 // the captured upload attempt for an admin to inspect without mutating any
 // DB state.

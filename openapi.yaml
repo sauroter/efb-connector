@@ -935,6 +935,41 @@ paths:
         "429":
           description: Rate limit exceeded (1 per hour)
 
+  /sync/efb/recheck-consent:
+    post:
+      tags: [Dashboard]
+      summary: Re-check EFB v2026.1 track-usage consent gate
+      description: |
+        Used by the dashboard banner after the user clicks "ich stimme
+        zu" on the EFB portal. Performs a single GET against EFB to
+        verify the consent gate is gone, **bypassing** the per-user
+        sync rate limit so users can confirm immediately after
+        consenting.
+
+        - Still gated → flash `flash.efb_consent_still_required`,
+          banner remains.
+        - Cleared → clear `efb_credentials.consent_required`, kick off
+          one immediate sync via `SyncEngine.SyncUser` (also bypassing
+          the rate limit), flash `flash.efb_consent_confirmed`.
+        - Login or transport failure → flash
+          `flash.efb_consent_recheck_failed`, no state change.
+      operationId: postEFBRecheckConsent
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /dashboard with one of the flash messages above
+
   /sync/status:
     get:
       tags: [Dashboard]

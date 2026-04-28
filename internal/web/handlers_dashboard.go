@@ -373,9 +373,9 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("failed to mark efb consent required at save",
 				"user_id", userID, "error", mErr)
 		}
-		setFlash(w, "flash.efb_saved_consent_required")
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-		return
+		// The amber dashboard banner carries the action ask; the brief
+		// "saved" flash is kept just for transient confirmation that the
+		// credentials were stored.
 	}
 
 	setFlash(w, "flash.efb_saved")

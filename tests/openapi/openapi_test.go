@@ -40,6 +40,7 @@ var registeredRoutes = []string{
 	"POST /setup/configure",
 	"POST /account/delete",
 	"POST /sync/trigger",
+	"POST /sync/efb/recheck-consent",
 	"GET /sync/status",
 	"GET /sync/history",
 	"POST /feedback",

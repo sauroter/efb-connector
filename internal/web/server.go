@@ -152,6 +152,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /setup/configure", protect(s.handleSetupConfigure))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
+	mux.Handle("POST /sync/efb/recheck-consent", protect(s.handleEFBRecheckConsent))
 	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))
 	mux.Handle("GET /sync/history", protect(s.handleSyncHistory))
 	mux.Handle("POST /feedback", protect(s.handleFeedbackSubmit))
