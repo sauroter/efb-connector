@@ -23,6 +23,18 @@ import (
 	"efb-connector/internal/rivermap"
 )
 
+// EmailSender is the minimal email-sending dependency used by the
+// engine for user-facing notifications (e.g. EFB consent-required
+// emails). Implemented by *auth.AuthService in production and a fake in
+// tests; kept narrow here so the sync package doesn't import internal/auth.
+type EmailSender interface {
+	SendEmail(to, subject, htmlBody string) error
+}
+
+// ConsentEmailRateLimit caps how often a single user is emailed about
+// the EFB v2026.1 track-usage consent gate while it remains unresolved.
+const ConsentEmailRateLimit = 7 * 24 * time.Hour
+
 // SyncEngine orchestrates the per-user sync flow.
 type SyncEngine struct {
 	db     *database.DB
@@ -39,6 +51,14 @@ type SyncEngine struct {
 
 	// rivermap is the optional Rivermap client for trip enrichment. nil if not configured.
 	rivermap *rivermap.Client
+
+	// emailer sends the consent-required notification email. nil disables
+	// the email path (engine still flips the DB flag).
+	emailer EmailSender
+
+	// nowFunc returns the current time. Overridable in tests so the
+	// 7-day email rate limit can be exercised without sleeping.
+	nowFunc func() time.Time
 
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
 	sleepFunc func(min, max time.Duration)
@@ -62,6 +82,7 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 		newEFBSession:  newEFBSession,
 		logger:         logger,
 		tokenStoreBase: tokenBase,
+		nowFunc:        time.Now,
 		sleepFunc: func(min, max time.Duration) {
 			jitter := min + time.Duration(rand.Int64N(int64(max-min)))
 			time.Sleep(jitter)
@@ -77,6 +98,13 @@ func (s *SyncEngine) DisableSleep() {
 // SetRivermapClient sets the optional Rivermap client used for trip enrichment.
 func (s *SyncEngine) SetRivermapClient(c *rivermap.Client) {
 	s.rivermap = c
+}
+
+// SetEmailSender wires an email sender used for user-facing notifications
+// (currently: the EFB consent-required email). nil disables the email
+// path; the engine still flips the consent_required DB flag.
+func (s *SyncEngine) SetEmailSender(es EmailSender) {
+	s.emailer = es
 }
 
 // ErrInvalidDateRange is returned when the caller provides an invalid custom
@@ -375,24 +403,31 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		filename := fmt.Sprintf("garmin_%s.gpx", act.garminID)
 		uploadErr := efbClient.Upload(ctx, gpxData, filename)
 		if uploadErr != nil {
+			cat := classifyEFBError(uploadErr)
 			log.Error("failed to upload GPX to EFB",
 				"error", uploadErr,
-				"error_category", classifyEFBError(uploadErr),
+				"error_category", cat,
 			)
 			if recErr := s.recordUploadFailure(userID, act, uploadErr); recErr != nil {
 				log.Error("failed to record activity", "error", recErr)
 			}
-			if act.isRetry {
+			// Suppress retry-count increment on consent_required: it's a
+			// user-action gate, not a transient retriable failure, so we
+			// don't want activities marked permanent_failure while the
+			// banner is still asking the user to consent.
+			if act.isRetry && cat != "consent_required" {
 				if incErr := s.db.IncrementRetryCount(userID, act.garminID); incErr != nil {
 					log.Error("failed to increment retry count", "error", incErr)
 				}
 				s.checkAndMarkPermanentFailure(userID, act.garminID, log)
 			}
+			if cat == "consent_required" {
+				s.handleConsentRequired(userID, log)
+			}
 			failed++
 
 			// On session expiry or 5xx, stop this user's sync — remaining
 			// uploads would fail identically.
-			cat := classifyEFBError(uploadErr)
 			if cat == "session_expired" || cat == "server_error" {
 				log.Warn("EFB non-recoverable error, stopping sync for this user", "error_category", cat)
 				reason := fmt.Sprintf("skipped: EFB %s", cat)
@@ -417,6 +452,12 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		log.Info("activity uploaded successfully")
 		if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "success", ""); recErr != nil {
 			log.Error("failed to record successful activity", "error", recErr)
+		}
+		// Self-healing for the consent gate: any successful upload proves
+		// the user has consented, so clear the flag (idempotent — no-op
+		// when not set).
+		if clrErr := s.db.ClearEFBConsentRequired(userID); clrErr != nil {
+			log.Warn("failed to clear efb consent flag", "error", clrErr)
 		}
 		synced++
 
@@ -452,6 +493,48 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	return found, synced, skipped, failed, tripsCreated, nil
 }
 
+// handleConsentRequired flags the user as needing the EFB v2026.1
+// track-usage consent and dispatches a notification email if one
+// hasn't been sent in the last ConsentEmailRateLimit window. Failures
+// are logged and swallowed — the sync loop must keep going.
+func (s *SyncEngine) handleConsentRequired(userID int64, log *slog.Logger) {
+	if mErr := s.db.MarkEFBConsentRequired(userID); mErr != nil {
+		log.Error("failed to mark efb consent required", "error", mErr)
+		return
+	}
+
+	if s.emailer == nil {
+		return
+	}
+
+	_, notifiedAt, err := s.db.GetEFBConsentState(userID)
+	if err != nil {
+		log.Warn("failed to read efb consent state for rate limit", "error", err)
+		return
+	}
+	now := s.nowFunc()
+	if notifiedAt != nil && now.Sub(*notifiedAt) < ConsentEmailRateLimit {
+		return // within rate-limit window
+	}
+
+	user, err := s.db.GetUserByID(userID)
+	if err != nil || user == nil || user.Email == "" {
+		log.Warn("cannot send consent email: user lookup failed",
+			"error", err)
+		return
+	}
+
+	subject, body := efbConsentEmail(user.PreferredLang)
+	if sendErr := s.emailer.SendEmail(user.Email, subject, body); sendErr != nil {
+		log.Error("failed to send efb consent email", "error", sendErr)
+		return
+	}
+	if recErr := s.db.RecordEFBConsentNotified(userID, now); recErr != nil {
+		log.Warn("failed to record efb consent notified timestamp", "error", recErr)
+	}
+	log.Info("sent efb consent-required email", "to", user.Email)
+}
+
 // recordUploadFailure persists a failed-upload row, populating the
 // response_status_code / response_size_bytes / response_body_excerpt
 // columns when the error carries them (i.e. a *efb.UploadRejectedError —
@@ -474,6 +557,34 @@ func (s *SyncEngine) recordUploadFailure(userID int64, act activityToSync, uploa
 		userID, act.garminID, act.name, act.actType, act.date,
 		"failed", uploadErr.Error(),
 	)
+}
+
+// RecheckEFBConsent logs in with the user's stored EFB credentials and
+// runs CheckConsentGate, returning whether the gate is still active.
+// Used by the dashboard "I've accepted" button so the user can confirm
+// consent without triggering a full sync (and burning the rate limit).
+//
+// Routes through newEFBSession so dev mode uses the in-process mock and
+// production gets a fresh per-call EFBClient with its own cookie jar.
+//
+// Returns (consentRequired, nil) on a successful check, or (_, err) for
+// transport / login failures — the caller decides how to surface those.
+func (s *SyncEngine) RecheckEFBConsent(ctx context.Context, userID int64) (bool, error) {
+	username, password, err := s.db.GetEFBCredentials(userID)
+	if err != nil {
+		return false, fmt.Errorf("recheck-consent: get efb credentials: %w", err)
+	}
+
+	client := s.newEFBSession()
+	if err := client.Login(ctx, username, password); err != nil {
+		return false, fmt.Errorf("recheck-consent: efb login: %w", err)
+	}
+
+	consentRequired, err := client.CheckConsentGate(ctx)
+	if err != nil {
+		return false, fmt.Errorf("recheck-consent: check gate: %w", err)
+	}
+	return consentRequired, nil
 }
 
 // DebugUploadResult is the dry-run output of [SyncEngine.DebugUploadOnce]:
@@ -850,11 +961,15 @@ func isServer5xxError(err error) bool {
 // classifyEFBError returns a short category string for an EFB error, suitable
 // for use as a structured log field. Categories:
 //
-//	"session_expired" — the EFB session is invalid (got login page)
-//	"server_error"    — EFB returned a 5xx status
-//	"upload_rejected" — EFB returned 200 but without the success marker
-//	"network"         — connection/timeout error
-//	"unknown"         — anything else
+//	"session_expired"   — the EFB session is invalid (got login page)
+//	"server_error"      — EFB returned a 5xx status
+//	"consent_required"  — EFB v2026.1 track-usage consent gate active
+//	"upload_rejected"   — EFB returned 200 but without the success marker
+//	"network"           — connection/timeout error
+//	"unknown"           — anything else
+//
+// "consent_required" must be checked before "upload_rejected" because the
+// underlying error string contains both substrings on a consent-gate hit.
 func classifyEFBError(err error) string {
 	if err == nil {
 		return ""
@@ -865,6 +980,8 @@ func classifyEFBError(err error) string {
 		return "session_expired"
 	case isServer5xxError(err):
 		return "server_error"
+	case strings.Contains(msg, "EFB consent required"):
+		return "consent_required"
 	case strings.Contains(msg, "upload did not succeed"):
 		return "upload_rejected"
 	case strings.Contains(msg, "upload request failed"):

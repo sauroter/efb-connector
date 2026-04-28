@@ -174,6 +174,77 @@ func (d *DB) DeleteEFBCredentials(userID int64) error {
 	return nil
 }
 
+// MarkEFBConsentRequired sets consent_required=1 on the user's EFB row,
+// indicating that uploads are blocked by the EFB v2026.1 track-usage
+// consent gate until the user clicks "ich stimme zu" on the EFB portal.
+// Idempotent: a no-op when the flag is already set.
+func (d *DB) MarkEFBConsentRequired(userID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE efb_credentials
+		   SET consent_required = 1, updated_at = datetime('now')
+		 WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("database: mark efb consent required for user %d: %w", userID, err)
+	}
+	return nil
+}
+
+// ClearEFBConsentRequired sets consent_required=0 on the user's EFB row.
+// Called from the sync engine after a successful upload, so the dashboard
+// banner disappears as soon as the user consents and a sync re-runs.
+// Does not touch consent_notified_at — that timestamp persists across
+// resolve cycles to keep the email rate limit honest.
+func (d *DB) ClearEFBConsentRequired(userID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE efb_credentials
+		   SET consent_required = 0, updated_at = datetime('now')
+		 WHERE user_id = ? AND consent_required = 1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("database: clear efb consent required for user %d: %w", userID, err)
+	}
+	return nil
+}
+
+// GetEFBConsentState returns the user's consent flag and the timestamp
+// of the last consent-required notification email (or nil if never sent).
+// Returns (false, nil, nil) when the user has no efb_credentials row.
+func (d *DB) GetEFBConsentState(userID int64) (required bool, notifiedAt *time.Time, err error) {
+	var req int
+	var notified *string
+	err = d.db.QueryRow(`
+		SELECT consent_required, consent_notified_at
+		  FROM efb_credentials
+		 WHERE user_id = ?
+	`, userID).Scan(&req, &notified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil, nil
+	}
+	if err != nil {
+		return false, nil, fmt.Errorf("database: get efb consent state for user %d: %w", userID, err)
+	}
+	if notified != nil {
+		t, _ := parseTime(*notified)
+		notifiedAt = &t
+	}
+	return req == 1, notifiedAt, nil
+}
+
+// RecordEFBConsentNotified bumps consent_notified_at to at, used by the
+// sync engine to rate-limit consent-required emails (≤ once per 7 days).
+func (d *DB) RecordEFBConsentNotified(userID int64, at time.Time) error {
+	_, err := d.db.Exec(`
+		UPDATE efb_credentials
+		   SET consent_notified_at = ?, updated_at = datetime('now')
+		 WHERE user_id = ?
+	`, at.UTC().Format("2006-01-02 15:04:05"), userID)
+	if err != nil {
+		return fmt.Errorf("database: record efb consent notified for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // InvalidateEFBCredentials marks the EFB credentials for userID as invalid.
 func (d *DB) InvalidateEFBCredentials(userID int64, errMsg string) error {
 	_, err := d.db.Exec(`

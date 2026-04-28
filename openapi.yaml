@@ -935,6 +935,50 @@ paths:
         "429":
           description: Rate limit exceeded (1 per hour)
 
+  /sync/efb/recheck-consent:
+    post:
+      tags: [Dashboard]
+      summary: Re-check EFB v2026.1 track-usage consent gate
+      description: |
+        Used by the dashboard banner after the user clicks "ich stimme
+        zu" on the EFB portal. Performs a single GET against EFB to
+        verify the consent gate is gone, **bypassing** the per-user
+        1/hour sync rate limit so users can confirm immediately after
+        consenting.
+
+        Has its own (more permissive) per-user rate limit of 6/hour to
+        guard against runaway clients hammering EFB.
+
+        - Still gated → flash `flash.efb_consent_still_required`,
+          banner remains.
+        - Cleared → clear `efb_credentials.consent_required`, kick off
+          one immediate sync via `SyncEngine.SyncUser` (also bypassing
+          the sync rate limit), flash `flash.efb_consent_confirmed`.
+        - Login or transport failure → flash
+          `flash.efb_consent_recheck_failed`, no state change.
+        - Recheck rate limit exceeded (6/hour) → flash
+          `flash.efb_consent_recheck_rate_limited`, no state change.
+      operationId: postEFBRecheckConsent
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: |
+            Redirect to /dashboard with one of the flash messages above
+            (including the rate-limit flash when the 6/hour cap is hit;
+            the response code is still 303 because the user-facing UX
+            is a redirected flash, not an HTTP error).
+
   /sync/status:
     get:
       tags: [Dashboard]
@@ -1334,6 +1378,44 @@ paths:
           description: Unauthorized
         "500":
           description: Internal server error
+
+  /internal/admin/dev/mock-efb/consent-gate:
+    post:
+      tags: [Internal]
+      summary: (Dev only) Toggle MockEFBProvider consent gate
+      description: |
+        Flips the simulated EFB v2026.1 track-usage consent gate on the
+        in-process MockEFBProvider. Effective only when DEV_MODE=true; in
+        production the request returns 404 because the real EFBClient does
+        not implement the gate-control interface.
+
+        Used by the local consent-flow runbook to reproduce the silent
+        rejection without talking to real EFB.
+      operationId: postAdminDevMockEFBConsentGate
+      security:
+        - internalBearer: []
+      parameters:
+        - name: on
+          in: query
+          required: false
+          description: "Set to `1` to enable the gate, anything else (or omit) to clear it."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: New gate state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consent_gate:
+                    type: boolean
+                required: [consent_gate]
+        "401":
+          description: Unauthorized
+        "404":
+          description: Production deployment — mock provider not in use
 
   /internal/sync/run-all:
     post:

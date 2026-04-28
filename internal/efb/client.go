@@ -323,6 +323,35 @@ func (c *EFBClient) ValidateCredentials(ctx context.Context, username, password 
 	return nil
 }
 
+// CheckConsentGate reports whether the EFB tracks page is currently
+// rendering the v2026.1 track-usage consent page in place of the upload
+// form. The caller must already be authenticated (Login or
+// ValidateCredentials called on the same instance, so the cookie jar
+// carries the session).
+//
+// Returns (false, nil) for the success case (upload form available),
+// (true, nil) for the consent gate, and (false, err) for transport
+// failures or non-200 responses.
+func (c *EFBClient) CheckConsentGate(ctx context.Context) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.uploadURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("efb: build consent-check request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("efb: consent-check request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("efb: read consent-check response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("efb: consent-check returned status %d", resp.StatusCode)
+	}
+	return IsConsentRequiredBody(body), nil
+}
+
 // IsSessionValid reports whether the current session cookie is still accepted
 // by the portal.  It performs a GET to the upload page and checks that the
 // server does not redirect to the login page.
@@ -624,6 +653,25 @@ var efbHints = []struct {
 	{"Datei ist zu", "file size rejected"},
 	{"ungültig", "invalid file"},
 	{"Fehler beim", "processing error"},
+	{"der anonymisierten Verwendung Eurer Tracks zugestimmt",
+		"EFB consent required: open Meine Tracks and click 'ich stimme zu'"},
+}
+
+// consentPhrase and consentButtonName are the two markers of the EFB
+// v2026.1 track-usage consent gate. We require both to flag a body as
+// consent-page so a stray substring elsewhere can't false-positive.
+const (
+	consentPhrase     = "der anonymisierten Verwendung Eurer Tracks zugestimmt"
+	consentButtonName = `name="commit_tracks"`
+)
+
+// IsConsentRequiredBody reports whether body looks like the EFB
+// track-usage consent page that silently swallows uploads. Used by both
+// the sync engine (to flag the user) and the credentials-save flow (to
+// surface the requirement at setup time).
+func IsConsentRequiredBody(body []byte) bool {
+	return bytes.Contains(body, []byte(consentPhrase)) &&
+		bytes.Contains(body, []byte(consentButtonName))
 }
 
 // summariseResponse returns a concise summary of an HTML response body for

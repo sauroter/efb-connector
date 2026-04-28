@@ -88,6 +88,75 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
+// handleEFBRecheckConsent re-runs the EFB v2026.1 consent-gate check
+// for the signed-in user. Used by the dashboard banner after the user
+// clicks "ich stimme zu" on the EFB portal — they want to confirm the
+// gate is gone and resume sync, not trigger a full sync attempt that
+// might burn the per-user 1/hour rate limit and stay stuck.
+//
+// On confirmed consent we clear the flag and kick off one immediate
+// sync via SyncEngine.SyncUser (bypassing the user rate limiter — the
+// user explicitly took action to resume; this is not a poll). On a
+// still-gated response we leave the flag and surface a hint flash so
+// the user can retry.
+//
+// Routes the EFB call through SyncEngine.RecheckEFBConsent so dev mode
+// uses the in-process mock and production gets a fresh per-call client.
+func (s *Server) handleEFBRecheckConsent(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	// Recheck has its own (more permissive) rate limit, distinct from
+	// the 1/hour user sync limit. Guards against runaway clients
+	// hammering EFB while still letting honest users retry several
+	// times after consenting.
+	if !s.rateLimiter.AllowRecheckConsent(userID) {
+		setFlash(w, "flash.efb_consent_recheck_rate_limited")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	consentRequired, err := s.syncEngine.RecheckEFBConsent(ctx, userID)
+	if err != nil {
+		s.logger.Warn("efb consent recheck failed", "user_id", userID, "error", err)
+		setFlash(w, "flash.efb_consent_recheck_failed")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
+	if consentRequired {
+		s.logger.Info("efb consent recheck: still required", "user_id", userID)
+		setFlash(w, "flash.efb_consent_still_required")
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+
+	// Cleared — flip the flag and run one sync now.
+	if clrErr := s.db.ClearEFBConsentRequired(userID); clrErr != nil {
+		s.logger.Error("efb consent recheck: clear flag", "user_id", userID, "error", clrErr)
+	}
+	go func() {
+		log := s.logger.With("user_id", userID, "trigger", "manual")
+		log.Info("post-consent sync started")
+		runID, syncErr := s.syncEngine.SyncUser(context.Background(), userID, "manual")
+		if syncErr != nil {
+			log.Error("post-consent sync failed", "run_id", runID, "error", syncErr)
+		} else {
+			log.Info("post-consent sync completed", "run_id", runID)
+		}
+	}()
+
+	s.logger.Info("efb consent recheck: confirmed, sync triggered", "user_id", userID)
+	setFlash(w, "flash.efb_consent_confirmed")
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
 // handleSyncStatus returns an htmx partial with the current sync status.
 // Intended to be polled every few seconds from the dashboard.
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {

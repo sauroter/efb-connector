@@ -75,6 +75,12 @@ var De = map[string]string{
 	"dashboard.heading":       "Dashboard",
 	"dashboard.signed_in_as":  "Angemeldet als",
 
+	// ── EFB-Zustimmungs-Banner ──
+	"dashboard.efb_consent_required.heading":           "Aktion auf EFB erforderlich",
+	"dashboard.efb_consent_required.body":              "EFB verlangt deine Zustimmung zur Track-Nutzungsvereinbarung, bevor Uploads wieder laufen können. Öffne dazu „Meine Tracks“ auf EFB und klicke einmal auf „ich stimme zu“. Die nächste Synchronisation läuft dann automatisch wieder durch.",
+	"dashboard.efb_consent_required.open_efb":          "Meine Tracks auf EFB öffnen",
+	"dashboard.efb_consent_required.confirm_consented": "Ich habe zugestimmt",
+
 	// ── Getting started ──
 	"setup.heading":           "Erste Schritte",
 	"setup.intro":             "Richte dein Konto in vier Schritten ein:",
@@ -224,6 +230,10 @@ var De = map[string]string{
 	"flash.efb_invalid":             "EFB-Zugangsdaten sind ungültig. Bitte überprüfe sie und versuche es erneut.",
 	"flash.efb_saved":               "EFB-Zugangsdaten erfolgreich gespeichert.",
 	"flash.efb_removed":             "EFB-Zugangsdaten entfernt.",
+	"flash.efb_consent_still_required":      "Es sieht so aus, als hättest du noch nicht zugestimmt. Bitte klicke auf EFB auf „ich stimme zu“ und versuche es erneut.",
+	"flash.efb_consent_confirmed":           "Vielen Dank! Deine Zustimmung wurde erkannt — die Synchronisation läuft jetzt.",
+	"flash.efb_consent_recheck_failed":      "Verbindung zu EFB fehlgeschlagen. Bitte versuche es in ein paar Minuten erneut.",
+	"flash.efb_consent_recheck_rate_limited": "Du hast in der letzten Stunde schon mehrfach geprüft. Bitte warte einen Moment, bevor du es erneut versuchst.",
 	"flash.save_preferences_failed": "Einstellungen konnten nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.save_setting_failed":     "Einstellung konnte nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.delete_account_failed":   "Konto konnte nicht gelöscht werden. Bitte versuche es erneut.",

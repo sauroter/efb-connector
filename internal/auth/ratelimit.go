@@ -55,3 +55,14 @@ func (rl *RateLimiter) AllowSync(userID int64) bool {
 	key := fmt.Sprintf("sync-user:%d", userID)
 	return rl.getLimiter(key, 1).Allow()
 }
+
+// AllowRecheckConsent checks whether an EFB consent re-check is allowed
+// for the given user. The recheck endpoint deliberately bypasses the
+// per-user 1/hour sync rate limit (it isn't a poll — the user just
+// took action on EFB), so a separate, more permissive limit guards
+// against runaway clients hammering EFB on our behalf.
+// Limit: 6 per hour per user.
+func (rl *RateLimiter) AllowRecheckConsent(userID int64) bool {
+	key := fmt.Sprintf("recheck-consent:%d", userID)
+	return rl.getLimiter(key, 6).Allow()
+}

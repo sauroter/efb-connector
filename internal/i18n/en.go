@@ -75,6 +75,12 @@ var En = map[string]string{
 	"dashboard.heading":       "Dashboard",
 	"dashboard.signed_in_as":  "Signed in as",
 
+	// ── EFB consent banner ──
+	"dashboard.efb_consent_required.heading":           "Action required on EFB",
+	"dashboard.efb_consent_required.body":              "EFB requires you to accept the track-usage agreement before uploads can resume. Open Meine Tracks on EFB and click \"ich stimme zu\" once. The next sync will then run through automatically.",
+	"dashboard.efb_consent_required.open_efb":          "Open Meine Tracks on EFB",
+	"dashboard.efb_consent_required.confirm_consented": "I've accepted",
+
 	// ── Getting started ──
 	"setup.heading":           "Getting Started",
 	"setup.intro":             "Set up your account in four steps:",
@@ -224,6 +230,10 @@ var En = map[string]string{
 	"flash.efb_invalid":             "EFB credentials are invalid. Please check and try again.",
 	"flash.efb_saved":               "EFB credentials saved successfully.",
 	"flash.efb_removed":             "EFB credentials removed.",
+	"flash.efb_consent_still_required":      "It looks like consent hasn't been recorded yet. Please click \"ich stimme zu\" on EFB and try again.",
+	"flash.efb_consent_confirmed":           "Thanks! Consent confirmed — sync is running now.",
+	"flash.efb_consent_recheck_failed":      "Couldn't reach EFB to verify consent. Please try again in a few minutes.",
+	"flash.efb_consent_recheck_rate_limited": "You've checked a few times in the last hour. Please give it a moment before trying again.",
 	"flash.save_preferences_failed": "Failed to save preferences. Please try again.",
 	"flash.save_setting_failed":     "Failed to save setting. Please try again.",
 	"flash.delete_account_failed":   "Failed to delete account. Please try again.",

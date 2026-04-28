@@ -982,6 +982,107 @@ func TestGetFailedActivity_ByID(t *testing.T) {
 	}
 }
 
+// ──────────────────────────────────────────────
+// EFB consent state (migration 0009) tests
+// ──────────────────────────────────────────────
+
+func TestEFBConsent_SetClearGet(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("consent@example.com")
+	if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+
+	// Initial state: not required.
+	required, notifiedAt, err := db.GetEFBConsentState(u.ID)
+	if err != nil {
+		t.Fatalf("GetEFBConsentState: %v", err)
+	}
+	if required {
+		t.Error("initial consent_required should be false")
+	}
+	if notifiedAt != nil {
+		t.Errorf("initial consent_notified_at should be nil, got %v", notifiedAt)
+	}
+
+	// Mark.
+	if err := db.MarkEFBConsentRequired(u.ID); err != nil {
+		t.Fatalf("MarkEFBConsentRequired: %v", err)
+	}
+	required, _, _ = db.GetEFBConsentState(u.ID)
+	if !required {
+		t.Error("after Mark: consent_required should be true")
+	}
+
+	// Mark again is idempotent.
+	if err := db.MarkEFBConsentRequired(u.ID); err != nil {
+		t.Errorf("second Mark should be idempotent, got: %v", err)
+	}
+
+	// Clear.
+	if err := db.ClearEFBConsentRequired(u.ID); err != nil {
+		t.Fatalf("ClearEFBConsentRequired: %v", err)
+	}
+	required, _, _ = db.GetEFBConsentState(u.ID)
+	if required {
+		t.Error("after Clear: consent_required should be false")
+	}
+
+	// Clear when already clear is idempotent.
+	if err := db.ClearEFBConsentRequired(u.ID); err != nil {
+		t.Errorf("second Clear should be idempotent, got: %v", err)
+	}
+}
+
+func TestEFBConsent_RecordNotified(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("notified@example.com")
+	if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	if err := db.RecordEFBConsentNotified(u.ID, now); err != nil {
+		t.Fatalf("RecordEFBConsentNotified: %v", err)
+	}
+
+	_, notifiedAt, err := db.GetEFBConsentState(u.ID)
+	if err != nil {
+		t.Fatalf("GetEFBConsentState: %v", err)
+	}
+	if notifiedAt == nil {
+		t.Fatal("expected notified_at to be set")
+	}
+	// Allow second-level precision drift via SQLite text round-trip.
+	if !notifiedAt.Equal(now) && notifiedAt.Sub(now).Abs() > time.Second {
+		t.Errorf("notified_at = %v, want ≈ %v", *notifiedAt, now)
+	}
+
+	// Clear should preserve notified_at (rate limit must outlive resolve).
+	_ = db.ClearEFBConsentRequired(u.ID)
+	_, notifiedAt2, _ := db.GetEFBConsentState(u.ID)
+	if notifiedAt2 == nil {
+		t.Error("Clear should not wipe consent_notified_at")
+	}
+}
+
+func TestEFBConsent_NoCredentialsRow(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("nocreds@example.com")
+
+	// User exists but has no efb_credentials row.
+	required, notifiedAt, err := db.GetEFBConsentState(u.ID)
+	if err != nil {
+		t.Errorf("expected nil error for missing row, got: %v", err)
+	}
+	if required {
+		t.Error("missing row should report required=false")
+	}
+	if notifiedAt != nil {
+		t.Error("missing row should report notifiedAt=nil")
+	}
+}
+
 // itoa is a tiny test helper to avoid importing strconv just for tests.
 func itoa(i int) string {
 	if i == 0 {

@@ -121,8 +121,16 @@ func run(logger *slog.Logger) error {
 
 	if devMode {
 		garminProvider = garmin.NewMockGarminProvider()
-		efbProvider = efb.NewMockEFBProvider(logger)
-		newEFBSession = func() efb.EFBProvider { return efb.NewMockEFBProvider(logger) }
+		mock := efb.NewMockEFBProvider(logger)
+		if os.Getenv("DEV_MOCK_EFB_CONSENT") == "1" {
+			mock.SetConsentGate(true)
+			logger.Warn("DEV_MOCK_EFB_CONSENT=1 — mock EFB starts in consent-gated state")
+		}
+		// Share the single mock across web handlers and the per-sync
+		// factory so the dev-only consent-gate toggle is observable from
+		// every code path (settings save, sync engine, debug-upload).
+		efbProvider = mock
+		newEFBSession = func() efb.EFBProvider { return mock }
 	} else {
 		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py", encryptionKey)
 		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
@@ -150,6 +158,7 @@ func run(logger *slog.Logger) error {
 	if rivermapClient != nil {
 		syncEngine.SetRivermapClient(rivermapClient)
 	}
+	syncEngine.SetEmailSender(authService)
 	if devMode {
 		syncEngine.DisableSleep()
 	}

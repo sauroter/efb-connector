@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"efb-connector/internal/efb"
 )
 
 // handleAdminStatus returns system-wide statistics.
@@ -217,6 +219,38 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleAdminDevMockEFBConsentGate toggles the simulated EFB consent
+// gate on the in-process MockEFBProvider. Only effective in DEV_MODE,
+// where s.efb is the mock; in production s.efb is *efb.EFBClient which
+// does not implement efb.ConsentGateController, so this returns 404.
+//
+// Usage:
+//
+//	curl -X POST -H "Authorization: Bearer dev-secret" \
+//	     "http://localhost:8080/internal/admin/dev/mock-efb/consent-gate?on=1"
+//
+// Pass on=1 to simulate EFB v2026.1's track-usage consent gate, on=0 to
+// resume normal mock behavior.
+func (s *Server) handleAdminDevMockEFBConsentGate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	ctrl, ok := s.efb.(efb.ConsentGateController)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	on := r.URL.Query().Get("on") == "1"
+	ctrl.SetConsentGate(on)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"consent_gate": ctrl.ConsentGate(),
+	})
 }
 
 // handleAdminSyncResendContacts creates/updates all users as Resend contacts

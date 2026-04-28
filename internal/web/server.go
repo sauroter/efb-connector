@@ -152,6 +152,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /setup/configure", protect(s.handleSetupConfigure))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))
 	mux.Handle("POST /sync/trigger", protect(s.handleSyncTrigger))
+	mux.Handle("POST /sync/efb/recheck-consent", protect(s.handleEFBRecheckConsent))
 	mux.Handle("GET /sync/status", protect(s.handleSyncStatus))
 	mux.Handle("GET /sync/history", protect(s.handleSyncHistory))
 	mux.Handle("POST /feedback", protect(s.handleFeedbackSubmit))
@@ -169,6 +170,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/feedback", s.handleAdminFeedback)
 	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
 	mux.HandleFunc("POST /internal/admin/sync-resend-contacts", s.handleAdminSyncResendContacts)
+	// Dev-only: toggles the simulated consent gate on MockEFBProvider.
+	// Returns 404 in production where s.efb is *efb.EFBClient.
+	mux.HandleFunc("POST /internal/admin/dev/mock-efb/consent-gate", s.handleAdminDevMockEFBConsentGate)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Wrap the entire mux in middleware: i18n → security → logging → recovery.

@@ -40,6 +40,7 @@ var registeredRoutes = []string{
 	"POST /setup/configure",
 	"POST /account/delete",
 	"POST /sync/trigger",
+	"POST /sync/efb/recheck-consent",
 	"GET /sync/status",
 	"GET /sync/history",
 	"POST /feedback",
@@ -55,6 +56,7 @@ var registeredRoutes = []string{
 	"GET /internal/admin/feedback",
 	"POST /internal/admin/notify-garmin-upgrade",
 	"POST /internal/admin/sync-resend-contacts",
+	"POST /internal/admin/dev/mock-efb/consent-gate",
 	"GET /health",
 }
 

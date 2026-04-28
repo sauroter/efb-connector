@@ -1012,6 +1012,104 @@ func TestSummariseResponse(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// EFB v2026.1 track-usage consent gate
+// ---------------------------------------------------------------------------
+
+// consentGateBody is a minimal stand-in for the real EFB consent page.
+// It must contain both the German marker phrase and the commit_tracks
+// button name to be recognised.
+const consentGateBody = `<html><head><title>eFB</title></head><body>
+<p>Das Hochladen kann erst durchgeführt werden, wenn Ihr
+   der anonymisierten Verwendung Eurer Tracks zugestimmt habt.</p>
+<form method="post"><input type="submit" name="commit_tracks" value="ich stimme zu"/></form>
+</body></html>`
+
+func TestIsConsentRequiredBody(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"matches consent page", consentGateBody, true},
+		{"phrase only, no button", `nur die anonymisierten Verwendung Eurer Tracks zugestimmt - keine form`, false},
+		{"button only, no phrase", `<input name="commit_tracks">`, false},
+		{"empty body", ``, false},
+		{"normal upload page", `<form><input type="file" name="selectFile"/></form>`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsConsentRequiredBody([]byte(tc.body))
+			if got != tc.want {
+				t.Errorf("IsConsentRequiredBody(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSummariseResponse_ConsentHint(t *testing.T) {
+	got := summariseResponse([]byte(consentGateBody))
+	if !strings.Contains(got, "EFB consent required") {
+		t.Errorf("summary missing consent hint, got: %q", got)
+	}
+}
+
+// newMockServerConsentGate authenticates any user and answers GET on
+// /interpretation/usersmap with the consent-gate page (no upload form).
+func newMockServerConsentGate(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(consentGateBody))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestCheckConsentGate_Required(t *testing.T) {
+	srv := newMockServerConsentGate(t)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	required, err := c.CheckConsentGate(context.Background())
+	if err != nil {
+		t.Fatalf("CheckConsentGate: %v", err)
+	}
+	if !required {
+		t.Error("expected consent_required=true on consent-gate page")
+	}
+}
+
+func TestCheckConsentGate_NotRequired(t *testing.T) {
+	// newMockServer returns "<html>usersmap</html>" on GET — no consent
+	// markers, so the helper should report not-required.
+	srv := newMockServer(t)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "valid", "correct"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	required, err := c.CheckConsentGate(context.Background())
+	if err != nil {
+		t.Fatalf("CheckConsentGate: %v", err)
+	}
+	if required {
+		t.Error("expected consent_required=false on normal tracks page")
+	}
+}
+
 func TestParseFormFields_HTMLEntityUnescaping(t *testing.T) {
 	html := `<form>
 <input type="hidden" name="location" value="M&uuml;nchen &amp; Berlin">

@@ -115,4 +115,11 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 	`ALTER TABLE synced_activities ADD COLUMN response_status_code INTEGER;
 ALTER TABLE synced_activities ADD COLUMN response_size_bytes  INTEGER;
 ALTER TABLE synced_activities ADD COLUMN response_body_excerpt TEXT;`,
+
+	// 0009 – track EFB v2026.1 track-usage consent state per user. Set when
+	// an upload (or settings save) hits the consent gate; cleared on first
+	// successful upload. consent_notified_at rate-limits the user-facing
+	// notification email to ≤ once per 7 days.
+	`ALTER TABLE efb_credentials ADD COLUMN consent_required INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE efb_credentials ADD COLUMN consent_notified_at TEXT;`,
 }
