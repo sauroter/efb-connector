@@ -18,11 +18,11 @@ import (
 // AuthService is the central authentication service. It bridges the database
 // layer with HTTP concerns such as cookies, tokens, and email delivery.
 type AuthService struct {
-	db            *database.DB
-	resendAPIKey  string
-	baseURL       string
-	emailFrom     string
-	encryptionKey []byte // used to derive CSRF secret via HKDF
+	db           *database.DB
+	resendAPIKey string
+	baseURL      string
+	emailFrom    string
+	csrfSecret   []byte // 32 bytes derived from encryptionKey at construction
 
 	// Resend contacts integration (nil = disabled).
 	Resend         *resend.Client
@@ -35,16 +35,20 @@ type AuthService struct {
 //   - baseURL is the application base URL, e.g. "https://efb.example.com".
 //   - encryptionKey must be 32 bytes (AES-256); it is used to derive CSRF
 //     secrets via HKDF.
+//
+// HKDF derivation cannot fail for a non-empty key, so any failure here is
+// treated as a programming error and surfaces as a panic at startup rather
+// than per-request. Callers in main() abort before serving any traffic.
 func NewAuthService(db *database.DB, resendAPIKey, baseURL, emailFrom string, encryptionKey []byte) *AuthService {
 	if emailFrom == "" {
 		emailFrom = "EFB Connector <noreply@efb-connector.com>"
 	}
 	return &AuthService{
-		db:            db,
-		resendAPIKey:  resendAPIKey,
-		baseURL:       baseURL,
-		emailFrom:     emailFrom,
-		encryptionKey: encryptionKey,
+		db:           db,
+		resendAPIKey: resendAPIKey,
+		baseURL:      baseURL,
+		emailFrom:    emailFrom,
+		csrfSecret:   deriveCSRFSecret(encryptionKey),
 	}
 }
 

@@ -68,12 +68,9 @@ func NewEFBClient(baseURL string) *EFBClient {
 	// Strip trailing slash for predictable URL construction.
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		// cookiejar.New only returns an error when the PublicSuffixList is
-		// non-nil and malformed, which cannot happen with a nil argument.
-		panic(fmt.Sprintf("efb: failed to create cookie jar: %v", err))
-	}
+	// cookiejar.New only returns a non-nil error when given a non-nil
+	// Options with a malformed PublicSuffixList; with nil it cannot fail.
+	jar, _ := cookiejar.New(nil)
 
 	return &EFBClient{
 		baseURL:   baseURL,

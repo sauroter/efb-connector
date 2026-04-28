@@ -17,20 +17,21 @@ import (
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
 	syncsvc "efb-connector/internal/sync"
+	"efb-connector/internal/testutil"
 	"efb-connector/internal/web"
 )
 
-var testKey = []byte("12345678901234567890123456789012")
+var testKey = testutil.TestKey
 
 // testServer bundles the httptest server, auth service, and mocks so that
 // individual tests can inspect state.
 type testServer struct {
-	srv     *httptest.Server
-	db      *database.DB
-	auth    *auth.AuthService
-	garmin  *garmin.MockGarminProvider
-	efb     *efb.MockEFBProvider
-	client  *http.Client // follows redirects, has cookie jar
+	srv    *httptest.Server
+	db     *database.DB
+	auth   *auth.AuthService
+	garmin *garmin.MockGarminProvider
+	efb    *efb.MockEFBProvider
+	client *http.Client // follows redirects, has cookie jar
 }
 
 func newTestServer(t *testing.T) *testServer {
@@ -47,8 +48,7 @@ func newTestServer(t *testing.T) *testServer {
 	rateLimiter := auth.NewRateLimiter()
 	gp := garmin.NewMockGarminProvider()
 	ep := efb.NewMockEFBProvider(logger)
-	syncEngine := syncsvc.NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, logger)
-	syncEngine.DisableSleep()
+	syncEngine := syncsvc.NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, logger, syncsvc.WithoutSleep())
 
 	s, err := web.NewServer(web.ServerDeps{
 		DB:             db,
@@ -243,14 +243,10 @@ func TestIntegration_SyncTrigger(t *testing.T) {
 	}
 
 	// Wait for the background sync goroutine to finish.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.WaitFor(t, 5*time.Second, 50*time.Millisecond, "sync run to finish", func() bool {
 		runs, _ := ts.db.GetSyncHistory(userID, 1)
-		if len(runs) > 0 && runs[0].Status != "running" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return len(runs) > 0 && runs[0].Status != "running"
+	})
 
 	// Verify sync completed.
 	runs, err := ts.db.GetSyncHistory(userID, 1)
@@ -290,14 +286,10 @@ func TestIntegration_SyncHistory(t *testing.T) {
 	resp.Body.Close()
 
 	// Wait for sync to finish.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.WaitFor(t, 5*time.Second, 50*time.Millisecond, "sync run to finish", func() bool {
 		runs, _ := ts.db.GetSyncHistory(userID, 1)
-		if len(runs) > 0 && runs[0].Status != "running" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return len(runs) > 0 && runs[0].Status != "running"
+	})
 
 	// Load sync history page.
 	resp, err := ts.client.Get(ts.srv.URL + "/sync/history")

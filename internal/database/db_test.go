@@ -1,6 +1,8 @@
 package database
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1080,6 +1082,76 @@ func TestEFBConsent_NoCredentialsRow(t *testing.T) {
 	}
 	if notifiedAt != nil {
 		t.Error("missing row should report notifiedAt=nil")
+	}
+}
+
+// TestCredentialEncryption_WrongKey verifies that re-opening the database
+// with a different encryption key surfaces a clean error when reading
+// credentials, and that the error does not leak plaintext or key bytes.
+func TestCredentialEncryption_WrongKey(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rotation.db")
+
+	keyA := []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	keyB := []byte("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+
+	// 1. Open with key A, save credentials.
+	dbA, err := Open(dbPath, keyA)
+	if err != nil {
+		t.Fatalf("Open keyA: %v", err)
+	}
+	user, err := dbA.CreateUser("rotate@example.com")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := dbA.SaveGarminCredentials(user.ID, "garmin@example.com", "supersecret"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := dbA.SaveEFBCredentials(user.ID, "efbuser", "efbsecret"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+	dbA.Close()
+
+	// 2. Reopen with key B, attempt to read.
+	dbB, err := Open(dbPath, keyB)
+	if err != nil {
+		t.Fatalf("Open keyB: %v", err)
+	}
+	t.Cleanup(func() { dbB.Close() })
+
+	_, _, errG := dbB.GetGarminCredentials(user.ID)
+	if errG == nil {
+		t.Fatal("GetGarminCredentials with wrong key should fail")
+	}
+	_, _, errE := dbB.GetEFBCredentials(user.ID)
+	if errE == nil {
+		t.Fatal("GetEFBCredentials with wrong key should fail")
+	}
+
+	// 3. Errors must not leak plaintext or key material.
+	for _, e := range []error{errG, errE} {
+		msg := e.Error()
+		if strings.Contains(msg, "supersecret") || strings.Contains(msg, "efbsecret") {
+			t.Errorf("error message leaks plaintext: %q", msg)
+		}
+		if strings.Contains(msg, string(keyA)) || strings.Contains(msg, string(keyB)) {
+			t.Errorf("error message leaks key material: %q", msg)
+		}
+	}
+
+	// 4. Re-opening with the original key should still work.
+	dbA2, err := Open(dbPath, keyA)
+	if err != nil {
+		t.Fatalf("Open keyA again: %v", err)
+	}
+	t.Cleanup(func() { dbA2.Close() })
+
+	email, password, err := dbA2.GetGarminCredentials(user.ID)
+	if err != nil {
+		t.Fatalf("GetGarminCredentials with original key: %v", err)
+	}
+	if email != "garmin@example.com" || password != "supersecret" {
+		t.Errorf("round-trip mismatch: got (%q, %q)", email, password)
 	}
 }
 
