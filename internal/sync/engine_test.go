@@ -941,11 +941,11 @@ func TestSyncUserWithOptions_RangeTooLarge(t *testing.T) {
 
 // mockEFBProvider implements efb.EFBProvider with controllable behaviour.
 type mockEFBProvider struct {
-	loginErr          error
-	uploadErr         error
-	findTrackResult   string
-	findTrackErr      error
-	createTripErr     error
+	loginErr        error
+	uploadErr       error
+	findTrackResult string
+	findTrackErr    error
+	createTripErr   error
 
 	// Call tracking.
 	findTrackCalled   bool
@@ -1288,7 +1288,7 @@ func TestSync_RivermapEnrichment(t *testing.T) {
 	}
 	gp := &mockGarminProvider{activities: acts}
 	engine := newEngineWithProvider(db, gp, mockEFB)
-	engine.SetRivermapClient(rmClient)
+	engine.rivermap = rmClient
 
 	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
 	if err != nil {
@@ -1426,7 +1426,7 @@ func TestSync_RivermapEnrichment_NoSectionMatch(t *testing.T) {
 	}
 	gp := &mockGarminProvider{activities: acts}
 	engine := newEngineWithProvider(db, gp, mockEFB)
-	engine.SetRivermapClient(rmClient)
+	engine.rivermap = rmClient
 
 	_, err := engine.SyncUser(context.Background(), user.ID, "manual")
 	if err != nil {
@@ -1690,7 +1690,7 @@ func TestSyncUser_DetectsConsentRequired_SetsFlagAndEmails(t *testing.T) {
 	engine := newEngine(db, gp, ec)
 
 	emailer := &fakeEmailSender{}
-	engine.SetEmailSender(emailer)
+	engine.emailer = emailer
 
 	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
 		t.Fatalf("SyncUser: %v", err)
@@ -1731,7 +1731,7 @@ func TestSyncUser_ConsentRequired_RateLimitsEmail(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 	emailer := &fakeEmailSender{}
-	engine.SetEmailSender(emailer)
+	engine.emailer = emailer
 
 	// Anchor time and step it deterministically.
 	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)

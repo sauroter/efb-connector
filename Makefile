@@ -1,7 +1,9 @@
-.PHONY: dev dev-consent build test lint clean
+.PHONY: dev dev-consent build test cover lint lint-install clean
 
 ENCRYPTION_KEY ?= $(shell openssl rand -base64 32)
 VERSION ?= $(shell git describe --tags --always --dirty)
+GOLANGCI_LINT_VERSION ?= v2.11.4
+GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
 
 dev:
 	DEV_MODE=true ENCRYPTION_KEY=$(ENCRYPTION_KEY) go run ./cmd/server
@@ -19,8 +21,16 @@ build:
 test:
 	go test ./...
 
+cover:
+	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go tool cover -func=coverage.out | tail -20
+
 lint:
-	go vet ./...
+	@test -x "$(GOLANGCI_LINT)" || (echo "golangci-lint not found; run 'make lint-install'" && exit 1)
+	$(GOLANGCI_LINT) run ./...
+
+lint-install:
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 clean:
-	rm -f efb-connector gpx-uploader efb-connector.db
+	rm -f efb-connector efb-connector.db coverage.out

@@ -81,21 +81,23 @@ func (s *AuthService) CSRFToken(r *http.Request) string {
 
 // csrfToken computes HMAC-SHA256(sessionToken, csrfSecret).
 func (s *AuthService) csrfToken(sessionToken string) string {
-	secret := s.deriveCSRFSecret()
-	mac := hmac.New(sha256.New, secret)
+	mac := hmac.New(sha256.New, s.csrfSecret)
 	mac.Write([]byte(sessionToken))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// deriveCSRFSecret uses HKDF-SHA256 to derive a 32-byte CSRF secret from the
-// encryption key.
-func (s *AuthService) deriveCSRFSecret() []byte {
-	reader := hkdf.New(sha256.New, s.encryptionKey, nil, []byte("efb-connector-csrf"))
+// deriveCSRFSecret derives a 32-byte CSRF secret from the encryption key
+// using HKDF-SHA256. Called once at AuthService construction time.
+//
+// Per RFC 5869, HKDF-Extract+Expand with SHA-256 cannot fail for any
+// non-zero PRK length, so any error from io.ReadFull here would indicate
+// an upstream bug. We surface it loudly rather than silently returning a
+// zero secret which would render every CSRF check trivially forgeable.
+func deriveCSRFSecret(encryptionKey []byte) []byte {
+	reader := hkdf.New(sha256.New, encryptionKey, nil, []byte("efb-connector-csrf"))
 	secret := make([]byte, 32)
 	if _, err := io.ReadFull(reader, secret); err != nil {
-		// This should never fail given a valid key, but panic to avoid
-		// silently using a zero key.
-		panic("auth: HKDF derivation failed: " + err.Error())
+		panic("auth: HKDF derivation failed at startup: " + err.Error())
 	}
 	return secret
 }

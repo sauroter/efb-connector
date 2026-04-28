@@ -22,9 +22,6 @@ make clean
 
 # Run a single test
 go test ./... -run TestName
-
-# Build the CLI tool (preserved)
-go build -o gpx-uploader ./cmd/cli
 ```
 
 ## Project Overview
@@ -62,15 +59,3 @@ The server is configured via environment variables:
 
 The full REST API is documented in [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1). A validation test in `tests/openapi/` ensures the spec stays in sync with registered routes — add new endpoints to both `server.go` and `openapi.yaml`.
 
-## CLI Tool (preserved)
-
-The original CLI tool is preserved at `cmd/cli/`:
-
-```bash
-./gpx-uploader path/to/file.gpx
-```
-
-Credentials are resolved in this order:
-1. **1Password CLI** (if configured in `config.json`)
-2. **Environment variables:** `EFBUSERNAME` and `EFBPASSWORD`
-3. **Interactive prompts** (fallback)

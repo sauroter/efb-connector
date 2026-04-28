@@ -154,14 +154,14 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, newEFBSession, logger)
+	syncOpts := []syncsvc.Option{syncsvc.WithEmailer(authService)}
 	if rivermapClient != nil {
-		syncEngine.SetRivermapClient(rivermapClient)
+		syncOpts = append(syncOpts, syncsvc.WithRivermap(rivermapClient))
 	}
-	syncEngine.SetEmailSender(authService)
 	if devMode {
-		syncEngine.DisableSleep()
+		syncOpts = append(syncOpts, syncsvc.WithoutSleep())
 	}
+	syncEngine := syncsvc.NewSyncEngine(db, garminProvider, newEFBSession, logger, syncOpts...)
 
 	// ── Create server ──
 

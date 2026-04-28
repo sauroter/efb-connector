@@ -7,22 +7,12 @@ on:
     branches: [master]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - run: go mod download
-      - run: go vet ./...
-      - run: go test ./...
+  quality:
+    uses: ./.github/workflows/_quality.yml
 
   build:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [quality]
     steps:
       - uses: actions/checkout@v5
 

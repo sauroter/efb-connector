@@ -232,6 +232,10 @@ func isValidEmail(email string) bool {
 		// '@' not present, or local part is empty.
 		return false
 	}
+	if strings.IndexByte(email[at+1:], '@') != -1 {
+		// More than one '@'.
+		return false
+	}
 	domain := email[at+1:]
 	if len(domain) == 0 {
 		return false

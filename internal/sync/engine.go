@@ -64,11 +64,36 @@ type SyncEngine struct {
 	sleepFunc func(min, max time.Duration)
 }
 
+// Option configures a [SyncEngine] at construction time.
+type Option func(*SyncEngine)
+
+// WithRivermap enables Rivermap enrichment for trip entries.
+func WithRivermap(c *rivermap.Client) Option {
+	return func(s *SyncEngine) { s.rivermap = c }
+}
+
+// WithEmailer wires the email sender used for user-facing notifications
+// (currently: the EFB consent-required email). When unset the engine still
+// flips the consent_required DB flag but no email is dispatched.
+func WithEmailer(es EmailSender) Option {
+	return func(s *SyncEngine) { s.emailer = es }
+}
+
+// WithoutSleep removes inter-upload delays. Intended for tests and dev mode.
+func WithoutSleep() Option {
+	return func(s *SyncEngine) {
+		s.sleepFunc = func(_, _ time.Duration) {}
+	}
+}
+
 // NewSyncEngine creates a SyncEngine with the given dependencies.
 // newEFBSession is called once per user sync to obtain a fresh EFBProvider
 // with its own session state, avoiding cookie-jar collisions between
 // concurrent workers.
-func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func() efb.EFBProvider, logger *slog.Logger) *SyncEngine {
+//
+// Optional behavior (Rivermap enrichment, email notifications, sleep
+// disabling) is configured via [Option] values.
+func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func() efb.EFBProvider, logger *slog.Logger, opts ...Option) *SyncEngine {
 	var tokenBase string
 	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
 		tokenBase = "/data/garmin_tokens"
@@ -76,7 +101,7 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 		home, _ := os.UserHomeDir()
 		tokenBase = filepath.Join(home, ".config", "efb-connector", "garmin_tokens")
 	}
-	return &SyncEngine{
+	s := &SyncEngine{
 		db:             db,
 		garmin:         gp,
 		newEFBSession:  newEFBSession,
@@ -88,23 +113,10 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 			time.Sleep(jitter)
 		},
 	}
-}
-
-// DisableSleep removes inter-upload delays. Intended for tests and dev mode.
-func (s *SyncEngine) DisableSleep() {
-	s.sleepFunc = func(_, _ time.Duration) {}
-}
-
-// SetRivermapClient sets the optional Rivermap client used for trip enrichment.
-func (s *SyncEngine) SetRivermapClient(c *rivermap.Client) {
-	s.rivermap = c
-}
-
-// SetEmailSender wires an email sender used for user-facing notifications
-// (currently: the EFB consent-required email). nil disables the email
-// path; the engine still flips the consent_required DB flag.
-func (s *SyncEngine) SetEmailSender(es EmailSender) {
-	s.emailer = es
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // ErrInvalidDateRange is returned when the caller provides an invalid custom
@@ -855,7 +867,6 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 
 	// Collect results.
 	type indexedResult struct {
-		idx    int
 		result UserSyncResult
 	}
 	results := make(chan indexedResult, len(users))

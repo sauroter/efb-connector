@@ -25,7 +25,7 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	_ = json.NewEncoder(w).Encode(stats)
 }
 
 // handleAdminUsers returns all users with their credential and sync status.
@@ -42,7 +42,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(users)
+	_ = json.NewEncoder(w).Encode(users)
 }
 
 // handleAdminUserSyncHistory returns sync history for a specific user.
@@ -65,7 +65,7 @@ func (s *Server) handleAdminUserSyncHistory(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(runs)
+	_ = json.NewEncoder(w).Encode(runs)
 }
 
 // handleAdminUserSync triggers a sync for a specific user, bypassing the rate limiter.
@@ -86,7 +86,7 @@ func (s *Server) handleAdminUserSync(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("admin: sync failed", "user_id", userID, "run_id", runID, "error", syncErr)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "error",
 			"run_id": runID,
 			"error":  syncErr.Error(),
@@ -95,7 +95,7 @@ func (s *Server) handleAdminUserSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "completed",
 		"run_id": runID,
 	})
@@ -115,7 +115,7 @@ func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(runs)
+	_ = json.NewEncoder(w).Encode(runs)
 }
 
 // handleAdminActivityErrors returns recent failed/permanent_failure activities
@@ -139,7 +139,7 @@ func (s *Server) handleAdminActivityErrors(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(acts)
+	_ = json.NewEncoder(w).Encode(acts)
 }
 
 // handleAdminActivityError returns a single failed activity by row ID,
@@ -168,7 +168,7 @@ func (s *Server) handleAdminActivityError(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(fa)
+	_ = json.NewEncoder(w).Encode(fa)
 }
 
 // handleAdminUserDebugUpload performs a one-shot dry-run EFB upload for an
@@ -210,7 +210,7 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 		s.logger.Error("admin: debug upload failed", "user_id", userID, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "error",
 			"error":  err.Error(),
 		})
@@ -218,7 +218,7 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // handleAdminDevMockEFBConsentGate toggles the simulated EFB consent
@@ -248,7 +248,7 @@ func (s *Server) handleAdminDevMockEFBConsentGate(w http.ResponseWriter, r *http
 	ctrl.SetConsentGate(on)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"consent_gate": ctrl.ConsentGate(),
 	})
 }
@@ -304,7 +304,7 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		if err := s.resend.CreateContact(u.Email, props); err != nil {
 			errMsg := fmt.Sprintf("user %d (%s): create contact: %v", u.ID, u.Email, err)
 			errs = append(errs, errMsg)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -315,7 +315,7 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		if err := s.resend.SyncUserSegment(u.Email, isActive, s.resendSegActive, s.resendSegSetup); err != nil {
 			errMsg := fmt.Sprintf("user %d (%s): sync segment: %v", u.ID, u.Email, err)
 			errs = append(errs, errMsg)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -330,7 +330,7 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 		} else {
 			setupCount++
 		}
-		json.NewEncoder(w).Encode(map[string]string{"synced": u.Email, "segment": segment})
+		_ = json.NewEncoder(w).Encode(map[string]string{"synced": u.Email, "segment": segment})
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -338,7 +338,7 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 
 	s.logger.Info("admin: resend contacts synced", "synced", synced, "active", activeCount, "needs_setup", setupCount, "errors", len(errs))
 
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":      "done",
 		"synced":      synced,
 		"active":      activeCount,
@@ -379,7 +379,7 @@ func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"sent":   sent,
 		"errors": errs,
 	})
