@@ -2,7 +2,7 @@
 
 ENCRYPTION_KEY ?= $(shell openssl rand -base64 32)
 VERSION ?= $(shell git describe --tags --always --dirty)
-GOLANGCI_LINT_VERSION ?= v1.62.2
+GOLANGCI_LINT_VERSION ?= v2.11.4
 GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
 
 dev:
