@@ -830,6 +830,70 @@ func TestRecordActivityWithResponse_RotationCap(t *testing.T) {
 	}
 }
 
+// TestRecordActivityWithResponse_RotationCap_SameSecond locks in the
+// id-based tiebreak when many inserts collide on the same second-precision
+// synced_at value. SQLite serialises writes (MaxOpenConns=1) and id
+// auto-increments, so the prune query's secondary sort by id DESC must
+// keep the highest-id rows.
+func TestRecordActivityWithResponse_RotationCap_SameSecond(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("same-second@example.com")
+
+	// Record 7 silent rejections back-to-back. datetime('now') likely
+	// returns the same value for all of them, so the id DESC tiebreak
+	// is what determines which 5 keep their excerpts.
+	var ids []int64
+	for i := 1; i <= 7; i++ {
+		body := "body-" + itoa(i)
+		if err := db.RecordActivityWithResponse(
+			u.ID, "act-"+itoa(i), "A", "k", "2026-04-28",
+			"failed", "rejection", 200, len(body), body,
+		); err != nil {
+			t.Fatalf("RecordActivityWithResponse #%d: %v", i, err)
+		}
+		var id int64
+		_ = db.db.QueryRow(
+			`SELECT id FROM synced_activities WHERE garmin_activity_id = ?`,
+			"act-"+itoa(i),
+		).Scan(&id)
+		ids = append(ids, id)
+	}
+
+	// Top-5 highest ids should retain their excerpts.
+	wantKept := map[int64]bool{
+		ids[2]: true, // 3
+		ids[3]: true, // 4
+		ids[4]: true, // 5
+		ids[5]: true, // 6
+		ids[6]: true, // 7
+	}
+
+	rows, err := db.db.Query(
+		`SELECT id, response_body_excerpt FROM synced_activities WHERE user_id = ?`,
+		u.ID,
+	)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var excerpt *string
+		if err := rows.Scan(&id, &excerpt); err != nil {
+			t.Fatal(err)
+		}
+		if wantKept[id] {
+			if excerpt == nil {
+				t.Errorf("id %d: expected excerpt retained, got NULL", id)
+			}
+		} else {
+			if excerpt != nil {
+				t.Errorf("id %d: expected excerpt pruned, got %q", id, *excerpt)
+			}
+		}
+	}
+}
+
 func TestRecordActivityWithResponse_NoExcerptDoesNotPrune(t *testing.T) {
 	db := openTestDB(t)
 	u, _ := db.CreateUser("no-prune@example.com")

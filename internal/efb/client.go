@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultBaseURL is the base URL for the Kanu-EFB portal.
@@ -131,13 +132,19 @@ const MaxResponseBodyExcerpt = 16 * 1024
 // return shape of [EFBClient.UploadRaw], used by the sync engine's debug
 // path to surface the full response to operators.
 type RawUploadResult struct {
-	StatusCode             int
-	FinalURL               string
-	Header                 http.Header
-	Body                   []byte
-	BodySize               int
-	ContainsSuccessMarker  bool
-	IsLoginPage            bool
+	// RequestURL is the URL the upload POST was sent to (the configured
+	// upload endpoint). Stable regardless of redirects.
+	RequestURL string
+	// FinalURL is the URL the response came from after any redirects —
+	// e.g. /login when the session expired. Differs from RequestURL when
+	// EFB redirects an unauthenticated upload back to the login page.
+	FinalURL              string
+	StatusCode            int
+	Header                http.Header
+	Body                  []byte
+	BodySize              int
+	ContainsSuccessMarker bool
+	IsLoginPage           bool
 }
 
 // UploadRejectedError is returned by [EFBClient.Upload] when the server
@@ -183,16 +190,34 @@ func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string)
 		return fmt.Errorf("efb: session expired during upload (got login page)")
 	}
 
-	excerpt := res.Body
-	if len(excerpt) > MaxResponseBodyExcerpt {
-		excerpt = excerpt[:MaxResponseBodyExcerpt]
-	}
 	return &UploadRejectedError{
 		StatusCode:  res.StatusCode,
 		BodySize:    res.BodySize,
-		BodyExcerpt: string(excerpt),
+		BodyExcerpt: TruncateUTF8(res.Body, MaxResponseBodyExcerpt),
 		Summary:     summariseResponse(res.Body),
 	}
+}
+
+// TruncateUTF8 returns a string of at most n bytes from b, walking back
+// from the byte cap to the nearest UTF-8 rune boundary so the result is
+// always valid UTF-8 (no orphaned multi-byte sequences). EFB pages
+// contain German umlauts (2-byte UTF-8), so a naïve byte slice would
+// otherwise leave invalid bytes that JSON-encode as U+FFFD.
+func TruncateUTF8(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	b = b[:n]
+	for len(b) > 0 && !utf8.RuneStart(b[len(b)-1]) {
+		b = b[:len(b)-1]
+	}
+	// Drop the final start byte too — its trailing bytes were trimmed.
+	if len(b) > 0 {
+		if r, _ := utf8.DecodeLastRune(b); r == utf8.RuneError {
+			b = b[:len(b)-1]
+		}
+	}
+	return string(b)
 }
 
 // UploadRaw performs the same multipart POST as [EFBClient.Upload] but
@@ -252,8 +277,9 @@ func (c *EFBClient) UploadRaw(ctx context.Context, gpxData []byte, filename stri
 	}
 
 	return &RawUploadResult{
-		StatusCode:            resp.StatusCode,
+		RequestURL:            c.uploadURL,
 		FinalURL:              finalURL,
+		StatusCode:            resp.StatusCode,
 		Header:                resp.Header.Clone(),
 		Body:                  respBody,
 		BodySize:              len(respBody),

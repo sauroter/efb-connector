@@ -107,18 +107,30 @@ func (d *DB) runMigrations() error {
 }
 
 // execMulti splits sql on ";\n" boundaries and executes each non-empty
-// statement, which lets a single migration string bundle multiple DDL
-// statements without requiring a multi-statement driver mode.
+// statement inside a single transaction so multi-statement migrations
+// apply atomically — if any statement fails, the partial schema change
+// is rolled back and the migration can be safely retried on next start.
+// SQLite supports DDL inside transactions under WAL mode.
 func (d *DB) execMulti(sql string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	stmts := strings.Split(sql, ";\n")
 	for _, stmt := range stmts {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
 		}
-		if _, err := d.db.Exec(stmt); err != nil {
+		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", stmt[:min(40, len(stmt))], err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration: %w", err)
 	}
 	return nil
 }

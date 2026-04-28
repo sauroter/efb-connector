@@ -581,23 +581,19 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 		return nil, fmt.Errorf("debug-upload: upload: %w", err)
 	}
 
-	body := raw.Body
-	truncated := false
-	if len(body) > MaxDebugBodyBytes {
-		body = body[:MaxDebugBodyBytes]
-		truncated = true
-	}
+	truncated := len(raw.Body) > MaxDebugBodyBytes
+	body := efb.TruncateUTF8(raw.Body, MaxDebugBodyBytes)
 
 	return &DebugUploadResult{
 		UserID:           userID,
 		GarminActivityID: garminID,
 		GPXSizeBytes:     len(gpxData),
 		Upload: DebugUploadResponse{
-			RequestURL:            raw.FinalURL,
+			RequestURL:            raw.RequestURL,
 			StatusCode:            raw.StatusCode,
 			FinalURL:              raw.FinalURL,
 			ResponseHeaders:       raw.Header,
-			ResponseBody:          string(body),
+			ResponseBody:          body,
 			BodySizeBytes:         raw.BodySize,
 			Truncated:             truncated,
 			ContainsSuccessMarker: raw.ContainsSuccessMarker,
