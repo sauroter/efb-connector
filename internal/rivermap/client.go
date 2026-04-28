@@ -124,7 +124,10 @@ func NewClient(apiKey, baseURL, cacheDir string, logger *slog.Logger) *Client {
 		logger = slog.Default()
 	}
 	if cacheDir != "" {
-		os.MkdirAll(cacheDir, 0700)
+		if err := os.MkdirAll(cacheDir, 0700); err != nil {
+			logger.Warn("rivermap: cache dir create failed; continuing without disk cache", "dir", cacheDir, "error", err)
+			cacheDir = ""
+		}
 	}
 	return &Client{
 		apiKey:   apiKey,
@@ -162,13 +165,13 @@ type sectionNameDetail struct {
 
 // sectionJSON mirrors a single section object in the API response.
 type sectionJSON struct {
-	ID            string                       `json:"id"`
-	River         map[string]string            `json:"river"`
-	SectionName   map[string]json.RawMessage   `json:"sectionName"` // values are either string or sectionNameDetail
-	Grade         string                       `json:"grade"`
-	SpotGrades    []string                     `json:"spotGrades"`
-	PutInLatLng   [2]float64                   `json:"putInLatLng"`
-	TakeOutLatLng [2]float64                   `json:"takeOutLatLng"`
+	ID            string                     `json:"id"`
+	River         map[string]string          `json:"river"`
+	SectionName   map[string]json.RawMessage `json:"sectionName"` // values are either string or sectionNameDetail
+	Grade         string                     `json:"grade"`
+	SpotGrades    []string                   `json:"spotGrades"`
+	PutInLatLng   [2]float64                 `json:"putInLatLng"`
+	TakeOutLatLng [2]float64                 `json:"takeOutLatLng"`
 	Calibration   *struct {
 		StationID string  `json:"stationId"`
 		Unit      string  `json:"unit"`

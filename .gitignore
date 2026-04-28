@@ -1,8 +1,10 @@
 # Binaries
-gpx-uploader
 efb-connector
 
-# Config (contains personal 1Password account details)
+# Coverage output
+coverage.out
+
+# Local config (may contain 1Password account details for scripts/garmin_fetch.py)
 config.json
 
 # Environment secrets
@@ -45,16 +47,6 @@ infrastructure/secrets.sh
 
 # Node
 node_modules/
-
-# Build artifacts
-cli
-server
-
-# Debug files
-debug.html
-
-# Devbox lock
-devbox.lock
 
 # Python cache
 __pycache__/

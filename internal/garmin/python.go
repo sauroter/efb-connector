@@ -80,11 +80,11 @@ func (p *PythonGarminProvider) Close() {
 
 	p.mfaSessionsMu.Lock()
 	for uid, s := range p.mfaSessions {
-		s.stdin.Close()
-		s.cmd.Process.Kill()
-		s.cmd.Wait()
+		_ = s.stdin.Close()
+		_ = s.cmd.Process.Kill()
+		_ = s.cmd.Wait()
 		if s.tmpTokenDir != "" {
-			os.RemoveAll(s.tmpTokenDir)
+			_ = os.RemoveAll(s.tmpTokenDir)
 		}
 		delete(p.mfaSessions, uid)
 	}
@@ -101,7 +101,7 @@ type stdinCreds struct {
 // listActivityJSON mirrors the JSON objects emitted by `garmin_fetch.py list
 // --json`.
 type listActivityJSON struct {
-	ID           interface{} `json:"id"`             // Garmin returns a number; use interface{} for robustness
+	ID           interface{} `json:"id"` // Garmin returns a number; use interface{} for robustness
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
 	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; not mapped to Activity (filtering is in Python)
@@ -111,8 +111,8 @@ type listActivityJSON struct {
 	StartLng     float64     `json:"start_lng"`
 	EndLat       float64     `json:"end_lat"`
 	EndLng       float64     `json:"end_lng"`
-	Duration     float64     `json:"duration"`       // seconds
-	Distance     float64     `json:"distance"`       // metres
+	Duration     float64     `json:"duration"` // seconds
+	Distance     float64     `json:"distance"` // metres
 }
 
 // ListActivities runs `python <script> list --days <N> --json`, writes the
@@ -329,8 +329,8 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	// killAndWait is a helper for error paths after the subprocess has started.
 	killAndWait := func() {
-		cmd.Process.Kill()
-		cmd.Wait()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 	}
 
 	// Write credentials JSON to stdin (do NOT close stdin yet).
@@ -351,7 +351,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	// Read the first response line from stdout.
 	if !session.stdout.Scan() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		return "", classifyError(ctx, fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
 	}
 
@@ -364,7 +364,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	switch resp.Status {
 	case "ok":
 		// Credentials valid, no MFA. Wait for process to exit.
-		cmd.Wait()
+		_ = cmd.Wait()
 
 		// Re-encrypt tokens if needed (tmpTokenDir cleaned up by defer).
 		if useEncryption {
@@ -416,19 +416,19 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 	// Write the MFA code to stdin and close it.
 	mfaJSON, _ := json.Marshal(map[string]string{"mfa_code": code})
 	_, writeErr := session.stdin.Write(append(mfaJSON, '\n'))
-	session.stdin.Close()
+	_ = session.stdin.Close()
 
 	if writeErr != nil {
-		session.cmd.Process.Kill()
-		session.cmd.Wait()
+		_ = session.cmd.Process.Kill()
+		_ = session.cmd.Wait()
 		return fmt.Errorf("garmin: write MFA code: %w", writeErr)
 	}
 
 	// Read the response.
 	if !session.stdout.Scan() {
-		session.cmd.Wait()
+		_ = session.cmd.Wait()
 		return classifyError(
-			nil,
+			context.TODO(),
 			fmt.Errorf("garmin: no response after MFA code"),
 			session.stderr.String(),
 		)
@@ -436,17 +436,17 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 
 	var resp mfaStatusResponse
 	if err := json.Unmarshal(session.stdout.Bytes(), &resp); err != nil {
-		session.cmd.Process.Kill()
-		session.cmd.Wait()
+		_ = session.cmd.Process.Kill()
+		_ = session.cmd.Wait()
 		return fmt.Errorf("garmin: parse MFA response: %w", err)
 	}
 
 	// Wait for the process to finish.
-	session.cmd.Wait()
+	_ = session.cmd.Wait()
 
 	if resp.Status != "ok" {
 		return classifyError(
-			nil,
+			context.TODO(),
 			fmt.Errorf("garmin: MFA verification failed: %s", resp.Message),
 			session.stderr.String(),
 		)
@@ -468,11 +468,11 @@ func (p *PythonGarminProvider) cancelMFASession(userID int64) {
 	p.mfaSessionsMu.Unlock()
 
 	if ok {
-		session.stdin.Close()
-		session.cmd.Process.Kill()
-		session.cmd.Wait()
+		_ = session.stdin.Close()
+		_ = session.cmd.Process.Kill()
+		_ = session.cmd.Wait()
 		if session.tmpTokenDir != "" {
-			os.RemoveAll(session.tmpTokenDir)
+			_ = os.RemoveAll(session.tmpTokenDir)
 		}
 	}
 }
@@ -501,11 +501,11 @@ func (p *PythonGarminProvider) cleanupStaleMFASessions() {
 			for uid, s := range p.mfaSessions {
 				if time.Since(s.created) > maxAge {
 					slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
-					s.stdin.Close()
-					s.cmd.Process.Kill()
-					s.cmd.Wait()
+					_ = s.stdin.Close()
+					_ = s.cmd.Process.Kill()
+					_ = s.cmd.Wait()
 					if s.tmpTokenDir != "" {
-						os.RemoveAll(s.tmpTokenDir)
+						_ = os.RemoveAll(s.tmpTokenDir)
 					}
 					delete(p.mfaSessions, uid)
 				}

@@ -35,13 +35,6 @@ func mockStationsResponse(stations ...stationJSON) []byte {
 	return b
 }
 
-// newSectionsServer creates a test server that returns the given response
-// body for GET /v2/sections and an empty stations response for GET /v2/stations.
-func newSectionsServer(t *testing.T, body []byte) *httptest.Server {
-	t.Helper()
-	return newSectionsAndStationsServer(t, body, []byte(`{"stations":[]}`))
-}
-
 // newSectionsAndStationsServer creates a test server that returns the given
 // response bodies for GET /v2/sections and GET /v2/stations.
 func newSectionsAndStationsServer(t *testing.T, sectionsBody, stationsBody []byte) *httptest.Server {
@@ -351,9 +344,9 @@ func TestGetReadingsAt_FindsClosest(t *testing.T) {
 	readingsBody, _ := json.Marshal(readingsResponse{
 		Readings: map[string][]readingJSON{
 			"cm": {
-				{Ts: 1711018800, V: 47},  // exactly at target
-				{Ts: 1711020600, V: 48},  // 30 min later
-				{Ts: 1711015200, V: 45},  // 1 hour before
+				{Ts: 1711018800, V: 47}, // exactly at target
+				{Ts: 1711020600, V: 48}, // 30 min later
+				{Ts: 1711015200, V: 45}, // 1 hour before
 			},
 			"m3s": {
 				{Ts: 1711020600, V: 12.3}, // 30 min later
@@ -465,14 +458,14 @@ func TestClassifyLevel(t *testing.T) {
 		value    float64
 		expected string
 	}{
-		{10, "Too low"},         // below LW
-		{29, "Too low"},         // just below LW
-		{30, "Low water"},       // exactly at LW threshold
-		{45, "Low water"},       // between LW and MW
-		{60, "Low water"},       // exactly at MW threshold
-		{61, "Medium water"},    // between MW and HW
-		{120, "Medium water"},   // exactly at HW threshold
-		{121, "High water"},     // above HW
+		{10, "Too low"},       // below LW
+		{29, "Too low"},       // just below LW
+		{30, "Low water"},     // exactly at LW threshold
+		{45, "Low water"},     // between LW and MW
+		{60, "Low water"},     // exactly at MW threshold
+		{61, "Medium water"},  // between MW and HW
+		{120, "Medium water"}, // exactly at HW threshold
+		{121, "High water"},   // above HW
 		{200, "High water"},
 	}
 

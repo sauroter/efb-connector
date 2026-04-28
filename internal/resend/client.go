@@ -16,8 +16,8 @@ import (
 
 // Endpoint base URLs — package-level vars so tests can override them.
 var (
-	contactsEndpoint = "https://api.resend.com/contacts"
-	segmentsEndpoint = "https://api.resend.com/segments"
+	contactsEndpoint  = "https://api.resend.com/contacts"
+	segmentsEndpoint  = "https://api.resend.com/segments"
 	templatesEndpoint = "https://api.resend.com/templates"
 )
 

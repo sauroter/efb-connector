@@ -9,18 +9,18 @@ import (
 
 // SyncRun mirrors the sync_runs table.
 type SyncRun struct {
-	ID                 int64
-	UserID             int64
-	Trigger            string
-	StartedAt          time.Time
-	FinishedAt         *time.Time
-	Status             string
-	ActivitiesFound    int
-	ActivitiesSynced   int
-	ActivitiesSkipped  int
-	ActivitiesFailed   int
-	TripsCreated       int
-	ErrorMessage       string
+	ID                int64
+	UserID            int64
+	Trigger           string
+	StartedAt         time.Time
+	FinishedAt        *time.Time
+	Status            string
+	ActivitiesFound   int
+	ActivitiesSynced  int
+	ActivitiesSkipped int
+	ActivitiesFailed  int
+	TripsCreated      int
+	ErrorMessage      string
 }
 
 // CreateSyncRun inserts a new sync_run row with status "running" and returns

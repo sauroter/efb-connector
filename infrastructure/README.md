@@ -67,6 +67,20 @@ curl -X POST https://efb-connector.sauroter.de/internal/sync/run-all \
   -H "Authorization: Bearer <INTERNAL_SECRET>"
 ```
 
+## Rollback
+
+If a deploy fails its health check or a regression slips through, roll back
+to the previous release:
+
+```bash
+fly releases -a efb-connector              # find the last good release id
+fly releases rollback <id> -a efb-connector
+```
+
+`fly releases rollback` re-deploys the prior image without rebuilding. If
+the rollback target is more than a few releases back, prefer cutting a new
+release tag from a known-good commit and letting the CD workflow ship it.
+
 ## Destroy
 
 To tear down all resources:

@@ -812,8 +812,8 @@ func TestParseUnassociatedTrack_FilenameInWrongRowIgnored(t *testing.T) {
 	// adjacent row has track_id (unassociated) for a DIFFERENT file.
 	// We must not return the wrong track ID.
 	html := tracksPageHTML(
-		trackRow("garmin_TARGET.gpx", "77", true),   // associated — our file
-		trackRow("garmin_OTHER.gpx", "88", false),    // unassociated — different file
+		trackRow("garmin_TARGET.gpx", "77", true), // associated — our file
+		trackRow("garmin_OTHER.gpx", "88", false), // unassociated — different file
 	)
 
 	id := parseUnassociatedTrack(html, "garmin_TARGET.gpx")

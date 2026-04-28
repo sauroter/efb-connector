@@ -75,7 +75,9 @@ make test
 | `make dev` | Run server in dev mode (mock EFB + Garmin, auto-generated encryption key) |
 | `make build` | Build the `efb-connector` binary |
 | `make test` | Run all tests (unit + integration) |
-| `make lint` | Run `go vet` |
+| `make cover` | Run tests with coverage and print per-function summary |
+| `make lint` | Run `golangci-lint` (install via `make lint-install`) |
+| `make lint-install` | Install the pinned `golangci-lint` version into `$GOPATH/bin` |
 | `make clean` | Remove built binaries and local dev database |
 
 ### Running with real providers
@@ -115,16 +117,6 @@ See [`infrastructure/README.md`](infrastructure/README.md) for detailed deployme
 ## API Documentation
 
 The full REST API (public, authenticated, and internal endpoints) is documented in [`openapi.yaml`](openapi.yaml) using the OpenAPI 3.1 specification. You can view it with any OpenAPI-compatible tool (Swagger UI, Redoc, etc.).
-
-## CLI Tool
-
-The original CLI tool is preserved at `cmd/cli/` for standalone GPX uploads:
-
-```bash
-./gpx-uploader path/to/file.gpx
-```
-
-Credentials are resolved in order: 1Password CLI, environment variables (`EFBUSERNAME`/`EFBPASSWORD`), interactive prompts.
 
 ## Legal
 

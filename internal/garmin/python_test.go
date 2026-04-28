@@ -498,7 +498,7 @@ func TestDaysSpan(t *testing.T) {
 	}{
 		{base, base.Add(24 * time.Hour), 2},
 		{base, base.Add(7 * 24 * time.Hour), 8},
-		{base, base, 1}, // zero span → minimum 1
+		{base, base, 1},                     // zero span → minimum 1
 		{base, base.Add(-1 * time.Hour), 1}, // negative span → minimum 1
 	}
 	for _, tt := range tests {
