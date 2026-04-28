@@ -1438,6 +1438,182 @@ func TestSync_RivermapEnrichment_NoSectionMatch(t *testing.T) {
 	}
 }
 
+// newMockEFBServerSilentRejection returns a server whose upload endpoint
+// answers 200 OK with neither the success marker nor any recognised
+// hint pattern — the production silent-rejection shape.
+func newMockEFBServerSilentRejection(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("username") == "efbuser" && r.FormValue("password") == "efbpass" {
+			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		hasSession := err == nil && cookie.Value == "1"
+		if !hasSession {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodPost:
+			_ = r.ParseMultipartForm(10 << 20)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+		}
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSyncUser_PersistsResponseDiagnosticsOnSilentRejection(t *testing.T) {
+	body := `<html><title>eFB</title><body>Fahrtenbuch Home Meine Tracks</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerSilentRejection(t, body)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	failed, err := db.GetRecentFailedActivities(50, true)
+	if err != nil {
+		t.Fatalf("GetRecentFailedActivities: %v", err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failed activity, got %d", len(failed))
+	}
+	a := failed[0]
+	if a.ResponseStatusCode != 200 {
+		t.Errorf("ResponseStatusCode = %d, want 200", a.ResponseStatusCode)
+	}
+	if a.ResponseSizeBytes != len(body) {
+		t.Errorf("ResponseSizeBytes = %d, want %d", a.ResponseSizeBytes, len(body))
+	}
+	if a.ResponseBodyExcerpt != body {
+		t.Errorf("ResponseBodyExcerpt = %q, want full body", a.ResponseBodyExcerpt)
+	}
+	if !strings.Contains(a.ErrorMessage, "upload did not succeed") {
+		t.Errorf("ErrorMessage = %q, want contains 'upload did not succeed'", a.ErrorMessage)
+	}
+}
+
+func TestSyncUser_DownloadFailureSkipsBodyExcerpt(t *testing.T) {
+	// Garmin download failure must NOT populate response_* columns —
+	// no upload was attempted, so there is no HTTP response to record.
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	gp := &mockGarminProvider{
+		activities:  makeActivities(1),
+		downloadErr: map[string]error{"act-1": errors.New("garmin: 404")},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	failed, _ := db.GetRecentFailedActivities(50, true)
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failed activity, got %d", len(failed))
+	}
+	a := failed[0]
+	if a.ResponseStatusCode != 0 || a.ResponseSizeBytes != 0 || a.ResponseBodyExcerpt != "" {
+		t.Errorf("expected no response diagnostics on download failure, got code=%d size=%d body=%q",
+			a.ResponseStatusCode, a.ResponseSizeBytes, a.ResponseBodyExcerpt)
+	}
+}
+
+func TestDebugUploadOnce_DryRunDoesNotMutate(t *testing.T) {
+	body := `<html><title>eFB</title><body>silent rejection page</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerSilentRejection(t, body)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1")
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if res.UserID != user.ID || res.GarminActivityID != "act-1" {
+		t.Errorf("result identity wrong: %+v", res)
+	}
+	if res.Upload.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", res.Upload.StatusCode)
+	}
+	if res.Upload.ContainsSuccessMarker {
+		t.Error("ContainsSuccessMarker should be false for silent rejection")
+	}
+	if res.Upload.ResponseBody != body {
+		t.Errorf("ResponseBody = %q, want full body", res.Upload.ResponseBody)
+	}
+	if res.Upload.BodySizeBytes != len(body) {
+		t.Errorf("BodySizeBytes = %d, want %d", res.Upload.BodySizeBytes, len(body))
+	}
+
+	// Crucially: no synced_activities row should have been written.
+	failed, _ := db.GetRecentFailedActivities(50, true)
+	if len(failed) != 0 {
+		t.Errorf("DebugUploadOnce must not write to synced_activities; got %d rows", len(failed))
+	}
+	// Same for sync_runs.
+	runs, _ := db.GetSyncHistory(user.ID, 10)
+	if len(runs) != 0 {
+		t.Errorf("DebugUploadOnce must not write to sync_runs; got %d rows", len(runs))
+	}
+}
+
+func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
+	pad := strings.Repeat("x", MaxDebugBodyBytes+1024)
+	body := `<html><body>` + pad + `</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerSilentRejection(t, body)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1")
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if !res.Upload.Truncated {
+		t.Error("expected Truncated=true for oversized body")
+	}
+	if len(res.Upload.ResponseBody) != MaxDebugBodyBytes {
+		t.Errorf("len(ResponseBody) = %d, want %d", len(res.Upload.ResponseBody), MaxDebugBodyBytes)
+	}
+	if res.Upload.BodySizeBytes != len(body) {
+		t.Errorf("BodySizeBytes = %d, want %d (full size)", res.Upload.BodySizeBytes, len(body))
+	}
+}
+
 func TestIsServer5xxError(t *testing.T) {
 	tests := []struct {
 		err  error

@@ -2,6 +2,7 @@ package efb
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -220,6 +221,127 @@ func TestUpload_MissingSuccessMarker(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when success marker is absent, got nil")
 	}
+}
+
+// newMockServerSilentRejection returns a server whose upload endpoint
+// answers HTTP 200 with neither the success marker nor any recognised
+// hint pattern — i.e. the same shape as the production silent-rejection
+// page that motivated the diagnostics work.
+func newMockServerSilentRejection(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestUpload_SilentRejection_ReturnsTypedError(t *testing.T) {
+	body := `<html><title>eFB</title><body>Fahrtenbuch Home Meine Tracks</body></html>`
+	srv := newMockServerSilentRejection(t, body)
+	c := newClient(srv)
+
+	// Set the session cookie directly so Login() doesn't need to follow
+	// the (broken) redirect in the mock.
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	gpxData := []byte(`<?xml version="1.0"?><gpx></gpx>`)
+	err := c.Upload(context.Background(), gpxData, "test.gpx")
+	if err == nil {
+		t.Fatal("expected silent-rejection error, got nil")
+	}
+
+	var rej *UploadRejectedError
+	if !errorsAs(err, &rej) {
+		t.Fatalf("error type = %T, want *UploadRejectedError", err)
+	}
+	if rej.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", rej.StatusCode)
+	}
+	if rej.BodySize != len(body) {
+		t.Errorf("BodySize = %d, want %d", rej.BodySize, len(body))
+	}
+	if rej.BodyExcerpt != body {
+		t.Errorf("BodyExcerpt = %q, want full body", rej.BodyExcerpt)
+	}
+	// Error() must keep the legacy "upload did not succeed" prefix so the
+	// engine's classifyEFBError still routes this as upload_rejected.
+	if !strings.Contains(rej.Error(), "upload did not succeed") {
+		t.Errorf("Error() = %q, want contains %q", rej.Error(), "upload did not succeed")
+	}
+}
+
+func TestUpload_SilentRejection_BodyExcerptCapped(t *testing.T) {
+	// Build a body larger than MaxResponseBodyExcerpt — neither a login
+	// page nor containing the success marker.
+	pad := strings.Repeat("a", MaxResponseBodyExcerpt+1024)
+	body := `<html><body>` + pad + `</body></html>`
+	srv := newMockServerSilentRejection(t, body)
+	c := newClient(srv)
+
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	err := c.Upload(context.Background(), []byte(`<gpx></gpx>`), "test.gpx")
+	var rej *UploadRejectedError
+	if !errorsAs(err, &rej) {
+		t.Fatalf("error type = %T, want *UploadRejectedError", err)
+	}
+	if rej.BodySize != len(body) {
+		t.Errorf("BodySize = %d, want %d (full body size)", rej.BodySize, len(body))
+	}
+	if len(rej.BodyExcerpt) != MaxResponseBodyExcerpt {
+		t.Errorf("len(BodyExcerpt) = %d, want %d (capped)",
+			len(rej.BodyExcerpt), MaxResponseBodyExcerpt)
+	}
+}
+
+func TestUploadRaw_ReturnsRawResponse(t *testing.T) {
+	srv := newMockServer(t)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "valid", "correct"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	res, err := c.UploadRaw(context.Background(), []byte(`<gpx></gpx>`), "test.gpx")
+	if err != nil {
+		t.Fatalf("UploadRaw: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", res.StatusCode)
+	}
+	if !res.ContainsSuccessMarker {
+		t.Error("expected ContainsSuccessMarker=true on success response")
+	}
+	if res.IsLoginPage {
+		t.Error("expected IsLoginPage=false on success response")
+	}
+	if res.BodySize == 0 || len(res.Body) == 0 {
+		t.Error("expected non-empty response body")
+	}
+}
+
+func errorsAs(err error, target any) bool {
+	return errors.As(err, target)
 }
 
 // ---------------------------------------------------------------------------

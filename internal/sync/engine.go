@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -378,7 +379,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				"error", uploadErr,
 				"error_category", classifyEFBError(uploadErr),
 			)
-			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", uploadErr.Error()); recErr != nil {
+			if recErr := s.recordUploadFailure(userID, act, uploadErr); recErr != nil {
 				log.Error("failed to record activity", "error", recErr)
 			}
 			if act.isRetry {
@@ -449,6 +450,167 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	}
 
 	return found, synced, skipped, failed, tripsCreated, nil
+}
+
+// recordUploadFailure persists a failed-upload row, populating the
+// response_status_code / response_size_bytes / response_body_excerpt
+// columns when the error carries them (i.e. a *efb.UploadRejectedError —
+// HTTP 200 + no success marker + not a login page).
+//
+// The body excerpt is stored only for the silent-rejection case because
+// that's the only situation where the existing error_message is not
+// actionable. For session_expired / network / server_error / Garmin
+// download failures the message already carries the cause.
+func (s *SyncEngine) recordUploadFailure(userID int64, act activityToSync, uploadErr error) error {
+	var rej *efb.UploadRejectedError
+	if errors.As(uploadErr, &rej) {
+		return s.db.RecordActivityWithResponse(
+			userID, act.garminID, act.name, act.actType, act.date,
+			"failed", uploadErr.Error(),
+			rej.StatusCode, rej.BodySize, rej.BodyExcerpt,
+		)
+	}
+	return s.db.RecordActivity(
+		userID, act.garminID, act.name, act.actType, act.date,
+		"failed", uploadErr.Error(),
+	)
+}
+
+// DebugUploadResult is the dry-run output of [SyncEngine.DebugUploadOnce]:
+// the captured upload attempt for an admin to inspect without mutating any
+// DB state.
+type DebugUploadResult struct {
+	UserID           int64               `json:"user_id"`
+	GarminActivityID string              `json:"garmin_activity_id"`
+	GPXSizeBytes     int                 `json:"gpx_size_bytes"`
+	Upload           DebugUploadResponse `json:"upload"`
+}
+
+// DebugUploadResponse mirrors [efb.RawUploadResult] for JSON serialisation.
+// Body is capped to MaxDebugBodyBytes; Truncated indicates whether the
+// original response was larger.
+type DebugUploadResponse struct {
+	RequestURL            string      `json:"request_url"`
+	StatusCode            int         `json:"status_code"`
+	FinalURL              string      `json:"final_url"`
+	ResponseHeaders       http.Header `json:"response_headers"`
+	ResponseBody          string      `json:"response_body"`
+	BodySizeBytes         int         `json:"body_size_bytes"`
+	Truncated             bool        `json:"truncated"`
+	ContainsSuccessMarker bool        `json:"contains_success_marker"`
+	IsLoginPage           bool        `json:"is_login_page"`
+}
+
+// MaxDebugBodyBytes caps the response body returned by DebugUploadOnce so
+// the JSON payload stays bounded even if EFB hands back a huge page.
+const MaxDebugBodyBytes = 64 * 1024
+
+// DebugUploadOnce performs a one-shot upload attempt for an admin debug
+// session. It logs in with the user's stored EFB credentials, downloads
+// the requested Garmin activity, performs the upload, and returns the
+// raw response. It does NOT update synced_activities, sync_runs, or any
+// other state — the call is purely diagnostic.
+//
+// If garminID is empty the most recent activity in the user's default
+// SyncDays window is used. Returns an error when login or GPX download
+// fails; HTTP-level outcomes (any status, including silent rejection)
+// are returned as a non-nil result with err == nil.
+func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID string) (*DebugUploadResult, error) {
+	user, err := s.db.GetUserByID(userID)
+	if err != nil {
+		return nil, fmt.Errorf("debug-upload: get user: %w", err)
+	}
+	if user == nil {
+		return nil, fmt.Errorf("debug-upload: user %d not found", userID)
+	}
+
+	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
+	if err != nil {
+		return nil, fmt.Errorf("debug-upload: get garmin credentials: %w", err)
+	}
+	tokenDir := filepath.Join(s.tokenStoreBase, fmt.Sprintf("%d", userID))
+	if err := os.MkdirAll(tokenDir, 0700); err != nil {
+		s.logger.Warn("debug-upload: create garmin token store", "user_id", userID, "error", err)
+	}
+	garminCreds := garmin.GarminCredentials{
+		Email:          garminEmail,
+		Password:       garminPass,
+		TokenStorePath: tokenDir,
+	}
+
+	// Resolve garminID: if not provided, pick the most recent activity in
+	// the user's default sync window.
+	if garminID == "" {
+		end := time.Now()
+		start := end.AddDate(0, 0, -user.SyncDays)
+		acts, err := s.garmin.ListActivities(ctx, garminCreds, start, end)
+		if err != nil {
+			return nil, fmt.Errorf("debug-upload: list activities: %w", err)
+		}
+		if len(acts) == 0 {
+			return nil, fmt.Errorf("debug-upload: no garmin activities in window %s..%s",
+				start.Format("2006-01-02"), end.Format("2006-01-02"))
+		}
+		// ListActivities returns newest-first by Garmin convention.
+		garminID = acts[0].ProviderID
+	}
+
+	gpxData, err := s.garmin.DownloadGPX(ctx, garminCreds, garminID)
+	if err != nil {
+		return nil, fmt.Errorf("debug-upload: download GPX %q: %w", garminID, err)
+	}
+
+	efbUser, efbPass, err := s.db.GetEFBCredentials(userID)
+	if err != nil {
+		return nil, fmt.Errorf("debug-upload: get efb credentials: %w", err)
+	}
+
+	efbClient := s.newEFBSession()
+	if err := efbClient.Login(ctx, efbUser, efbPass); err != nil {
+		return nil, fmt.Errorf("debug-upload: efb login: %w", err)
+	}
+
+	rawClient, ok := efbClient.(rawUploader)
+	if !ok {
+		return nil, fmt.Errorf("debug-upload: efb provider does not support raw upload")
+	}
+
+	filename := fmt.Sprintf("garmin_%s.gpx", garminID)
+	raw, err := rawClient.UploadRaw(ctx, gpxData, filename)
+	if err != nil {
+		return nil, fmt.Errorf("debug-upload: upload: %w", err)
+	}
+
+	body := raw.Body
+	truncated := false
+	if len(body) > MaxDebugBodyBytes {
+		body = body[:MaxDebugBodyBytes]
+		truncated = true
+	}
+
+	return &DebugUploadResult{
+		UserID:           userID,
+		GarminActivityID: garminID,
+		GPXSizeBytes:     len(gpxData),
+		Upload: DebugUploadResponse{
+			RequestURL:            raw.FinalURL,
+			StatusCode:            raw.StatusCode,
+			FinalURL:              raw.FinalURL,
+			ResponseHeaders:       raw.Header,
+			ResponseBody:          string(body),
+			BodySizeBytes:         raw.BodySize,
+			Truncated:             truncated,
+			ContainsSuccessMarker: raw.ContainsSuccessMarker,
+			IsLoginPage:           raw.IsLoginPage,
+		},
+	}, nil
+}
+
+// rawUploader is the optional interface an [efb.EFBProvider] implements
+// when it can return the raw upload response. The production
+// *efb.EFBClient satisfies it; mocks in tests can choose to as well.
+type rawUploader interface {
+	UploadRaw(ctx context.Context, gpxData []byte, filename string) (*efb.RawUploadResult, error)
 }
 
 // checkAndMarkPermanentFailure increments the retry count check and marks an

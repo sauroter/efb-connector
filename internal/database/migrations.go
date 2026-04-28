@@ -106,4 +106,13 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     message    TEXT    NOT NULL,
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );`,
+
+	// 0008 – capture upload-response diagnostics on synced_activities for
+	// debugging silent EFB rejections (status code + size on every failure,
+	// full body excerpt only when the existing summariseResponse heuristics
+	// produced no actionable hint, capped to 16 KB per row and 5 rows total
+	// by application logic in RecordActivityWithResponse).
+	`ALTER TABLE synced_activities ADD COLUMN response_status_code INTEGER;
+ALTER TABLE synced_activities ADD COLUMN response_size_bytes  INTEGER;
+ALTER TABLE synced_activities ADD COLUMN response_body_excerpt TEXT;`,
 }
