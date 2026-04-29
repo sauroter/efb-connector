@@ -248,4 +248,34 @@ var En = map[string]string{
 	"flash.feedback_message_required":        "Please enter a message.",
 	"flash.feedback_message_too_long":        "Message is too long (max 2000 characters).",
 	"flash.feedback_rate_limited":            "You've sent too much feedback today. Please try again tomorrow.",
+
+	// ── Email: shared chrome ──
+	"email.common.greeting": "Hi,",
+	"email.common.regards":  "Best",
+
+	// ── Email: magic link ──
+	"email.magic_link.subject":     "Your EFB Connector Login Link",
+	"email.magic_link.intro":       "Click the link below to log in to EFB Connector:",
+	"email.magic_link.cta":         "Log in to EFB Connector",
+	"email.magic_link.expiry_note": "This link expires in 15 minutes.",
+
+	// ── Email: EFB consent required ──
+	"email.efb_consent.subject":     "EFB Connector: Please accept the track-usage agreement",
+	"email.efb_consent.body_intro":  "EFB version 2026.1 introduced a one-time consent step for the anonymised use of your uploaded tracks. While that consent is missing, the EFB portal silently rejects every upload — sync runs, but no track ever lands.",
+	"email.efb_consent.body_action": "Please open your tracks page on eFB and click \"ich stimme zu\" once:",
+	"email.efb_consent.cta":         "Open Meine Tracks on eFB",
+	"email.efb_consent.body_outro":  "The next scheduled sync will resume automatically afterwards — there's nothing to do on our side.",
+
+	// ── Email: Garmin upgrade notification ──
+	"email.garmin_upgrade.subject":     "EFB Connector: Garmin Integration Updated",
+	"email.garmin_upgrade.intro":       "We've updated the EFB Connector's Garmin integration to improve compatibility with Garmin Connect.",
+	"email.garmin_upgrade.body_action": "Your connection will be re-established automatically on the next sync. If you experience any issues, you can re-enter your Garmin credentials here:",
+	"email.garmin_upgrade.cta":         "Open Garmin Settings",
+
+	// ── Email: feedback notification (admin-facing) ──
+	"email.feedback.subject":        "EFB Connector Feedback [%s]",
+	"email.feedback.from_label":     "From:",
+	"email.feedback.user_id_label":  "user #%d",
+	"email.feedback.category_label": "Category:",
+	"email.feedback.message_label":  "Message:",
 }

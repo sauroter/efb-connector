@@ -19,21 +19,27 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/i18n"
 	"efb-connector/internal/metrics"
 	"efb-connector/internal/rivermap"
 )
 
-// EmailSender is the minimal email-sending dependency used by the
-// engine for user-facing notifications (e.g. EFB consent-required
-// emails). Implemented by *auth.AuthService in production and a fake in
-// tests; kept narrow here so the sync package doesn't import internal/auth.
-type EmailSender interface {
-	SendEmail(to, subject, htmlBody string) error
+// Mailer is the minimal templated-email dependency used by the engine
+// for user-facing notifications (e.g. the EFB consent-required email).
+// Implemented by *mailer.Mailer in production and a fake in tests; kept
+// narrow here so the sync package doesn't import internal/mailer.
+type Mailer interface {
+	Send(to string, lang i18n.Lang, name string, data map[string]any, subjectArgs ...any) error
 }
 
 // ConsentEmailRateLimit caps how often a single user is emailed about
 // the EFB v2026.1 track-usage consent gate while it remains unresolved.
 const ConsentEmailRateLimit = 7 * 24 * time.Hour
+
+// efbConsentURL is the EFB tracks page where the user accepts the
+// v2026.1 track-usage agreement. Linked from the consent-required
+// email and surfaced as the action target there.
+const efbConsentURL = "https://efb.kanu-efb.de/interpretation/usersmap"
 
 // SyncEngine orchestrates the per-user sync flow.
 type SyncEngine struct {
@@ -52,9 +58,9 @@ type SyncEngine struct {
 	// rivermap is the optional Rivermap client for trip enrichment. nil if not configured.
 	rivermap *rivermap.Client
 
-	// emailer sends the consent-required notification email. nil disables
+	// mailer sends the consent-required notification email. nil disables
 	// the email path (engine still flips the DB flag).
-	emailer EmailSender
+	mailer Mailer
 
 	// nowFunc returns the current time. Overridable in tests so the
 	// 7-day email rate limit can be exercised without sleeping.
@@ -72,11 +78,12 @@ func WithRivermap(c *rivermap.Client) Option {
 	return func(s *SyncEngine) { s.rivermap = c }
 }
 
-// WithEmailer wires the email sender used for user-facing notifications
-// (currently: the EFB consent-required email). When unset the engine still
-// flips the consent_required DB flag but no email is dispatched.
-func WithEmailer(es EmailSender) Option {
-	return func(s *SyncEngine) { s.emailer = es }
+// WithMailer wires the templated email dispatcher used for user-facing
+// notifications (currently: the EFB consent-required email). When
+// unset the engine still flips the consent_required DB flag but no
+// email is dispatched.
+func WithMailer(m Mailer) Option {
+	return func(s *SyncEngine) { s.mailer = m }
 }
 
 // WithoutSleep removes inter-upload delays. Intended for tests and dev mode.
@@ -515,7 +522,7 @@ func (s *SyncEngine) handleConsentRequired(userID int64, log *slog.Logger) {
 		return
 	}
 
-	if s.emailer == nil {
+	if s.mailer == nil {
 		return
 	}
 
@@ -536,8 +543,12 @@ func (s *SyncEngine) handleConsentRequired(userID int64, log *slog.Logger) {
 		return
 	}
 
-	subject, body := efbConsentEmail(user.PreferredLang)
-	if sendErr := s.emailer.SendEmail(user.Email, subject, body); sendErr != nil {
+	if sendErr := s.mailer.Send(
+		user.Email,
+		i18n.ParseLang(user.PreferredLang),
+		"efb_consent",
+		map[string]any{"ConsentURL": efbConsentURL},
+	); sendErr != nil {
 		log.Error("failed to send efb consent email", "error", sendErr)
 		return
 	}

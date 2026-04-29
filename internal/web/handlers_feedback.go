@@ -2,13 +2,12 @@ package web
 
 import (
 	"encoding/json"
-	"fmt"
-	"html"
 	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/i18n"
 )
 
 // handleFeedbackSubmit processes feedback form submissions from the dashboard
@@ -74,20 +73,26 @@ func (s *Server) handleFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 	if s.feedbackEmail != "" {
 		user, _ := s.db.GetUserByID(userID)
 		userEmail := "unknown"
+		lang := i18n.FromContext(r.Context())
 		if user != nil {
 			userEmail = user.Email
+			if user.PreferredLang != "" {
+				lang = i18n.ParseLang(user.PreferredLang)
+			}
 		}
-		subject := fmt.Sprintf("EFB Connector Feedback [%s]", category)
-		htmlBody := fmt.Sprintf(
-			`<p><strong>From:</strong> %s (user #%d)</p>
-			<p><strong>Category:</strong> %s</p>
-			<p><strong>Message:</strong></p>
-			<p>%s</p>`,
-			html.EscapeString(userEmail), userID,
-			html.EscapeString(category),
-			html.EscapeString(message),
+		err := s.mailer.Send(
+			s.feedbackEmail,
+			lang,
+			"feedback",
+			map[string]any{
+				"UserEmail": userEmail,
+				"UserID":    userID,
+				"Category":  category,
+				"Message":   message,
+			},
+			category,
 		)
-		if err := s.auth.SendEmail(s.feedbackEmail, subject, htmlBody); err != nil {
+		if err != nil {
 			s.logger.Error("failed to send feedback notification", "error", err)
 		}
 	}

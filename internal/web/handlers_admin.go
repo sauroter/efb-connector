@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"efb-connector/internal/efb"
+	"efb-connector/internal/i18n"
 )
 
 // handleAdminStatus returns system-wide statistics.
@@ -361,6 +362,7 @@ func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	settingsURL := s.configBaseURL + "/settings/garmin"
 	var sent int
 	var errs []string
 	for _, u := range users {
@@ -368,8 +370,13 @@ func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		subject, body := garminUpgradeEmail(u.PreferredLang, s.configBaseURL)
-		if err := s.auth.SendEmail(u.Email, subject, body); err != nil {
+		err := s.mailer.Send(
+			u.Email,
+			i18n.ParseLang(u.PreferredLang),
+			"garmin_upgrade",
+			map[string]any{"SettingsURL": settingsURL},
+		)
+		if err != nil {
 			s.logger.Error("admin: send upgrade notification", "user_id", u.ID, "error", err)
 			errs = append(errs, fmt.Sprintf("user %d: %v", u.ID, err))
 			continue
@@ -383,24 +390,4 @@ func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.R
 		"sent":   sent,
 		"errors": errs,
 	})
-}
-
-func garminUpgradeEmail(lang, baseURL string) (subject, body string) {
-	settingsURL := baseURL + "/settings/garmin"
-
-	if lang == "de" {
-		return "EFB Connector: Garmin-Integration aktualisiert",
-			fmt.Sprintf(`<p>Hallo,</p>
-<p>wir haben die Garmin-Integration des EFB Connectors aktualisiert, um eine bessere Kompatibilität mit Garmin Connect sicherzustellen.</p>
-<p>Deine Verbindung wird beim nächsten Sync automatisch neu aufgebaut. Falls dabei Probleme auftreten, kannst du deine Garmin-Zugangsdaten unter dem folgenden Link neu eingeben:</p>
-<p><a href="%s">Garmin-Einstellungen öffnen</a></p>
-<p>Viele Grüße,<br>EFB Connector</p>`, settingsURL)
-	}
-
-	return "EFB Connector: Garmin Integration Updated",
-		fmt.Sprintf(`<p>Hi,</p>
-<p>We've updated the EFB Connector's Garmin integration to improve compatibility with Garmin Connect.</p>
-<p>Your connection will be re-established automatically on the next sync. If you experience any issues, you can re-enter your Garmin credentials here:</p>
-<p><a href="%s">Open Garmin Settings</a></p>
-<p>Best,<br>EFB Connector</p>`, settingsURL)
 }

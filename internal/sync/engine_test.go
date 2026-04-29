@@ -17,6 +17,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/i18n"
 	"efb-connector/internal/rivermap"
 )
 
@@ -1661,23 +1662,43 @@ func newMockEFBServerConsentGate(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// fakeEmailSender records every SendEmail call.
-type fakeEmailSender struct {
+// fakeMailer records every Send call.
+type fakeMailer struct {
 	mu    stdsync.Mutex
-	calls []struct{ To, Subject, Body string }
+	calls []fakeMailerCall
 }
 
-func (f *fakeEmailSender) SendEmail(to, subject, body string) error {
+type fakeMailerCall struct {
+	To          string
+	Lang        i18n.Lang
+	Name        string
+	Data        map[string]any
+	SubjectArgs []any
+}
+
+func (f *fakeMailer) Send(to string, lang i18n.Lang, name string, data map[string]any, subjectArgs ...any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, struct{ To, Subject, Body string }{to, subject, body})
+	f.calls = append(f.calls, fakeMailerCall{
+		To:          to,
+		Lang:        lang,
+		Name:        name,
+		Data:        data,
+		SubjectArgs: subjectArgs,
+	})
 	return nil
 }
 
-func (f *fakeEmailSender) Calls() int {
+func (f *fakeMailer) Calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.calls)
+}
+
+func (f *fakeMailer) Last() fakeMailerCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[len(f.calls)-1]
 }
 
 func TestSyncUser_DetectsConsentRequired_SetsFlagAndEmails(t *testing.T) {
@@ -1689,8 +1710,8 @@ func TestSyncUser_DetectsConsentRequired_SetsFlagAndEmails(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	emailer := &fakeEmailSender{}
-	engine.emailer = emailer
+	emailer := &fakeMailer{}
+	engine.mailer = emailer
 
 	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
 		t.Fatalf("SyncUser: %v", err)
@@ -1730,8 +1751,8 @@ func TestSyncUser_ConsentRequired_RateLimitsEmail(t *testing.T) {
 	gp := &mockGarminProvider{activities: makeActivities(1)}
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
-	emailer := &fakeEmailSender{}
-	engine.emailer = emailer
+	emailer := &fakeMailer{}
+	engine.mailer = emailer
 
 	// Anchor time and step it deterministically.
 	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -1786,27 +1807,56 @@ func TestSyncUser_SuccessClearsConsentFlag(t *testing.T) {
 	}
 }
 
-func TestEFBConsentEmail_DEandEN(t *testing.T) {
-	subDe, bodyDe := efbConsentEmail("de")
-	if !strings.Contains(subDe, "Track-Nutzungsvereinbarung") {
-		t.Errorf("DE subject missing topic: %q", subDe)
-	}
-	if !strings.Contains(bodyDe, "ich stimme zu") || !strings.Contains(bodyDe, "kanu-efb.de") {
-		t.Errorf("DE body missing CTA or link: %q", bodyDe)
-	}
-
-	subEn, bodyEn := efbConsentEmail("en")
-	if !strings.Contains(subEn, "track-usage agreement") {
-		t.Errorf("EN subject missing topic: %q", subEn)
-	}
-	if !strings.Contains(bodyEn, "ich stimme zu") || !strings.Contains(bodyEn, "kanu-efb.de") {
-		t.Errorf("EN body missing CTA or link: %q", bodyEn)
+// TestSyncUser_ConsentEmail_DispatchedViaMailer checks that the engine
+// hands the consent email off to the mailer with the expected template
+// name, lang taken from the user's preferred_lang, and the consent URL
+// in the data map. Template rendering itself lives in mailer/mailer_test.go.
+func TestSyncUser_ConsentEmail_DispatchedViaMailer(t *testing.T) {
+	cases := []struct {
+		preferredLang string
+		want          i18n.Lang
+	}{
+		{"de", i18n.DE},
+		{"en", i18n.EN},
+		{"", i18n.EN}, // unset → English
 	}
 
-	// Non-de language defaults to English.
-	subFr, _ := efbConsentEmail("fr")
-	if subFr != subEn {
-		t.Errorf("non-de should default to EN; got %q vs %q", subFr, subEn)
+	for _, tc := range cases {
+		t.Run(tc.preferredLang, func(t *testing.T) {
+			db := openTestDB(t)
+			user := setupUser(t, db)
+			if tc.preferredLang != "" {
+				if err := db.UpdatePreferredLang(user.ID, tc.preferredLang); err != nil {
+					t.Fatalf("UpdatePreferredLang: %v", err)
+				}
+			}
+
+			srv := newMockEFBServerConsentGate(t)
+			gp := &mockGarminProvider{activities: makeActivities(1)}
+			ec := efb.NewEFBClient(srv.URL)
+			engine := newEngine(db, gp, ec)
+
+			fm := &fakeMailer{}
+			engine.mailer = fm
+
+			if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+				t.Fatalf("SyncUser: %v", err)
+			}
+
+			if got := fm.Calls(); got != 1 {
+				t.Fatalf("mailer calls = %d, want 1", got)
+			}
+			call := fm.Last()
+			if call.Name != "efb_consent" {
+				t.Errorf("template name = %q, want %q", call.Name, "efb_consent")
+			}
+			if call.Lang != tc.want {
+				t.Errorf("lang = %q, want %q", call.Lang, tc.want)
+			}
+			if got, _ := call.Data["ConsentURL"].(string); !strings.Contains(got, "kanu-efb.de") {
+				t.Errorf("ConsentURL = %q, want EFB tracks page", got)
+			}
+		})
 	}
 }
 

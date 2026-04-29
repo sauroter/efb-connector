@@ -465,7 +465,7 @@ func TestRateLimiter_AllowSync_DifferentUsers(t *testing.T) {
 // Email tests (using a mock HTTP server)
 // ──────────────────────────────────────────────
 
-func TestSendMagicLinkEmail(t *testing.T) {
+func TestSendEmail(t *testing.T) {
 	var receivedBody map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -498,9 +498,14 @@ func TestSendMagicLinkEmail(t *testing.T) {
 	defer func() { resendEndpoint = oldEndpoint }()
 
 	svc := newTestService(t)
-	err := svc.SendMagicLinkEmail("user@example.com", "test-token-123", "https://example.com", "en")
+	err := svc.SendEmail(
+		"user@example.com",
+		"Test subject",
+		"<p>HTML body with link <a href=\"https://example.com/x\">click</a></p>",
+		"Plain text body with link https://example.com/x",
+	)
 	if err != nil {
-		t.Fatalf("SendMagicLinkEmail: %v", err)
+		t.Fatalf("SendEmail: %v", err)
 	}
 
 	// Verify the payload.
@@ -513,13 +518,25 @@ func TestSendMagicLinkEmail(t *testing.T) {
 		t.Errorf("to = %v", receivedBody["to"])
 	}
 
-	html, ok := receivedBody["html"].(string)
-	if !ok || !strings.Contains(html, "https://example.com/auth/verify?token=test-token-123") {
-		t.Errorf("html does not contain expected link: %q", html)
+	if subj, _ := receivedBody["subject"].(string); subj != "Test subject" {
+		t.Errorf("subject = %q, want %q", subj, "Test subject")
+	}
+
+	htmlField, ok := receivedBody["html"].(string)
+	if !ok || !strings.Contains(htmlField, "https://example.com/x") {
+		t.Errorf("html missing expected content: %q", htmlField)
+	}
+
+	// The plain-text alternative must be sent alongside the HTML —
+	// Resend uses it for clients that prefer text/plain and it
+	// materially improves spam-filter scoring.
+	textField, ok := receivedBody["text"].(string)
+	if !ok || !strings.Contains(textField, "https://example.com/x") {
+		t.Errorf("text missing expected content: %q", textField)
 	}
 }
 
-func TestSendMagicLinkEmail_APIError(t *testing.T) {
+func TestSendEmail_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error": "bad request"}`))
@@ -531,7 +548,7 @@ func TestSendMagicLinkEmail_APIError(t *testing.T) {
 	defer func() { resendEndpoint = oldEndpoint }()
 
 	svc := newTestService(t)
-	err := svc.SendMagicLinkEmail("user@example.com", "token", "https://example.com", "en")
+	err := svc.SendEmail("user@example.com", "Subject", "<p>html</p>", "text")
 	if err == nil {
 		t.Error("expected error for API failure, got nil")
 	}
