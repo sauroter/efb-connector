@@ -26,6 +26,7 @@ import (
 	"efb-connector/internal/database"
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
+	"efb-connector/internal/mailer"
 	"efb-connector/internal/resend"
 	"efb-connector/internal/rivermap"
 	syncsvc "efb-connector/internal/sync"
@@ -115,6 +116,11 @@ func run(logger *slog.Logger) error {
 	authService.ResendSegSetup = resendSegSetup
 	rateLimiter := auth.NewRateLimiter()
 
+	mailerSvc, err := mailer.New(authService, logger)
+	if err != nil {
+		return fmt.Errorf("init mailer: %w", err)
+	}
+
 	var garminProvider garmin.GarminProvider
 	var efbProvider efb.EFBProvider
 	var newEFBSession func() efb.EFBProvider
@@ -154,7 +160,7 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
-	syncOpts := []syncsvc.Option{syncsvc.WithEmailer(authService)}
+	syncOpts := []syncsvc.Option{syncsvc.WithMailer(mailerSvc)}
 	if rivermapClient != nil {
 		syncOpts = append(syncOpts, syncsvc.WithRivermap(rivermapClient))
 	}
@@ -168,6 +174,7 @@ func run(logger *slog.Logger) error {
 	srv, err := web.NewServer(web.ServerDeps{
 		DB:              db,
 		Auth:            authService,
+		Mailer:          mailerSvc,
 		SyncEngine:      syncEngine,
 		Garmin:          garminProvider,
 		EFB:             efbProvider,

@@ -16,6 +16,7 @@ import (
 	"efb-connector/internal/efb"
 	"efb-connector/internal/garmin"
 	"efb-connector/internal/i18n"
+	"efb-connector/internal/mailer"
 	"efb-connector/internal/metrics"
 	"efb-connector/internal/resend"
 	"efb-connector/internal/sync"
@@ -25,6 +26,7 @@ import (
 type Server struct {
 	db             *database.DB
 	auth           *auth.AuthService
+	mailer         *mailer.Mailer
 	syncEngine     *sync.SyncEngine
 	garmin         garmin.GarminProvider
 	efb            efb.EFBProvider
@@ -46,6 +48,7 @@ type Server struct {
 type ServerDeps struct {
 	DB             *database.DB
 	Auth           *auth.AuthService
+	Mailer         *mailer.Mailer
 	SyncEngine     *sync.SyncEngine
 	Garmin         garmin.GarminProvider
 	EFB            efb.EFBProvider
@@ -76,6 +79,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	return &Server{
 		db:              deps.DB,
 		auth:            deps.Auth,
+		mailer:          deps.Mailer,
 		syncEngine:      deps.SyncEngine,
 		garmin:          deps.Garmin,
 		efb:             deps.EFB,

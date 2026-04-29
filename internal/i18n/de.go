@@ -248,4 +248,38 @@ var De = map[string]string{
 	"flash.feedback_message_required":        "Bitte gib eine Nachricht ein.",
 	"flash.feedback_message_too_long":        "Nachricht ist zu lang (max. 2000 Zeichen).",
 	"flash.feedback_rate_limited":            "Du hast heute zu viel Feedback gesendet. Bitte versuche es morgen erneut.",
+
+	// ── Email: shared chrome ──
+	"email.common.greeting": "Hallo,",
+	"email.common.regards":  "Viele Grüße",
+
+	// ── Email: magic link ──
+	"email.magic_link.subject":     "Dein EFB Connector Login-Link",
+	"email.magic_link.intro":       "Klicke auf den folgenden Link, um dich bei EFB Connector anzumelden:",
+	"email.magic_link.cta":         "Bei EFB Connector anmelden",
+	"email.magic_link.expiry_note": "Dieser Link ist 15 Minuten gültig.",
+
+	// ── Email: EFB consent required ──
+	"email.efb_consent.subject":     "EFB Connector: Bitte Track-Nutzungsvereinbarung bestätigen",
+	"email.efb_consent.body_intro":  "EFB hat in Version 2026.1 eine einmalige Zustimmung zur anonymisierten Verwendung deiner Tracks eingeführt. Solange diese Zustimmung fehlt, werden Uploads vom EFB-Portal stillschweigend abgelehnt — die Synchronisation läuft, kommt aber nicht durch.",
+	"email.efb_consent.body_action": "Bitte öffne dazu deine Track-Übersicht auf eFB und klicke einmalig auf „ich stimme zu“:",
+	"email.efb_consent.cta":         "Meine Tracks auf eFB öffnen",
+	"email.efb_consent.body_outro":  "Danach läuft die nächste geplante Synchronisation automatisch wieder durch — du musst hier nichts weiter tun.",
+
+	// ── Email: Garmin upgrade notification ──
+	"email.garmin_upgrade.subject":     "EFB Connector: Garmin-Integration aktualisiert",
+	"email.garmin_upgrade.intro":       "wir haben die Garmin-Integration des EFB Connectors aktualisiert, um eine bessere Kompatibilität mit Garmin Connect sicherzustellen.",
+	"email.garmin_upgrade.body_action": "Deine Verbindung wird beim nächsten Sync automatisch neu aufgebaut. Falls dabei Probleme auftreten, kannst du deine Garmin-Zugangsdaten unter dem folgenden Link neu eingeben:",
+	"email.garmin_upgrade.cta":         "Garmin-Einstellungen öffnen",
+
+	// ── Email: feedback notification (admin-facing) ──
+	// Translator note: `email.feedback.subject` (%s) and
+	// `email.feedback.user_id_label` (%d) are format strings — both
+	// MUST keep their verb. Dropping it produces a broken admin
+	// notification ("…(MISSING)…") that ships verbatim.
+	"email.feedback.subject":        "EFB Connector Feedback [%s]",
+	"email.feedback.from_label":     "Von:",
+	"email.feedback.user_id_label":  "Benutzer #%d",
+	"email.feedback.category_label": "Kategorie:",
+	"email.feedback.message_label":  "Nachricht:",
 }

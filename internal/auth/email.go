@@ -14,22 +14,29 @@ import (
 // It is a package-level variable so tests can override it.
 var resendEndpoint = "https://api.resend.com/emails"
 
-// SendMagicLinkEmail sends a magic link login email to the given address via
-// the Resend HTTP API. The magic link URL is constructed from baseURL and
-// token.
 func (s *AuthService) isDevMode() bool {
 	return s.resendAPIKey == "" ||
 		strings.HasPrefix(s.resendAPIKey, "re_test") ||
 		s.resendAPIKey == "placeholder"
 }
 
-// SendEmail sends an email via the Resend HTTP API.  In dev mode the email is
-// logged instead of sent.
-func (s *AuthService) SendEmail(to, subject, htmlBody string) error {
+// SendEmail dispatches a multipart (HTML + plain-text) email via the
+// Resend HTTP API. In dev mode the email is logged instead of sent so
+// magic links and notifications are still observable in development.
+//
+// All outgoing email content is rendered by internal/mailer; this
+// method is the transport layer only and should not be called directly
+// from feature code.
+func (s *AuthService) SendEmail(to, subject, htmlBody, textBody string) error {
 	if s.isDevMode() {
+		// Log the plain-text body verbatim: it's short, human-readable,
+		// and (for the magic-link email) contains the verify URL the
+		// developer needs to log in locally without querying SQLite.
 		slog.Warn("DEV MODE: email not sent",
 			"to", to,
 			"subject", subject,
+			"text", textBody,
+			"html_len", len(htmlBody),
 		)
 		return nil
 	}
@@ -39,6 +46,7 @@ func (s *AuthService) SendEmail(to, subject, htmlBody string) error {
 		"to":      []string{to},
 		"subject": subject,
 		"html":    htmlBody,
+		"text":    textBody,
 	}
 
 	body, err := json.Marshal(payload)
@@ -66,26 +74,4 @@ func (s *AuthService) SendEmail(to, subject, htmlBody string) error {
 	}
 
 	return nil
-}
-
-// SendMagicLinkEmail sends a magic link login email to the given address.
-func (s *AuthService) SendMagicLinkEmail(to, token, baseURL, lang string) error {
-	link := baseURL + "/auth/verify?token=" + token
-
-	if s.isDevMode() {
-		slog.Warn("DEV MODE: magic link email not sent — click the link below to log in",
-			"to", to,
-			"link", link,
-		)
-		return nil
-	}
-
-	subject := "Your EFB Connector Login Link"
-	htmlBody := fmt.Sprintf(`<p>Click to log in: <a href="%s">Log in to EFB Connector</a></p><p>This link expires in 15 minutes.</p>`, link)
-	if lang == "de" {
-		subject = "Dein EFB Connector Login-Link"
-		htmlBody = fmt.Sprintf(`<p>Klicke hier, um dich anzumelden: <a href="%s">Bei EFB Connector anmelden</a></p><p>Dieser Link ist 15 Minuten gültig.</p>`, link)
-	}
-
-	return s.SendEmail(to, subject, htmlBody)
 }

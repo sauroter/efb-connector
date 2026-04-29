@@ -81,7 +81,8 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Send email with magic link.
 	lang := i18n.FromContext(r.Context())
-	if err := s.auth.SendMagicLinkEmail(email, token, s.baseURL(r), string(lang)); err != nil {
+	link := s.baseURL(r) + "/auth/verify?token=" + token
+	if err := s.mailer.Send(email, lang, "magic_link", map[string]any{"Link": link}); err != nil {
 		s.logger.Error("failed to send magic link email", "email", email, "error", err)
 		// Do not reveal whether the email was sent or not for security reasons.
 	}
