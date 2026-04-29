@@ -29,11 +29,14 @@ func (s *AuthService) isDevMode() bool {
 // from feature code.
 func (s *AuthService) SendEmail(to, subject, htmlBody, textBody string) error {
 	if s.isDevMode() {
+		// Log the plain-text body verbatim: it's short, human-readable,
+		// and (for the magic-link email) contains the verify URL the
+		// developer needs to log in locally without querying SQLite.
 		slog.Warn("DEV MODE: email not sent",
 			"to", to,
 			"subject", subject,
+			"text", textBody,
 			"html_len", len(htmlBody),
-			"text_len", len(textBody),
 		)
 		return nil
 	}

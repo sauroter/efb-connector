@@ -29,7 +29,8 @@ In another terminal:
 
 ```sh
 # 1. Sign up — paste your email, then check the server stdout for a line like
-#    "DEV MODE: magic link email not sent ... link=http://localhost:8080/auth/verify?token=…"
+#    "DEV MODE: email not sent ... text=… https://localhost:8080/auth/verify?token=… …"
+#    (the rendered plain-text body is logged verbatim and contains the link).
 # 2. Open that URL in the browser to log in.
 # 3. Connect Garmin: any non-empty user/pass works (mock accepts anything).
 # 4. Connect EFB: any non-empty user/pass.

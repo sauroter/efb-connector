@@ -38,6 +38,9 @@ func (f *fakeSender) SendEmail(to, subject, htmlBody, textBody string) error {
 func (f *fakeSender) last() sentEmail {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return sentEmail{}
+	}
 	return f.calls[len(f.calls)-1]
 }
 
@@ -206,6 +209,55 @@ func TestMailer_UnknownLang_FallsBackToEnglish(t *testing.T) {
 	got := fs.last()
 	if got.Subject != "Your EFB Connector Login Link" {
 		t.Errorf("unknown lang must fall back to EN subject; got %q", got.Subject)
+	}
+}
+
+// TestMailer_AllTemplates_NoUnresolvedKeysOrActions guards against the
+// most common i18n regression: a missing key in one language. i18n.T's
+// fallback returns the raw key when neither the target lang nor EN has
+// a translation, so a stray "email.foo.bar" string in the rendered
+// output means a translation file is incomplete. This test renders
+// every template in every supported language and fails on either an
+// unresolved i18n key or a leftover {{...}} template action.
+func TestMailer_AllTemplates_NoUnresolvedKeysOrActions(t *testing.T) {
+	cases := []struct {
+		name        string
+		data        map[string]any
+		subjectArgs []any
+	}{
+		{"magic_link", map[string]any{"Link": "https://example.test/x"}, nil},
+		{"efb_consent", map[string]any{"ConsentURL": "https://example.test/x"}, nil},
+		{"garmin_upgrade", map[string]any{"SettingsURL": "https://example.test/x"}, nil},
+		{
+			"feedback",
+			map[string]any{"UserEmail": "x@example.test", "UserID": int64(1), "Category": "general", "Message": "msg"},
+			[]any{"general"},
+		},
+	}
+
+	for _, tc := range cases {
+		for _, lang := range []i18n.Lang{i18n.EN, i18n.DE} {
+			t.Run(tc.name+"/"+string(lang), func(t *testing.T) {
+				fs := &fakeSender{}
+				m := newTestMailer(t, fs)
+				if err := m.Send("u@example.test", lang, tc.name, tc.data, tc.subjectArgs...); err != nil {
+					t.Fatalf("Send: %v", err)
+				}
+				got := fs.last()
+				bodies := map[string]string{"subject": got.Subject, "html": got.HTML, "text": got.Text}
+				for tag, body := range bodies {
+					if body == "" {
+						t.Errorf("%s body empty", tag)
+					}
+					if strings.Contains(body, "{{") || strings.Contains(body, "}}") {
+						t.Errorf("%s contains unresolved template action: %q", tag, body)
+					}
+					if strings.Contains(body, "email.") {
+						t.Errorf("%s contains unresolved i18n key (likely missing translation): %q", tag, body)
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -273,6 +273,10 @@ var En = map[string]string{
 	"email.garmin_upgrade.cta":         "Open Garmin Settings",
 
 	// ── Email: feedback notification (admin-facing) ──
+	// Translator note: `email.feedback.subject` (%s) and
+	// `email.feedback.user_id_label` (%d) are format strings — both
+	// MUST keep their verb. Dropping it produces a broken admin
+	// notification ("…(MISSING)…") that ships verbatim.
 	"email.feedback.subject":        "EFB Connector Feedback [%s]",
 	"email.feedback.from_label":     "From:",
 	"email.feedback.user_id_label":  "user #%d",

@@ -87,14 +87,14 @@ func New(sender Sender, logger *slog.Logger) (*Mailer, error) {
 // Unknown languages fall back to English; missing translation keys fall
 // back through i18n.T's normal fallback chain (target lang → EN → raw key).
 func (m *Mailer) Send(to string, lang i18n.Lang, name string, data map[string]any, subjectArgs ...any) error {
-	htmlTmpl, ok := m.htmlTmpls[lang]
-	if !ok {
-		htmlTmpl = m.htmlTmpls[i18n.EN]
-		lang = i18n.EN
+	resolved := lang
+	if _, ok := m.htmlTmpls[resolved]; !ok {
+		resolved = i18n.EN
 	}
-	textTmpl := m.textTmpls[lang]
+	htmlTmpl := m.htmlTmpls[resolved]
+	textTmpl := m.textTmpls[resolved]
 
-	subject := i18n.T(lang, "email."+name+".subject")
+	subject := i18n.T(resolved, "email."+name+".subject")
 	if len(subjectArgs) > 0 {
 		subject = fmt.Sprintf(subject, subjectArgs...)
 	}
@@ -108,5 +108,8 @@ func (m *Mailer) Send(to string, lang i18n.Lang, name string, data map[string]an
 		return fmt.Errorf("mailer: render text %q: %w", name, err)
 	}
 
+	if m.logger != nil {
+		m.logger.Debug("mailer dispatch", "name", name, "lang", resolved, "to", to)
+	}
 	return m.sender.SendEmail(to, subject, htmlBuf.String(), textBuf.String())
 }
