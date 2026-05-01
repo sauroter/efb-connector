@@ -287,8 +287,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	log.Info("fetched garmin activities", "count", len(activities))
 
-	// Self-heal: ListActivities succeeded, so the stored Garmin creds are good.
-	// No-op when is_valid is already 1; rescues users stuck after a transient failure.
+	// Self-heal: Garmin auth currently works (cached refresh token or stored
+	// password). No-op when is_valid is already 1; rescues users stuck after
+	// a transient failure flipped the flag and nothing reset it.
 	if revErr := s.db.RevalidateGarminCredentials(userID); revErr != nil {
 		log.Warn("failed to revalidate garmin credentials", "error", revErr)
 	}

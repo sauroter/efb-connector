@@ -58,7 +58,7 @@ func TestDashboard_NoCredsInvalidBannerWhenAllValid(t *testing.T) {
 	loginAs(t, h, "valid@example.com")
 
 	body := getBody(t, h.client, h.srv.URL+"/dashboard")
-	if strings.Contains(body, "creds_invalid") || strings.Contains(body, "Anmeldung prüfen") || strings.Contains(body, "Re-enter login") {
+	if strings.Contains(body, "Anmeldung prüfen") || strings.Contains(body, "Re-enter login") {
 		t.Error("dashboard should not show creds-invalid banner when both are valid")
 	}
 }
@@ -110,8 +110,8 @@ func TestSettings_BadgeShowsNeedsReauthForInvalidCreds(t *testing.T) {
 	}
 
 	body := getBody(t, h.client, h.srv.URL+"/settings")
-	if !strings.Contains(body, "needs_reauth") && !strings.Contains(body, "Anmeldung") && !strings.Contains(body, "Re-enter") {
-		// At least one rendered translation of common.needs_reauth should be present.
+	// Either rendered translation of common.needs_reauth must be present.
+	if !strings.Contains(body, "Anmeldung prüfen") && !strings.Contains(body, "Re-enter login") {
 		t.Error("settings page should show needs-reauth badge when garmin is_valid=0")
 	}
 }
