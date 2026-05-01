@@ -39,6 +39,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		efbConnected = true
 	}
 
+	// Surface "connected but stuck invalid" so the user knows to re-enter creds.
+	var garminInvalid, efbInvalid bool
+	if garminConnected {
+		valid, err := s.db.GetGarminCredentialsValid(userID)
+		if err != nil {
+			s.logger.Warn("dashboard: get garmin is_valid", "user_id", userID, "error", err)
+		}
+		garminInvalid = !valid
+	}
+	if efbConnected {
+		valid, err := s.db.GetEFBCredentialsValid(userID)
+		if err != nil {
+			s.logger.Warn("dashboard: get efb is_valid", "user_id", userID, "error", err)
+		}
+		efbInvalid = !valid
+	}
+
 	// Check whether EFB is currently consent-gated for this user.
 	// Surfaced as a banner so the user knows to click "ich stimme zu"
 	// on the EFB portal before sync can succeed.
@@ -100,7 +117,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"CSRFToken":          s.auth.CSRFToken(r),
 		"User":               user,
 		"GarminConnected":    garminConnected,
+		"GarminInvalid":      garminInvalid,
 		"EFBConnected":       efbConnected,
+		"EFBInvalid":         efbInvalid,
 		"EFBConsentRequired": efbConsentRequired,
 		"EFBConsentURL":      "https://efb.kanu-efb.de/interpretation/usersmap",
 		"LastSync":           lastSync,
@@ -139,13 +158,31 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		efbConnected = true
 	}
 
+	var garminInvalid, efbInvalid bool
+	if garminConnected {
+		valid, err := s.db.GetGarminCredentialsValid(userID)
+		if err != nil {
+			s.logger.Warn("settings: get garmin is_valid", "user_id", userID, "error", err)
+		}
+		garminInvalid = !valid
+	}
+	if efbConnected {
+		valid, err := s.db.GetEFBCredentialsValid(userID)
+		if err != nil {
+			s.logger.Warn("settings: get efb is_valid", "user_id", userID, "error", err)
+		}
+		efbInvalid = !valid
+	}
+
 	s.render(w, r, "settings.html", map[string]any{
 		"Flash":           flash(w, r),
 		"CSRFToken":       s.auth.CSRFToken(r),
 		"User":            user,
 		"GarminConnected": garminConnected,
+		"GarminInvalid":   garminInvalid,
 		"GarminEmail":     garminEmail,
 		"EFBConnected":    efbConnected,
+		"EFBInvalid":      efbInvalid,
 		"EFBUsername":     efbUsername,
 		"AutoCreateTrips": user.AutoCreateTrips,
 		"EnrichTrips":     user.EnrichTrips,

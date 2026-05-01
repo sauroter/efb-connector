@@ -287,6 +287,12 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	log.Info("fetched garmin activities", "count", len(activities))
 
+	// Self-heal: ListActivities succeeded, so the stored Garmin creds are good.
+	// No-op when is_valid is already 1; rescues users stuck after a transient failure.
+	if revErr := s.db.RevalidateGarminCredentials(userID); revErr != nil {
+		log.Warn("failed to revalidate garmin credentials", "error", revErr)
+	}
+
 	// 5 & 6. Build list of activities to sync (new + retriable).
 	//
 	// Build a set of failed activity IDs eligible for retry so we can mark
@@ -396,6 +402,12 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login: %w", err)
 	}
 	log.Info("efb login successful")
+
+	// Self-heal: login succeeded, so the stored EFB creds are good.
+	// No-op when is_valid is already 1; rescues users stuck after a transient failure.
+	if revErr := s.db.RevalidateEFBCredentials(userID); revErr != nil {
+		log.Warn("failed to revalidate efb credentials", "error", revErr)
+	}
 
 	// 7. Process each activity.
 	for i, act := range toSync {

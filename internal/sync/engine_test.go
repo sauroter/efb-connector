@@ -558,6 +558,77 @@ func TestSyncUser_EFBLoginFailure(t *testing.T) {
 	}
 }
 
+// Stuck is_valid=0 from a past transient failure must self-heal once auth succeeds again.
+func TestSyncUser_RevalidatesStuckCredentialsOnSuccess(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	if err := db.InvalidateGarminCredentials(user.ID, "stale transient"); err != nil {
+		t.Fatalf("InvalidateGarminCredentials: %v", err)
+	}
+	if err := db.InvalidateEFBCredentials(user.ID, "stale transient"); err != nil {
+		t.Fatalf("InvalidateEFBCredentials: %v", err)
+	}
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "scheduled"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	garminValid, _ := db.GetGarminCredentialsValid(user.ID)
+	efbValid, _ := db.GetEFBCredentialsValid(user.ID)
+	if !garminValid {
+		t.Error("expected garmin is_valid=1 after successful sync")
+	}
+	if !efbValid {
+		t.Error("expected efb is_valid=1 after successful sync")
+	}
+
+	// And the user is back in the syncable set for the next nightly run.
+	users, _ := db.GetSyncableUsers()
+	found := false
+	for _, u := range users {
+		if u.ID == user.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("revalidated user should reappear in syncable users")
+	}
+}
+
+// EFB-down must not block Garmin-side self-heal: the half that authenticated
+// gets credited so the next nightly run can retry only the broken side.
+func TestSyncUser_RevalidatesGarminEvenWhenEFBFails(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerBadLogin(t)
+
+	_ = db.InvalidateGarminCredentials(user.ID, "stale transient")
+	_ = db.InvalidateEFBCredentials(user.ID, "stale transient")
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "scheduled"); err == nil {
+		t.Fatal("expected error from EFB login failure")
+	}
+
+	garminValid, _ := db.GetGarminCredentialsValid(user.ID)
+	efbValid, _ := db.GetEFBCredentialsValid(user.ID)
+	if !garminValid {
+		t.Error("expected garmin is_valid=1 (ListActivities succeeded)")
+	}
+	if efbValid {
+		t.Error("expected efb is_valid=0 (login still failing)")
+	}
+}
+
 func TestSyncUser_NoNewActivities(t *testing.T) {
 	db := openTestDB(t)
 	user := setupUser(t, db)

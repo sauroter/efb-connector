@@ -337,6 +337,114 @@ func TestEFBCredentials_Invalidate(t *testing.T) {
 	}
 }
 
+func TestGarminCredentials_Revalidate(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("garmin_rev@example.com")
+	_ = db.SaveGarminCredentials(u.ID, "e@g.com", "p")
+	_ = db.SaveEFBCredentials(u.ID, "u", "p")
+	_ = db.InvalidateGarminCredentials(u.ID, "transient")
+
+	if err := db.RevalidateGarminCredentials(u.ID); err != nil {
+		t.Fatalf("RevalidateGarminCredentials: %v", err)
+	}
+
+	valid, err := db.GetGarminCredentialsValid(u.ID)
+	if err != nil || !valid {
+		t.Fatalf("expected valid=true after revalidate, got valid=%v err=%v", valid, err)
+	}
+
+	users, _ := db.GetSyncableUsers()
+	found := false
+	for _, su := range users {
+		if su.ID == u.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("revalidated garmin user should reappear in syncable users")
+	}
+}
+
+func TestEFBCredentials_Revalidate(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("efb_rev@example.com")
+	_ = db.SaveGarminCredentials(u.ID, "e@g.com", "p")
+	_ = db.SaveEFBCredentials(u.ID, "u", "p")
+	_ = db.InvalidateEFBCredentials(u.ID, "transient")
+
+	if err := db.RevalidateEFBCredentials(u.ID); err != nil {
+		t.Fatalf("RevalidateEFBCredentials: %v", err)
+	}
+
+	valid, err := db.GetEFBCredentialsValid(u.ID)
+	if err != nil || !valid {
+		t.Fatalf("expected valid=true after revalidate, got valid=%v err=%v", valid, err)
+	}
+
+	users, _ := db.GetSyncableUsers()
+	found := false
+	for _, su := range users {
+		if su.ID == u.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("revalidated efb user should reappear in syncable users")
+	}
+}
+
+// Revalidate must not touch updated_at when is_valid is already 1, so the
+// engine can call it on every successful run without spurious writes.
+func TestRevalidate_NoOpWhenAlreadyValid(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("revalid_noop@example.com")
+	_ = db.SaveGarminCredentials(u.ID, "e@g.com", "p")
+	_ = db.SaveEFBCredentials(u.ID, "u", "p")
+
+	var garminBefore, efbBefore string
+	if err := db.db.QueryRow(`SELECT updated_at FROM garmin_credentials WHERE user_id = ?`, u.ID).Scan(&garminBefore); err != nil {
+		t.Fatalf("read garmin updated_at: %v", err)
+	}
+	if err := db.db.QueryRow(`SELECT updated_at FROM efb_credentials WHERE user_id = ?`, u.ID).Scan(&efbBefore); err != nil {
+		t.Fatalf("read efb updated_at: %v", err)
+	}
+
+	// Sleep enough that any SQLite datetime('now') tick would change.
+	time.Sleep(1100 * time.Millisecond)
+
+	if err := db.RevalidateGarminCredentials(u.ID); err != nil {
+		t.Fatalf("RevalidateGarminCredentials: %v", err)
+	}
+	if err := db.RevalidateEFBCredentials(u.ID); err != nil {
+		t.Fatalf("RevalidateEFBCredentials: %v", err)
+	}
+
+	var garminAfter, efbAfter string
+	_ = db.db.QueryRow(`SELECT updated_at FROM garmin_credentials WHERE user_id = ?`, u.ID).Scan(&garminAfter)
+	_ = db.db.QueryRow(`SELECT updated_at FROM efb_credentials WHERE user_id = ?`, u.ID).Scan(&efbAfter)
+
+	if garminAfter != garminBefore {
+		t.Errorf("garmin updated_at changed on no-op revalidate: %q -> %q", garminBefore, garminAfter)
+	}
+	if efbAfter != efbBefore {
+		t.Errorf("efb updated_at changed on no-op revalidate: %q -> %q", efbBefore, efbAfter)
+	}
+}
+
+func TestGetCredentialsValid_NoRow(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("no_creds@example.com")
+
+	gv, err := db.GetGarminCredentialsValid(u.ID)
+	if err != nil || gv {
+		t.Errorf("garmin: expected (false, nil) for missing row, got (%v, %v)", gv, err)
+	}
+	ev, err := db.GetEFBCredentialsValid(u.ID)
+	if err != nil || ev {
+		t.Errorf("efb: expected (false, nil) for missing row, got (%v, %v)", ev, err)
+	}
+}
+
 func TestEFBSession_RoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	u, _ := db.CreateUser("session@example.com")

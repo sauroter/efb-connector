@@ -81,6 +81,12 @@ var De = map[string]string{
 	"dashboard.efb_consent_required.open_efb":          "Meine Tracks auf EFB öffnen",
 	"dashboard.efb_consent_required.confirm_consented": "Ich habe zugestimmt",
 
+	// ── Banner: Anmeldedaten erneuern ──
+	"dashboard.creds_invalid.heading":    "Anmeldung prüfen",
+	"dashboard.creds_invalid.body":       "Bei der letzten automatischen Synchronisierung schlug die Anmeldung fehl. Trage die betroffenen Zugangsdaten erneut ein, damit die nächtliche Synchronisierung wieder läuft.",
+	"dashboard.creds_invalid.fix_garmin": "Garmin-Zugang prüfen",
+	"dashboard.creds_invalid.fix_efb":    "EFB-Zugang prüfen",
+
 	// ── Getting started ──
 	"setup.heading":            "Erste Schritte",
 	"setup.intro":              "Richte dein Konto in vier Schritten ein:",
@@ -122,6 +128,7 @@ var De = map[string]string{
 	"common.connected":      "Verbunden",
 	"common.not_connected":  "Nicht verbunden",
 	"common.not_configured": "Nicht konfiguriert",
+	"common.needs_reauth":   "Anmeldung prüfen",
 
 	// ── Settings ──
 	"settings.title":            "Einstellungen — EFB Connector",
