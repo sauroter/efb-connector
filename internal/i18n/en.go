@@ -81,6 +81,12 @@ var En = map[string]string{
 	"dashboard.efb_consent_required.open_efb":          "Open Meine Tracks on EFB",
 	"dashboard.efb_consent_required.confirm_consented": "I've accepted",
 
+	// ── Credentials need re-entry banner ──
+	"dashboard.creds_invalid.heading":    "Credentials need re-entry",
+	"dashboard.creds_invalid.body":       "Sign-in failed during the last automatic sync. Re-enter the affected credentials so the nightly sync can resume.",
+	"dashboard.creds_invalid.fix_garmin": "Check Garmin login",
+	"dashboard.creds_invalid.fix_efb":    "Check EFB login",
+
 	// ── Getting started ──
 	"setup.heading":            "Getting Started",
 	"setup.intro":              "Set up your account in four steps:",
@@ -122,6 +128,7 @@ var En = map[string]string{
 	"common.connected":      "Connected",
 	"common.not_connected":  "Not connected",
 	"common.not_configured": "Not configured",
+	"common.needs_reauth":   "Re-enter login",
 
 	// ── Settings ──
 	"settings.title":            "Settings — EFB Connector",

@@ -92,18 +92,36 @@ func (d *DB) InvalidateGarminCredentials(userID int64, errMsg string) error {
 	return nil
 }
 
-// RevalidateGarminCredentials marks previously saved Garmin credentials as
-// valid again (e.g. after successful MFA completion).
+// RevalidateGarminCredentials clears the is_valid=0 flag (e.g. after MFA or
+// a successful sync). The conditional WHERE makes it a no-op when already valid,
+// so the engine can call it on every successful run without spurious writes.
 func (d *DB) RevalidateGarminCredentials(userID int64) error {
 	_, err := d.db.Exec(`
 		UPDATE garmin_credentials
 		   SET is_valid = 1, last_error = NULL, updated_at = datetime('now')
-		 WHERE user_id = ?
+		 WHERE user_id = ? AND is_valid = 0
 	`, userID)
 	if err != nil {
 		return fmt.Errorf("database: revalidate garmin credentials for user %d: %w", userID, err)
 	}
 	return nil
+}
+
+// GetGarminCredentialsValid returns is_valid for the user's Garmin row, or
+// (false, nil) when no row exists.
+func (d *DB) GetGarminCredentialsValid(userID int64) (bool, error) {
+	var v int
+	err := d.db.QueryRow(
+		`SELECT is_valid FROM garmin_credentials WHERE user_id = ?`,
+		userID,
+	).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("database: query garmin is_valid for user %d: %w", userID, err)
+	}
+	return v == 1, nil
 }
 
 // ──────────────────────────────────────────────
@@ -256,6 +274,38 @@ func (d *DB) InvalidateEFBCredentials(userID int64, errMsg string) error {
 		return fmt.Errorf("database: invalidate efb credentials for user %d: %w", userID, err)
 	}
 	return nil
+}
+
+// RevalidateEFBCredentials clears the is_valid=0 flag after a successful
+// EFB login. Conditional WHERE makes it a no-op when already valid, so the
+// engine can call it on every successful login without spurious writes.
+func (d *DB) RevalidateEFBCredentials(userID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE efb_credentials
+		   SET is_valid = 1, last_error = NULL, updated_at = datetime('now')
+		 WHERE user_id = ? AND is_valid = 0
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("database: revalidate efb credentials for user %d: %w", userID, err)
+	}
+	return nil
+}
+
+// GetEFBCredentialsValid returns is_valid for the user's EFB row, or
+// (false, nil) when no row exists.
+func (d *DB) GetEFBCredentialsValid(userID int64) (bool, error) {
+	var v int
+	err := d.db.QueryRow(
+		`SELECT is_valid FROM efb_credentials WHERE user_id = ?`,
+		userID,
+	).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("database: query efb is_valid for user %d: %w", userID, err)
+	}
+	return v == 1, nil
 }
 
 // SaveEFBSession encrypts cookie and stores it alongside expiresAt for userID.

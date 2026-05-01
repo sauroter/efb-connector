@@ -36,6 +36,21 @@
     </article>
     {{end}}
 
+    {{if or .GarminInvalid .EFBInvalid}}
+    <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
+      <header><strong>{{call .T "dashboard.creds_invalid.heading"}}</strong></header>
+      <p>{{call .T "dashboard.creds_invalid.body"}}</p>
+      <p>
+        {{if .GarminInvalid}}
+        <a href="/settings/garmin" role="button">{{call .T "dashboard.creds_invalid.fix_garmin"}}</a>
+        {{end}}
+        {{if .EFBInvalid}}
+        <a href="/settings/efb" role="button" style="margin-left: 0.5rem;">{{call .T "dashboard.creds_invalid.fix_efb"}}</a>
+        {{end}}
+      </p>
+    </article>
+    {{end}}
+
     <hgroup>
       <h1>{{call .T "dashboard.heading"}}</h1>
       <p>{{call .T "dashboard.signed_in_as"}} <strong>{{.User.Email}}</strong></p>

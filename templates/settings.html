@@ -31,7 +31,11 @@
         </div>
         <div class="settings-row-action">
           {{if .GarminConnected}}
-            <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
+            {{if .GarminInvalid}}
+              <span class="status-badge status-partial">{{call .T "common.needs_reauth"}}</span>
+            {{else}}
+              <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
+            {{end}}
           {{else}}
             <span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span>
           {{end}}
@@ -45,7 +49,11 @@
         </div>
         <div class="settings-row-action">
           {{if .EFBConnected}}
-            <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
+            {{if .EFBInvalid}}
+              <span class="status-badge status-partial">{{call .T "common.needs_reauth"}}</span>
+            {{else}}
+              <span class="status-badge status-connected">{{call .T "common.connected"}}</span>
+            {{end}}
           {{else}}
             <span class="status-badge status-disconnected">{{call .T "common.not_connected"}}</span>
           {{end}}
