@@ -1,0 +1,57 @@
+Deutsch
+=======
+
+Hallo,
+
+in den letzten Tagen ist beim nächtlichen Sync von Garmin Connect zum
+EFB leider ein Fehler aufgetreten: Etwa 60 % der aktiven Nutzer wurden
+über elf Nächte hinweg unbemerkt aus dem automatischen Sync
+ausgelassen. Manuelle Syncs über das Dashboard funktionierten in
+dieser Zeit weiterhin.
+
+Ursache war eine zu kurze Verbindungsdauer zwischen unserem Cron-Job
+und dem Server, die den Lauf nach etwa 30–90 Sekunden abgebrochen
+hat — ohne sichtbare Fehlermeldung.
+
+Heute haben wir das Problem in Version v0.9.7 behoben: Der nächtliche
+Sync läuft jetzt unabhängig von der HTTP-Verbindung. Die in den
+letzten elf Tagen übersehenen Aktivitäten haben wir bereits
+nachträglich synchronisiert.
+
+Ein großes Dankeschön an den aufmerksamen Nutzer, der den Fehler
+gemeldet hat — ohne diese Rückmeldung wäre er uns wahrscheinlich noch
+länger entgangen. Falls euch zukünftig etwas Ähnliches auffällt,
+freuen wir uns jederzeit über eine Meldung über den Feedback-Button
+im Dashboard.
+
+Vielen Dank für eure Geduld und euer Vertrauen!
+
+— Georg (EFB Connector)
+
+
+English
+=======
+
+Hi,
+
+Over the past eleven nights, our automatic sync of your Garmin
+Connect activities to EFB had a regression: roughly 60 % of active
+users were silently skipped from each nightly run. Manual syncs from
+the dashboard kept working the whole time.
+
+The cause was an overly aggressive connection timeout between our
+cron job and the server, which cut runs short after 30–90 seconds —
+with no visible error.
+
+We shipped a fix today (v0.9.7); the nightly sync now runs
+independently of the HTTP connection. The activities that were missed
+during those eleven days have already been backfilled.
+
+A big thank-you to the attentive user who reported the issue —
+without that report it could have stayed hidden much longer. If you
+notice anything similar in the future, please drop us a note via the
+Feedback button on your dashboard.
+
+Thanks for your patience and your trust!
+
+— Georg (EFB Connector)
