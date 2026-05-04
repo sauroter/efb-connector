@@ -20,6 +20,7 @@ API="https://api.resend.com"
 AUTH="Authorization: Bearer ${RESEND_MANAGEMENT_KEY}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+NAME="Postmortem: nightly sync (v0.9.7)"
 SUBJECT="Wichtige Information: Sync-Problem behoben / Important: sync issue resolved"
 HTML_FILE="$SCRIPT_DIR/templates/postmortem-2026-05-04.html"
 TEXT_FILE="$SCRIPT_DIR/templates/postmortem-2026-05-04.txt"
@@ -47,9 +48,9 @@ log "  ok '$SEG_NAME' ($RESEND_SEGMENT_ACTIVE)"
 log ""
 log "=== Creating broadcast ==="
 
-PAYLOAD=$(python3 - "$RESEND_SEGMENT_ACTIVE" "$EMAIL_FROM" "$SUBJECT" "$HTML_FILE" "$TEXT_FILE" <<'PY'
+PAYLOAD=$(python3 - "$RESEND_SEGMENT_ACTIVE" "$EMAIL_FROM" "$NAME" "$SUBJECT" "$HTML_FILE" "$TEXT_FILE" <<'PY'
 import json, sys
-segment_id, sender, subject, html_path, text_path = sys.argv[1:6]
+segment_id, sender, name, subject, html_path, text_path = sys.argv[1:7]
 with open(html_path, encoding="utf-8") as f:
     html = f.read()
 with open(text_path, encoding="utf-8") as f:
@@ -57,6 +58,7 @@ with open(text_path, encoding="utf-8") as f:
 print(json.dumps({
     "segment_id": segment_id,
     "from":       sender,
+    "name":       name,
     "subject":    subject,
     "html":       html,
     "text":       text,
