@@ -49,17 +49,17 @@ log "=== Creating broadcast ==="
 
 PAYLOAD=$(python3 - "$RESEND_SEGMENT_ACTIVE" "$EMAIL_FROM" "$SUBJECT" "$HTML_FILE" "$TEXT_FILE" <<'PY'
 import json, sys
-audience_id, sender, subject, html_path, text_path = sys.argv[1:6]
+segment_id, sender, subject, html_path, text_path = sys.argv[1:6]
 with open(html_path, encoding="utf-8") as f:
     html = f.read()
 with open(text_path, encoding="utf-8") as f:
     text = f.read()
 print(json.dumps({
-    "audience_id": audience_id,
-    "from":        sender,
-    "subject":     subject,
-    "html":        html,
-    "text":        text,
+    "segment_id": segment_id,
+    "from":       sender,
+    "subject":    subject,
+    "html":       html,
+    "text":       text,
 }))
 PY
 )
@@ -86,6 +86,14 @@ fi
 
 log ""
 log "=== Sending broadcast ==="
+log "  segment: '$SEG_NAME' ($RESEND_SEGMENT_ACTIVE)"
+log "  broadcast: $BROADCAST_ID"
+read -r -p "Type SEND to confirm dispatch to all segment members: " CONFIRM </dev/tty
+if [ "$CONFIRM" != "SEND" ]; then
+  log "  aborted; broadcast left as draft: $BROADCAST_ID"
+  exit 1
+fi
+
 throttle
 curl -sSf -X POST "$API/broadcasts/$BROADCAST_ID/send" \
   -H "$AUTH" > /dev/null
