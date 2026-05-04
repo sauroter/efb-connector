@@ -284,7 +284,7 @@ components:
         - is_login_page
 
     UserSyncResult:
-      description: Streamed as one NDJSON line per user during sync-all.
+      description: Per-user sync result. Used internally by the sync engine.
       type: object
       properties:
         user_id:
@@ -308,6 +308,47 @@ components:
         trips_created:
           type: integer
       required: [user_id, email, status, found, synced, skipped, failed, trips_created]
+
+    RunAllAccepted:
+      description: Acknowledgement that a fire-and-forget run-all has started.
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [started]
+        started_at:
+          type: string
+          format: date-time
+        total_users:
+          type: integer
+          description: Best-effort count of syncable users at start time.
+      required: [status, started_at, total_users]
+
+    RunAllStatus:
+      description: Current/last state of a run-all execution.
+      type: object
+      properties:
+        in_progress:
+          type: boolean
+        started_at:
+          type: string
+          format: date-time
+          description: Absent if no run has been kicked off since startup.
+        finished_at:
+          type: string
+          format: date-time
+          description: Absent while a run is in progress.
+        total_users:
+          type: integer
+          description: Best-effort count of syncable users at start time.
+        synced:
+          type: integer
+        failed:
+          type: integer
+        error:
+          type: string
+          description: Engine error or panic message; empty on success.
+      required: [in_progress, total_users, synced, failed, error]
 
     Feedback:
       type: object
@@ -1420,22 +1461,49 @@ paths:
   /internal/sync/run-all:
     post:
       tags: [Internal]
-      summary: Sync all users
+      summary: Sync all users (fire-and-forget)
       description: |
-        Triggers a sync for all eligible users using a worker pool of 2.
-        Streams NDJSON progress lines (one per user). Final line indicates
-        overall status. Total timeout: 15 minutes.
+        Kicks off a sync for all eligible users in a detached goroutine and
+        returns 202 Accepted immediately. Progress is observable via
+        GET /internal/sync/run-all/status. Returns 409 Conflict if a run is
+        already in progress (the response body is the current status).
+        Server-side hard timeout: 30 minutes.
       operationId: postSyncAll
       security:
         - internalBearer: []
       responses:
-        "200":
-          description: NDJSON stream of per-user results followed by a final status line
+        "202":
+          description: Run accepted; sync proceeds asynchronously
           content:
-            application/x-ndjson:
+            application/json:
               schema:
-                $ref: "#/components/schemas/UserSyncResult"
+                $ref: "#/components/schemas/RunAllAccepted"
         "401":
           description: Unauthorized
-        "500":
-          description: Internal server error
+        "409":
+          description: A run is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunAllStatus"
+
+  /internal/sync/run-all/status:
+    get:
+      tags: [Internal]
+      summary: Status of the most recent run-all execution
+      description: |
+        Returns the in-memory state of the most recent or in-progress
+        run-all. Safe to poll on a tight cadence. Resets to a never-run
+        state on server restart.
+      operationId: getSyncAllStatus
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Current run-all state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunAllStatus"
+        "401":
+          description: Unauthorized

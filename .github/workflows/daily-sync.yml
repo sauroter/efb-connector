@@ -11,14 +11,52 @@ jobs:
     steps:
       - name: Trigger daily sync
         run: |
-          RESPONSE=$(curl --max-time 900 -s -X POST \
-            -H "Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}" \
-            "${{ secrets.BASE_URL }}/internal/sync/run-all")
-          echo "$RESPONSE"
-          # The endpoint streams NDJSON progress. The last line contains
-          # the final status. Fail the job if it is not "completed".
-          LAST_LINE=$(echo "$RESPONSE" | tail -1)
-          if echo "$LAST_LINE" | grep -q '"status":"error"'; then
-            echo "::error::Sync failed"
+          set -euo pipefail
+
+          BASE="${{ secrets.BASE_URL }}"
+          AUTH="Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}"
+
+          # Kick off the fire-and-forget run. 202 = started, 409 = already running.
+          KICKOFF_HTTP=$(curl -sS -o /tmp/kickoff.json -w '%{http_code}' \
+            -X POST -H "$AUTH" "$BASE/internal/sync/run-all")
+          echo "kickoff HTTP $KICKOFF_HTTP"
+          cat /tmp/kickoff.json
+          echo
+          if [ "$KICKOFF_HTTP" != "202" ] && [ "$KICKOFF_HTTP" != "409" ]; then
+            echo "::error::Unexpected kickoff status $KICKOFF_HTTP"
             exit 1
           fi
+
+          # Poll status every 30s. The poll cadence doubles as a keep-alive
+          # for the Fly machine (idle_timeout = 300s).
+          DEADLINE=$(( $(date +%s) + 1800 ))   # 30 min cap, matches server timeout
+          STATUS=""
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            sleep 30
+            STATUS=$(curl -fsS -H "$AUTH" "$BASE/internal/sync/run-all/status")
+            echo "$STATUS"
+            IN_PROG=$(echo "$STATUS" | jq -r '.in_progress')
+            if [ "$IN_PROG" = "false" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$STATUS" ]; then
+            echo "::error::Status was never read"
+            exit 1
+          fi
+
+          ERR=$(echo "$STATUS" | jq -r '.error // empty')
+          if [ -n "$ERR" ]; then
+            echo "::error::Sync failed: $ERR"
+            exit 1
+          fi
+
+          TOTAL=$(echo "$STATUS" | jq -r '.total_users')
+          DONE=$(echo "$STATUS" | jq -r '.synced + .failed')
+          if [ "$DONE" -lt "$TOTAL" ]; then
+            echo "::error::Only $DONE of $TOTAL syncable users were processed"
+            exit 1
+          fi
+
+          echo "Sync complete: $DONE of $TOTAL users processed."

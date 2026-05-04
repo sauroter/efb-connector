@@ -1,10 +1,12 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ func TestInternalSyncAll_RejectsWrongAuth(t *testing.T) {
 	}
 }
 
-func TestInternalSyncAll_AcceptsCorrectAuth(t *testing.T) {
+func TestInternalSyncAll_ReturnsAcceptedAndCompletes(t *testing.T) {
 	h := newTestHarness(t)
 
 	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
@@ -56,16 +58,117 @@ func TestInternalSyncAll_AcceptsCorrectAuth(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/x-ndjson" {
-		t.Errorf("content-type = %q, want application/x-ndjson", ct)
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	// With no users, the engine emits a single completion line.
-	if !strings.Contains(string(body), `"status":"completed"`) {
-		t.Errorf("expected NDJSON to include status:completed, got %q", string(body))
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "started" {
+		t.Errorf("body.status = %v, want started", body["status"])
+	}
+
+	// The detached goroutine should finish quickly with no syncable users
+	// in the test harness — poll the status endpoint for up to 2s.
+	if !waitForRunAllCompletion(t, h, 2*time.Second) {
+		t.Fatalf("run-all never reported in_progress=false")
+	}
+}
+
+func TestInternalSyncAll_RejectsConcurrentRun(t *testing.T) {
+	h := newTestHarness(t)
+
+	// Manually flag a run as in-progress; the second POST should hit 409
+	// without spawning a goroutine.
+	h.server.runAllMu.Lock()
+	h.server.runAllState = runAllState{
+		InProgress: true,
+		StartedAt:  time.Now(),
+		TotalUsers: 5,
+	}
+	h.server.runAllMu.Unlock()
+
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["in_progress"] != true {
+		t.Errorf("body.in_progress = %v, want true", body["in_progress"])
+	}
+	if body["total_users"].(float64) != 5 {
+		t.Errorf("body.total_users = %v, want 5", body["total_users"])
+	}
+}
+
+func TestInternalSyncAllStatus_RejectsMissingAuth(t *testing.T) {
+	h := newTestHarness(t)
+
+	req, _ := http.NewRequest(http.MethodGet, h.srv.URL+"/internal/sync/run-all/status", nil)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestInternalSyncAllStatus_ReportsIdleBeforeFirstRun(t *testing.T) {
+	h := newTestHarness(t)
+
+	body := readStatus(t, h)
+	if body["in_progress"] != false {
+		t.Errorf("body.in_progress = %v, want false", body["in_progress"])
+	}
+	// No started_at field on a never-run state.
+	if _, ok := body["started_at"]; ok {
+		t.Errorf("body.started_at present, expected absent on never-run state")
+	}
+}
+
+func TestInternalSyncAllStatus_ReportsCompletionAfterRun(t *testing.T) {
+	h := newTestHarness(t)
+
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, _ := h.client.Do(req)
+	resp.Body.Close()
+
+	if !waitForRunAllCompletion(t, h, 2*time.Second) {
+		t.Fatalf("run-all never reported in_progress=false")
+	}
+
+	body := readStatus(t, h)
+	if body["in_progress"] != false {
+		t.Errorf("body.in_progress = %v, want false", body["in_progress"])
+	}
+	if _, ok := body["started_at"]; !ok {
+		t.Errorf("body.started_at missing after run")
+	}
+	if _, ok := body["finished_at"]; !ok {
+		t.Errorf("body.finished_at missing after run")
+	}
+	if body["error"] != "" {
+		t.Errorf("body.error = %q, want empty", body["error"])
 	}
 }
 
@@ -75,6 +178,7 @@ func TestAdminEndpoints_AllRejectMissingAuth(t *testing.T) {
 	cases := []struct {
 		method, path string
 	}{
+		{"GET", "/internal/sync/run-all/status"},
 		{"GET", "/internal/admin/status"},
 		{"GET", "/internal/admin/users"},
 		{"GET", "/internal/admin/users/1/sync-history"},
@@ -146,4 +250,44 @@ func TestHealth_ReturnsOK(t *testing.T) {
 	if !strings.Contains(string(body), `"version":"test"`) {
 		t.Errorf("body = %q, expected version:test", string(body))
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// waitForRunAllCompletion polls the status endpoint until in_progress=false
+// or the deadline elapses. Returns true on completion.
+func waitForRunAllCompletion(t *testing.T, h *testHarness, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		body := readStatus(t, h)
+		if body["in_progress"] == false {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
+// readStatus performs an authorized GET on the run-all status endpoint and
+// returns the decoded JSON body.
+func readStatus(t *testing.T, h *testHarness) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, h.srv.URL+"/internal/sync/run-all/status", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status endpoint returned %d", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	return body
 }

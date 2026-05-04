@@ -45,6 +45,7 @@ var registeredRoutes = []string{
 	"GET /sync/history",
 	"POST /feedback",
 	"POST /internal/sync/run-all",
+	"GET /internal/sync/run-all/status",
 	"GET /internal/admin/status",
 	"GET /internal/admin/users",
 	"GET /internal/admin/users/{id}/sync-history",

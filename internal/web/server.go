@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	stdsync "sync"
 	"time"
 
 	"efb-connector/internal/auth"
@@ -42,6 +43,25 @@ type Server struct {
 	resend          *resend.Client
 	resendSegActive string // segment ID for "Active Syncers"
 	resendSegSetup  string // segment ID for "Needs Setup"
+
+	// State for the fire-and-forget /internal/sync/run-all endpoint. The
+	// HTTP request returns 202 immediately and progress is tracked here so
+	// /internal/sync/run-all/status can report it. Lost on restart, which
+	// is acceptable: the cron is daily and idempotent.
+	runAllMu    stdsync.Mutex
+	runAllState runAllState
+}
+
+// runAllState captures the current/last state of a fire-and-forget
+// /internal/sync/run-all execution.
+type runAllState struct {
+	InProgress bool
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	TotalUsers int    // best-effort upper bound captured at start
+	Synced     int    // users with non-failed result
+	Failed     int    // users with status="failed"
+	Error      string // engine error or panic, empty on success
 }
 
 // ServerDeps bundles the dependencies required to construct a Server.
@@ -163,6 +183,7 @@ func (s *Server) Routes() http.Handler {
 
 	// ── Internal / admin routes ──
 	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
+	mux.HandleFunc("GET /internal/sync/run-all/status", s.handleInternalSyncAllStatus)
 	mux.HandleFunc("GET /internal/admin/status", s.handleAdminStatus)
 	mux.HandleFunc("GET /internal/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)
