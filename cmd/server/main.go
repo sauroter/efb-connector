@@ -269,6 +269,13 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
+	// After HTTP is drained, signal background run-all goroutines to stop
+	// (the engine checks ctx.Err() between users) and wait for them to
+	// finish, bounded by the same shutdown deadline.
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Warn("background tasks did not finish in time", "error", err)
+	}
+
 	logger.Info("server stopped")
 	return nil
 }

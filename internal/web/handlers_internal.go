@@ -50,14 +50,6 @@ func (s *Server) handleInternalSyncAll(w http.ResponseWriter, r *http.Request) {
 
 	startedAt := time.Now()
 
-	// Best-effort upper bound on user count, for the polling client to
-	// compare progress against. Failures here are non-fatal — the client
-	// can still poll synced+failed and infer.
-	var totalUsers int
-	if stats, err := s.db.GetSystemStats(); err == nil && stats != nil {
-		totalUsers = stats.SyncableUsers
-	}
-
 	s.runAllMu.Lock()
 	if s.runAllState.InProgress {
 		state := s.runAllState
@@ -68,26 +60,28 @@ func (s *Server) handleInternalSyncAll(w http.ResponseWriter, r *http.Request) {
 	s.runAllState = runAllState{
 		InProgress: true,
 		StartedAt:  startedAt,
-		TotalUsers: totalUsers,
 	}
 	s.runAllMu.Unlock()
 
-	s.logger.Info("internal sync-all triggered", "total_users", totalUsers)
+	s.logger.Info("internal sync-all triggered")
 
-	go s.runSyncAll(totalUsers)
+	s.runAllWG.Add(1)
+	go s.runSyncAll()
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":      "started",
-		"started_at":  startedAt.UTC().Format(time.RFC3339),
-		"total_users": totalUsers,
+		"status":     "started",
+		"started_at": startedAt.UTC().Format(time.RFC3339),
 	})
 }
 
 // runSyncAll is the goroutine body for the fire-and-forget run-all. It
-// uses context.Background() (not the request context) so a proxy / client
-// disconnect cannot cancel the work mid-flight.
-func (s *Server) runSyncAll(totalUsers int) {
-	ctx, cancel := context.WithTimeout(context.Background(), runAllTimeout)
+// uses runAllRootCtx (not the request context) so a proxy / client
+// disconnect cannot cancel the work mid-flight, but a server Shutdown
+// can.
+func (s *Server) runSyncAll() {
+	defer s.runAllWG.Done()
+
+	ctx, cancel := context.WithTimeout(s.runAllRootCtx, runAllTimeout)
 	defer cancel()
 
 	defer func() {
@@ -108,6 +102,21 @@ func (s *Server) runSyncAll(totalUsers int) {
 		s.runAllState.FinishedAt = &now
 	}()
 
+	// Resolve the user list ourselves so TotalUsers and the iterated set
+	// come from the same query — avoids spurious workflow failures from
+	// snapshot drift between two reads.
+	users, err := s.db.GetSyncableUsers()
+	if err != nil {
+		s.runAllMu.Lock()
+		s.runAllState.Error = fmt.Sprintf("get syncable users: %v", err)
+		s.runAllMu.Unlock()
+		s.logger.Error("sync-all failed", "error", err)
+		return
+	}
+	s.runAllMu.Lock()
+	s.runAllState.TotalUsers = len(users)
+	s.runAllMu.Unlock()
+
 	onProgress := func(result syncsvc.UserSyncResult) {
 		s.runAllMu.Lock()
 		defer s.runAllMu.Unlock()
@@ -118,14 +127,14 @@ func (s *Server) runSyncAll(totalUsers int) {
 		}
 	}
 
-	if err := s.syncEngine.SyncAllUsersProgress(ctx, 2, onProgress); err != nil {
+	if err := s.syncEngine.SyncUsers(ctx, users, 2, onProgress); err != nil {
 		s.runAllMu.Lock()
 		s.runAllState.Error = err.Error()
 		s.runAllMu.Unlock()
 		s.logger.Error("sync-all failed", "error", err)
 		return
 	}
-	s.logger.Info("sync-all completed", "total_users", totalUsers)
+	s.logger.Info("sync-all completed", "total_users", len(users))
 }
 
 // handleInternalSyncAllStatus returns the current/last run-all state as

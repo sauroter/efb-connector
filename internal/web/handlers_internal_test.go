@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -114,6 +115,35 @@ func TestInternalSyncAll_RejectsConcurrentRun(t *testing.T) {
 	}
 	if body["total_users"].(float64) != 5 {
 		t.Errorf("body.total_users = %v, want 5", body["total_users"])
+	}
+}
+
+// TestInternalSyncAll_DetachesFromRequestContext verifies the load-bearing
+// fix for the original silent-cron-dropout bug: the goroutine must keep
+// running even after the originating HTTP request's context is cancelled.
+func TestInternalSyncAll_DetachesFromRequestContext(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+
+	// Cancel the request context immediately — equivalent to Fly's edge
+	// proxy dropping the connection.
+	cancel()
+
+	if !waitForRunAllCompletion(t, h, 2*time.Second) {
+		t.Fatalf("run-all aborted when request context was cancelled — should have continued in background")
+	}
+
+	body := readStatus(t, h)
+	if body["error"] != "" {
+		t.Errorf("body.error = %q, want empty (run should complete cleanly)", body["error"])
 	}
 }
 

@@ -310,7 +310,11 @@ components:
       required: [user_id, email, status, found, synced, skipped, failed, trips_created]
 
     RunAllAccepted:
-      description: Acknowledgement that a fire-and-forget run-all has started.
+      description: |
+        Acknowledgement that a fire-and-forget run-all has started. The
+        total user count is not yet known here — clients should poll
+        /internal/sync/run-all/status to read total_users from the
+        goroutine's actual GetSyncableUsers query.
       type: object
       properties:
         status:
@@ -319,10 +323,7 @@ components:
         started_at:
           type: string
           format: date-time
-        total_users:
-          type: integer
-          description: Best-effort count of syncable users at start time.
-      required: [status, started_at, total_users]
+      required: [status, started_at]
 
     RunAllStatus:
       description: Current/last state of a run-all execution.
