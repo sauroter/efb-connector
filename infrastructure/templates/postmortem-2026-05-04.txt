@@ -55,3 +55,12 @@ Feedback button on your dashboard.
 Thanks for your patience and your trust!
 
 — Georg (EFB Connector)
+
+
+---
+
+Du erhältst diese E-Mail, weil du den EFB Connector nutzt. Abmelden:
+{{{RESEND_UNSUBSCRIBE_URL}}}
+
+You're receiving this because you use EFB Connector. Unsubscribe:
+{{{RESEND_UNSUBSCRIBE_URL}}}
