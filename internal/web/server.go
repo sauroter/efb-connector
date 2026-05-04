@@ -3,12 +3,14 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	stdsync "sync"
 	"time"
 
 	"efb-connector/internal/auth"
@@ -42,6 +44,33 @@ type Server struct {
 	resend          *resend.Client
 	resendSegActive string // segment ID for "Active Syncers"
 	resendSegSetup  string // segment ID for "Needs Setup"
+
+	// State for the fire-and-forget /internal/sync/run-all endpoint. The
+	// HTTP request returns 202 immediately and progress is tracked here so
+	// /internal/sync/run-all/status can report it. Lost on restart, which
+	// is acceptable: the cron is daily and idempotent.
+	runAllMu    stdsync.Mutex
+	runAllState runAllState
+
+	// Lifecycle for background run-all goroutines: rooted at runAllRootCtx
+	// so a server Shutdown can signal them to stop between users (the
+	// engine's worker loop checks ctx.Err() before each iteration). The
+	// WaitGroup lets Shutdown block until they finish.
+	runAllRootCtx    context.Context
+	runAllRootCancel context.CancelFunc
+	runAllWG         stdsync.WaitGroup
+}
+
+// runAllState captures the current/last state of a fire-and-forget
+// /internal/sync/run-all execution.
+type runAllState struct {
+	InProgress bool
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	TotalUsers int    // best-effort upper bound captured at start
+	Synced     int    // users with non-failed result
+	Failed     int    // users with status="failed"
+	Error      string // engine error or panic, empty on success
 }
 
 // ServerDeps bundles the dependencies required to construct a Server.
@@ -76,24 +105,49 @@ func NewServer(deps ServerDeps) (*Server, error) {
 
 	metrics.RegisterDBGauges(deps.DB)
 
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
 	return &Server{
-		db:              deps.DB,
-		auth:            deps.Auth,
-		mailer:          deps.Mailer,
-		syncEngine:      deps.SyncEngine,
-		garmin:          deps.Garmin,
-		efb:             deps.EFB,
-		rateLimiter:     deps.RateLimiter,
-		internalSecret:  deps.InternalSecret,
-		configBaseURL:   deps.BaseURL,
-		feedbackEmail:   deps.FeedbackEmail,
-		logger:          deps.Logger,
-		templates:       tmpl,
-		version:         deps.Version,
-		resend:          deps.Resend,
-		resendSegActive: deps.ResendSegActive,
-		resendSegSetup:  deps.ResendSegSetup,
+		db:               deps.DB,
+		auth:             deps.Auth,
+		mailer:           deps.Mailer,
+		syncEngine:       deps.SyncEngine,
+		garmin:           deps.Garmin,
+		efb:              deps.EFB,
+		rateLimiter:      deps.RateLimiter,
+		internalSecret:   deps.InternalSecret,
+		configBaseURL:    deps.BaseURL,
+		feedbackEmail:    deps.FeedbackEmail,
+		logger:           deps.Logger,
+		templates:        tmpl,
+		version:          deps.Version,
+		resend:           deps.Resend,
+		resendSegActive:  deps.ResendSegActive,
+		resendSegSetup:   deps.ResendSegSetup,
+		runAllRootCtx:    rootCtx,
+		runAllRootCancel: rootCancel,
 	}, nil
+}
+
+// Shutdown signals any background run-all goroutine to stop and waits
+// for it to finish, bounded by ctx. The engine's worker loop checks
+// ctx.Err() before each user, so cancellation propagates within seconds.
+// Safe to call multiple times.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.runAllRootCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.runAllWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // GetUserPreferredLang implements i18n.UserLangProvider by resolving the
@@ -163,6 +217,7 @@ func (s *Server) Routes() http.Handler {
 
 	// ── Internal / admin routes ──
 	mux.HandleFunc("POST /internal/sync/run-all", s.handleInternalSyncAll)
+	mux.HandleFunc("GET /internal/sync/run-all/status", s.handleInternalSyncAllStatus)
 	mux.HandleFunc("GET /internal/admin/status", s.handleAdminStatus)
 	mux.HandleFunc("GET /internal/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)

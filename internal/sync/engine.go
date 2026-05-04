@@ -875,7 +875,14 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 	if err != nil {
 		return fmt.Errorf("sync: get syncable users: %w", err)
 	}
+	return s.SyncUsers(ctx, users, workers, onProgress)
+}
 
+// SyncUsers syncs the given pre-fetched slice of users using a pool of
+// concurrent workers. Callers that need the user count up-front (e.g. for
+// progress reporting) can fetch via GetSyncableUsers themselves and pass
+// the slice in, ensuring the count and the iterated set are consistent.
+func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, workers int, onProgress func(UserSyncResult)) error {
 	if workers < 1 {
 		workers = 1
 	}

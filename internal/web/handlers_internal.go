@@ -4,13 +4,20 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	syncsvc "efb-connector/internal/sync"
 )
+
+// runAllTimeout caps how long a single fire-and-forget run-all execution
+// may take server-side. Generous: each user takes a few seconds, and we
+// want to outlive transient slowness without leaving a stuck "in progress"
+// flag forever.
+const runAllTimeout = 30 * time.Minute
 
 // requireInternalAuth checks the Authorization: Bearer <INTERNAL_SECRET> header.
 // Returns true if authorized, false (and writes 401) if not.
@@ -23,10 +30,15 @@ func (s *Server) requireInternalAuth(w http.ResponseWriter, r *http.Request) boo
 	return true
 }
 
-// handleInternalSyncAll triggers a sync for all eligible users. It streams
-// NDJSON progress lines to keep the HTTP connection alive so that the Fly.io
-// machine stays running (auto_stop_machines only stops when there are no
-// active connections). Uses a worker pool of 2 for concurrent processing.
+// handleInternalSyncAll kicks off a sync for all eligible users in a
+// detached goroutine and returns 202 Accepted immediately. Progress is
+// observable via GET /internal/sync/run-all/status. A 409 Conflict is
+// returned if a run is already in progress.
+//
+// We deliberately decouple sync execution from the HTTP request lifecycle:
+// the original streaming-NDJSON design tied the workers' context to the
+// request, and Fly's edge proxy was cutting that connection at ~30–90 s,
+// silently aborting ~60% of nightly syncs.
 //
 // Protected by:
 //
@@ -36,45 +48,137 @@ func (s *Server) handleInternalSyncAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extend the write deadline for this long-running request (default is 30s).
-	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Now().Add(20 * time.Minute)); err != nil {
-		s.logger.Error("failed to extend write deadline", "error", err)
-	}
+	startedAt := time.Now()
 
-	// Bound the total sync duration.
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
-	defer cancel()
+	s.runAllMu.Lock()
+	if s.runAllState.InProgress {
+		state := s.runAllState
+		s.runAllMu.Unlock()
+		writeJSON(w, http.StatusConflict, runAllStatusBody(state))
+		return
+	}
+	s.runAllState = runAllState{
+		InProgress: true,
+		StartedAt:  startedAt,
+	}
+	s.runAllMu.Unlock()
 
 	s.logger.Info("internal sync-all triggered")
 
-	// Stream NDJSON progress: one JSON line per user as they complete.
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.WriteHeader(http.StatusOK)
-	_ = rc.Flush()
+	s.runAllWG.Add(1)
+	go s.runSyncAll()
 
-	enc := json.NewEncoder(w)
-	var mu sync.Mutex
-
-	err := s.syncEngine.SyncAllUsersProgress(ctx, 2, func(result syncsvc.UserSyncResult) {
-		mu.Lock()
-		defer mu.Unlock()
-		_ = enc.Encode(result)
-		// Reset write deadline after each progress write.
-		_ = rc.SetWriteDeadline(time.Now().Add(20 * time.Minute))
-		_ = rc.Flush()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":     "started",
+		"started_at": startedAt.UTC().Format(time.RFC3339),
 	})
+}
 
-	mu.Lock()
-	defer mu.Unlock()
+// runSyncAll is the goroutine body for the fire-and-forget run-all. It
+// uses runAllRootCtx (not the request context) so a proxy / client
+// disconnect cannot cancel the work mid-flight, but a server Shutdown
+// can.
+func (s *Server) runSyncAll() {
+	defer s.runAllWG.Done()
+
+	ctx, cancel := context.WithTimeout(s.runAllRootCtx, runAllTimeout)
+	defer cancel()
+
+	defer func() {
+		now := time.Now()
+
+		s.runAllMu.Lock()
+		defer s.runAllMu.Unlock()
+
+		if rec := recover(); rec != nil {
+			// Capture the panic into the state so polling clients see it.
+			s.runAllState.Error = fmt.Sprintf("panic: %v", rec)
+			s.logger.Error("sync-all panicked",
+				"panic", rec,
+				"stack", string(debug.Stack()),
+			)
+		}
+		s.runAllState.InProgress = false
+		s.runAllState.FinishedAt = &now
+	}()
+
+	// Resolve the user list ourselves so TotalUsers and the iterated set
+	// come from the same query — avoids spurious workflow failures from
+	// snapshot drift between two reads.
+	users, err := s.db.GetSyncableUsers()
 	if err != nil {
+		s.runAllMu.Lock()
+		s.runAllState.Error = fmt.Sprintf("get syncable users: %v", err)
+		s.runAllMu.Unlock()
 		s.logger.Error("sync-all failed", "error", err)
-		_ = enc.Encode(map[string]string{"status": "error", "error": err.Error()})
-	} else {
-		s.logger.Info("sync-all completed")
-		_ = enc.Encode(map[string]string{"status": "completed"})
+		return
 	}
-	_ = rc.Flush()
+	s.runAllMu.Lock()
+	s.runAllState.TotalUsers = len(users)
+	s.runAllMu.Unlock()
+
+	onProgress := func(result syncsvc.UserSyncResult) {
+		s.runAllMu.Lock()
+		defer s.runAllMu.Unlock()
+		if result.Status == "failed" {
+			s.runAllState.Failed++
+		} else {
+			s.runAllState.Synced++
+		}
+	}
+
+	if err := s.syncEngine.SyncUsers(ctx, users, 2, onProgress); err != nil {
+		s.runAllMu.Lock()
+		s.runAllState.Error = err.Error()
+		s.runAllMu.Unlock()
+		s.logger.Error("sync-all failed", "error", err)
+		return
+	}
+	s.logger.Info("sync-all completed", "total_users", len(users))
+}
+
+// handleInternalSyncAllStatus returns the current/last run-all state as
+// JSON. Safe to poll on a tight cadence; reads are cheap and lock-bounded.
+//
+// Protected by:
+//
+//	Authorization: Bearer <INTERNAL_SECRET>
+func (s *Server) handleInternalSyncAllStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	s.runAllMu.Lock()
+	state := s.runAllState
+	s.runAllMu.Unlock()
+
+	writeJSON(w, http.StatusOK, runAllStatusBody(state))
+}
+
+// runAllStatusBody renders a runAllState into the public JSON shape used
+// by the status endpoint and the 409-conflict body.
+func runAllStatusBody(state runAllState) map[string]any {
+	body := map[string]any{
+		"in_progress": state.InProgress,
+		"total_users": state.TotalUsers,
+		"synced":      state.Synced,
+		"failed":      state.Failed,
+		"error":       state.Error,
+	}
+	if !state.StartedAt.IsZero() {
+		body["started_at"] = state.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if state.FinishedAt != nil {
+		body["finished_at"] = state.FinishedAt.UTC().Format(time.RFC3339)
+	}
+	return body
+}
+
+// writeJSON serializes v as JSON and writes it with the given status code.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // handleHealth checks that the database is reachable and returns 200 OK.
