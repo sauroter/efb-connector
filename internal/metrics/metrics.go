@@ -43,6 +43,14 @@ var (
 	}, []string{"trigger"})
 )
 
+// User-lifecycle metrics.
+var (
+	UserSignupsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "user_signups_total",
+		Help: "Total number of users that have ever signed up.",
+	})
+)
+
 func init() {
 	prometheus.MustRegister(
 		HTTPRequestsTotal,
@@ -50,6 +58,7 @@ func init() {
 		SyncRunsTotal,
 		SyncActivitiesTotal,
 		SyncDuration,
+		UserSignupsTotal,
 	)
 }
 
@@ -106,6 +115,29 @@ func RegisterDBGauges(db *database.DB) {
 			return 0
 		}
 		return float64(stats.SyncableUsers)
+	}))
+
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "db_size_bytes",
+		Help: "Size of the SQLite database file in bytes.",
+	}, func() float64 {
+		stats, err := db.GetSystemStats()
+		if err != nil {
+			return 0
+		}
+		return float64(stats.DBSizeBytes)
+	}))
+
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name:        "users_synced_distinct",
+		Help:        "Distinct users with at least one completed sync run in the last window.",
+		ConstLabels: prometheus.Labels{"window": "7d"},
+	}, func() float64 {
+		n, err := db.CountUsersSyncedSince("-7 days")
+		if err != nil {
+			return 0
+		}
+		return float64(n)
 	}))
 }
 

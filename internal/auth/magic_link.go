@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"efb-connector/internal/database"
+	"efb-connector/internal/metrics"
 	"efb-connector/internal/resend"
 )
 
@@ -97,6 +98,7 @@ func (s *AuthService) ValidateMagicLink(token string) (userID int64, err error) 
 		if err != nil {
 			return 0, fmt.Errorf("auth: auto-create user: %w", err)
 		}
+		metrics.UserSignupsTotal.Inc()
 
 		// Best-effort: add new user to Resend as a "Needs Setup" contact.
 		if s.Resend != nil && s.ResendSegSetup != "" {

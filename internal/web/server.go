@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/activity-errors", s.handleAdminActivityErrors)
 	mux.HandleFunc("GET /internal/admin/activity-errors/{id}", s.handleAdminActivityError)
 	mux.HandleFunc("GET /internal/admin/feedback", s.handleAdminFeedback)
+	mux.HandleFunc("GET /internal/admin/report", s.handleAdminReport)
 	mux.HandleFunc("POST /internal/admin/notify-garmin-upgrade", s.handleAdminNotifyGarminUpgrade)
 	mux.HandleFunc("POST /internal/admin/sync-resend-contacts", s.handleAdminSyncResendContacts)
 	// Dev-only: toggles the simulated consent gate on MockEFBProvider.
@@ -323,6 +324,12 @@ func parseTemplates(dir string, version string) (*template.Template, error) {
 				return t.Format("02.01.2006 15:04 UTC")
 			}
 			return t.Format("2006-01-02 15:04 UTC")
+		},
+		"mul100": func(a, b int) float64 {
+			if b == 0 {
+				return 0
+			}
+			return float64(a) * 100.0 / float64(b)
 		},
 	})
 

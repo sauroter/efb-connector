@@ -14,6 +14,64 @@ import (
 // Internal endpoint authorization
 // ─────────────────────────────────────────────────────────────────────────────
 
+func TestAdminReport_RequiresAuth(t *testing.T) {
+	h := newTestHarness(t)
+
+	resp, err := h.client.Get(h.srv.URL + "/internal/admin/report")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminReport_RendersHTML(t *testing.T) {
+	h := newTestHarness(t)
+
+	// Seed a single user so the rendered tables are non-empty.
+	if _, err := h.db.CreateUser("renders@example.com"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, h.srv.URL+"/internal/admin/report", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html...", ct)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	html := string(body)
+
+	for _, want := range []string{
+		"Admin Report",
+		"Funnel",
+		"Stuck users",
+		"All users",
+		"Recent sync failures",
+		"Recent activity upload failures",
+		"renders@example.com",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
 func TestInternalSyncAll_RejectsMissingAuth(t *testing.T) {
 	h := newTestHarness(t)
 

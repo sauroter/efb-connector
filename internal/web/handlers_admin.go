@@ -348,6 +348,59 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// handleAdminReport renders an HTML overview of system health: onboarding
+// funnel, stuck users (fully connected but not progressing), per-user
+// activity status, and the most recent failures.
+//
+// Authenticated like the JSON admin endpoints but returns HTML for direct
+// browser viewing. The four data fetches run sequentially against SQLite —
+// each is a small, indexed query and the page is admin-only, so a few
+// hundred ms total is acceptable.
+func (s *Server) handleAdminReport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	funnel, err := s.db.GetFunnelCounts()
+	if err != nil {
+		s.logger.Error("admin: get funnel counts", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	stuck, err := s.db.GetStuckUsers()
+	if err != nil {
+		s.logger.Error("admin: get stuck users", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	overview, err := s.db.GetUserActivityOverview()
+	if err != nil {
+		s.logger.Error("admin: get user activity overview", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	failures, err := s.db.GetRecentFailures(50)
+	if err != nil {
+		s.logger.Error("admin: get recent failures", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "admin_report.html", map[string]any{
+		"Funnel":   funnel,
+		"Stuck":    stuck,
+		"Overview": overview,
+		"Failures": failures,
+		"Now":      time.Now().UTC(),
+	}); err != nil {
+		s.logger.Error("admin: render report", "error", err)
+	}
+}
+
 // handleAdminNotifyGarminUpgrade sends a notification email to all users with
 // Garmin credentials about the garminconnect library upgrade.
 func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,208 @@
+{{define "admin_report.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>Admin Report</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    body { padding: 1.5rem; font-size: 0.9rem; }
+    h1 { margin-bottom: 0.25rem; }
+    h2 { margin-top: 2rem; }
+    .meta { color: var(--pico-muted-color); font-size: 0.85rem; margin-bottom: 2rem; }
+    .funnel { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin: 1rem 0 0.5rem; }
+    .funnel-step { padding: 0.75rem; border: 1px solid var(--pico-muted-border-color); border-radius: 0.5rem; }
+    .funnel-step .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--pico-muted-color); }
+    .funnel-step .count { font-size: 2rem; font-weight: 600; line-height: 1.1; }
+    .funnel-step .pct { font-size: 0.8rem; color: var(--pico-muted-color); }
+    table { font-size: 0.85rem; }
+    th, td { padding: 0.4rem 0.5rem; vertical-align: top; }
+    code, .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    .err { color: var(--pico-color-red-500); }
+    .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: 500; }
+    .badge-synced { background: var(--pico-color-green-100); color: var(--pico-color-green-700); }
+    .badge-failing { background: var(--pico-color-red-100); color: var(--pico-color-red-700); }
+    .badge-stale { background: var(--pico-color-amber-100); color: var(--pico-color-amber-700); }
+    .badge-consent { background: var(--pico-color-purple-100); color: var(--pico-color-purple-700); }
+    .badge-disconnected { background: var(--pico-color-slate-100); color: var(--pico-color-slate-600); }
+    .badge-never { background: var(--pico-color-slate-100); color: var(--pico-color-slate-600); }
+    .truncate { max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    details > summary { cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<h1>Admin Report</h1>
+<p class="meta">Generated {{.Now.Format "2006-01-02 15:04 UTC"}}</p>
+
+<h2>Funnel</h2>
+<div class="funnel">
+  {{$total := .Funnel.SignedUp}}
+  <div class="funnel-step">
+    <div class="label">Signed up</div>
+    <div class="count">{{.Funnel.SignedUp}}</div>
+    <div class="pct">100%</div>
+  </div>
+  <div class="funnel-step">
+    <div class="label">Garmin connected</div>
+    <div class="count">{{.Funnel.GarminConnected}}</div>
+    <div class="pct">{{if gt $total 0}}{{printf "%.0f%%" (mul100 .Funnel.GarminConnected $total)}}{{end}}</div>
+  </div>
+  <div class="funnel-step">
+    <div class="label">EFB connected</div>
+    <div class="count">{{.Funnel.EFBConnected}}</div>
+    <div class="pct">{{if gt $total 0}}{{printf "%.0f%%" (mul100 .Funnel.EFBConnected $total)}}{{end}}</div>
+  </div>
+  <div class="funnel-step">
+    <div class="label">First sync done</div>
+    <div class="count">{{.Funnel.FirstSyncCompleted}}</div>
+    <div class="pct">{{if gt $total 0}}{{printf "%.0f%%" (mul100 .Funnel.FirstSyncCompleted $total)}}{{end}}</div>
+  </div>
+  <div class="funnel-step">
+    <div class="label">Synced last 7d</div>
+    <div class="count">{{.Funnel.SyncedInLast7Days}}</div>
+    <div class="pct">{{if gt $total 0}}{{printf "%.0f%%" (mul100 .Funnel.SyncedInLast7Days $total)}}{{end}}</div>
+  </div>
+</div>
+
+<h2>Stuck users <small style="font-weight: normal; color: var(--pico-muted-color);">({{len .Stuck}} fully connected, no successful sync in 7d)</small></h2>
+{{if .Stuck}}
+<figure>
+<table>
+  <thead>
+    <tr>
+      <th>Email</th>
+      <th>Signed up</th>
+      <th>Last successful sync</th>
+      <th>Last attempt</th>
+      <th>Status</th>
+      <th>Trigger</th>
+      <th>Last error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Stuck}}
+    <tr>
+      <td>{{.Email}}{{if .ConsentRequired}} <span class="badge badge-consent">consent</span>{{end}}</td>
+      <td class="mono">{{.SignupAt.Format "2006-01-02"}}</td>
+      <td class="mono">{{if .LastSuccessfulSync}}{{.LastSuccessfulSync.Format "2006-01-02 15:04"}}{{else}}<span class="err">never</span>{{end}}</td>
+      <td class="mono">{{if .LastAttemptAt}}{{.LastAttemptAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+      <td>{{.LastAttemptStatus}}</td>
+      <td class="mono">{{.LastAttemptTrigger}}</td>
+      <td class="truncate err" title="{{.LastErrorMessage}}">{{.LastErrorMessage}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</figure>
+{{else}}
+<p>No stuck users — every fully connected user has synced successfully in the last 7 days.</p>
+{{end}}
+
+<h2>All users</h2>
+<figure>
+<table>
+  <thead>
+    <tr>
+      <th>Email</th>
+      <th>Status</th>
+      <th>Garmin</th>
+      <th>EFB</th>
+      <th>Last successful sync</th>
+      <th>Last attempt</th>
+      <th>7d ✓</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Overview}}
+    <tr>
+      <td>{{.Email}}{{if not .IsActive}} <small>(inactive)</small>{{end}}{{if not .SyncEnabled}} <small>(disabled)</small>{{end}}</td>
+      <td>
+        {{if eq .Status "synced"}}<span class="badge badge-synced">synced</span>
+        {{else if eq .Status "failing"}}<span class="badge badge-failing">failing</span>
+        {{else if eq .Status "stale"}}<span class="badge badge-stale">stale</span>
+        {{else if eq .Status "consent_required"}}<span class="badge badge-consent">consent</span>
+        {{else if eq .Status "never_synced"}}<span class="badge badge-never">never</span>
+        {{else}}<span class="badge badge-disconnected">disconnected</span>{{end}}
+      </td>
+      <td>{{if .GarminValid}}✓{{else}}✗{{end}}</td>
+      <td>{{if .EFBValid}}✓{{else}}✗{{end}}</td>
+      <td class="mono">{{if .LastSuccessfulSync}}{{.LastSuccessfulSync.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+      <td class="mono">{{if .LastAttemptAt}}{{.LastAttemptAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+      <td class="mono">{{.Successful7Days}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</figure>
+
+<h2>Recent sync failures <small style="font-weight: normal; color: var(--pico-muted-color);">(last {{len .Failures.SyncRuns}})</small></h2>
+{{if .Failures.SyncRuns}}
+<figure>
+<table>
+  <thead>
+    <tr>
+      <th>Started</th>
+      <th>Email</th>
+      <th>Trigger</th>
+      <th>Status</th>
+      <th>Found / Synced / Failed</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Failures.SyncRuns}}
+    <tr>
+      <td class="mono">{{.StartedAt.Format "2006-01-02 15:04"}}</td>
+      <td>{{.Email}}</td>
+      <td class="mono">{{.Trigger}}</td>
+      <td>{{.Status}}</td>
+      <td class="mono">{{.ActivitiesFound}} / {{.ActivitiesSynced}} / {{.ActivitiesFailed}}</td>
+      <td class="truncate err" title="{{.ErrorMessage}}">{{.ErrorMessage}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</figure>
+{{else}}
+<p>No failed sync runs.</p>
+{{end}}
+
+<h2>Recent activity upload failures <small style="font-weight: normal; color: var(--pico-muted-color);">(last {{len .Failures.Activities}})</small></h2>
+{{if .Failures.Activities}}
+<figure>
+<table>
+  <thead>
+    <tr>
+      <th>Synced at</th>
+      <th>Email</th>
+      <th>Activity</th>
+      <th>Status</th>
+      <th>HTTP</th>
+      <th>Retries</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Failures.Activities}}
+    <tr>
+      <td class="mono">{{.SyncedAt.Format "2006-01-02 15:04"}}</td>
+      <td>{{.Email}}</td>
+      <td class="mono">{{.GarminActivityID}}{{if .ActivityName}} <span style="color: var(--pico-muted-color);">{{.ActivityName}}</span>{{end}}</td>
+      <td>{{.UploadStatus}}</td>
+      <td class="mono">{{if .ResponseStatusCode}}{{.ResponseStatusCode}}{{else}}—{{end}}</td>
+      <td class="mono">{{.RetryCount}}</td>
+      <td class="truncate err" title="{{.ErrorMessage}}">{{.ErrorMessage}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</figure>
+{{else}}
+<p>No failed activity uploads.</p>
+{{end}}
+
+</body>
+</html>
+{{end}}

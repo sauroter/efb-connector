@@ -63,3 +63,8 @@ func TestObserveSyncRun_DoesNotPanic(t *testing.T) {
 	ObserveSyncRun("cron", "completed", 12.5, 10, 8, 1, 1, 8)
 	ObserveSyncRun("manual", "error", 0.5, 0, 0, 0, 0, 0)
 }
+
+func TestUserSignupsTotal_DoesNotPanic(t *testing.T) {
+	UserSignupsTotal.Inc()
+	UserSignupsTotal.Add(2)
+}

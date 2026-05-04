@@ -55,6 +55,7 @@ var registeredRoutes = []string{
 	"GET /internal/admin/activity-errors",
 	"GET /internal/admin/activity-errors/{id}",
 	"GET /internal/admin/feedback",
+	"GET /internal/admin/report",
 	"POST /internal/admin/notify-garmin-upgrade",
 	"POST /internal/admin/sync-resend-contacts",
 	"POST /internal/admin/dev/mock-efb/consent-gate",

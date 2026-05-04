@@ -1372,6 +1372,32 @@ paths:
         "500":
           description: Internal server error
 
+  /internal/admin/report:
+    get:
+      tags: [Internal]
+      summary: Admin HTML report
+      description: |
+        Renders an HTML overview of system health: signup→syncing funnel,
+        stuck users (fully connected but no successful sync in 7 days),
+        per-user activity status, and the most recent sync and activity
+        upload failures.
+
+        Designed for direct browser viewing by an operator.
+      operationId: getAdminReport
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Rendered HTML report
+          content:
+            text/html:
+              schema:
+                type: string
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
   /internal/admin/notify-garmin-upgrade:
     post:
       tags: [Internal]
