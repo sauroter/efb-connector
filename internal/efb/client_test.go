@@ -1136,3 +1136,81 @@ func TestParseFormFields_HTMLEntityUnescaping(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Rate-limit detection tests
+// ---------------------------------------------------------------------------
+
+// rateLimitedBody mirrors the production EFB rate-limit banner observed
+// in the field (~229 bytes, alert-danger div containing the German
+// "zu häufiger Login Versuche" phrase).
+const rateLimitedBody = `<br />
+<div class="container-fluid">
+<div class="row">
+<div class="col-12">
+<div class="alert alert-danger" role="alert">Zugang zum eFB vorübergehend wegen zu häufiger Login Versuche gesperrt.</div>
+</div>
+</div>
+</div>
+<br />
+`
+
+// newMockServerRateLimited serves the rate-limit banner directly at
+// /login with status 200 — i.e. no redirect, the request URL still
+// ends in /login. This is the production-observed behaviour.
+func newMockServerRateLimited(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(rateLimitedBody))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestLogin_RateLimitedResponse(t *testing.T) {
+	srv := newMockServerRateLimited(t)
+	c := newClient(srv)
+
+	err := c.Login(context.Background(), "any", "any")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var rl *LoginRateLimitedError
+	if !errors.As(err, &rl) {
+		t.Fatalf("error type = %T, want *LoginRateLimitedError; err = %v", err, err)
+	}
+	if rl.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", rl.StatusCode)
+	}
+	if !strings.Contains(rl.BodyExcerpt, "zu häufiger Login Versuche") {
+		t.Errorf("BodyExcerpt missing rate-limit phrase: %q", rl.BodyExcerpt)
+	}
+	if strings.Contains(err.Error(), "invalid credentials") {
+		t.Errorf("rate-limit error must not be reported as invalid credentials: %v", err)
+	}
+}
+
+func TestIsRateLimitedBody(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"production banner", rateLimitedBody, true},
+		{"phrase only, no alert div", "zu häufiger Login Versuche", false},
+		{"alert div only, no phrase", `<div class="alert alert-danger">other</div>`, false},
+		{"empty", "", false},
+		{"normal page", "<html>ok</html>", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsRateLimitedBody([]byte(tc.body)); got != tc.want {
+				t.Errorf("IsRateLimitedBody = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

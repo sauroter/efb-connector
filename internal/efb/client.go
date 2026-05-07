@@ -107,12 +107,24 @@ func (c *EFBClient) Login(ctx context.Context, username, password string) error 
 		return fmt.Errorf("efb: login request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	// Consume body so the connection can be reused.
-	_, _ = io.Copy(io.Discard, resp.Body)
 
-	// If the server redirected us back to the login page, the credentials
-	// were rejected.
+	// Read a capped prefix so we can inspect for the rate-limit banner,
+	// then drain (and count) the rest so the connection can be reused
+	// and BodySize reflects the true response size.
+	prefix := make([]byte, MaxResponseBodyExcerpt)
+	n, _ := io.ReadFull(resp.Body, prefix)
+	prefix = prefix[:n]
+	tail, _ := io.Copy(io.Discard, resp.Body)
+	totalSize := n + int(tail)
+
 	if strings.HasSuffix(resp.Request.URL.Path, defaultLoginPath) {
+		if IsRateLimitedBody(prefix) {
+			return &LoginRateLimitedError{
+				StatusCode:  resp.StatusCode,
+				BodySize:    totalSize,
+				BodyExcerpt: string(prefix),
+			}
+		}
 		return fmt.Errorf("efb: login failed: invalid credentials")
 	}
 
@@ -159,6 +171,19 @@ type UploadRejectedError struct {
 // fmt.Errorf so callers (and classifyEFBError) keep working unchanged.
 func (e *UploadRejectedError) Error() string {
 	return "efb: upload did not succeed: " + e.Summary
+}
+
+// LoginRateLimitedError is returned by [EFBClient.Login] when EFB's
+// per-IP login rate limiter has tripped. The engine MUST treat this
+// as transient: do not invalidate the user's stored credentials.
+type LoginRateLimitedError struct {
+	StatusCode  int
+	BodySize    int
+	BodyExcerpt string // capped at MaxResponseBodyExcerpt
+}
+
+func (e *LoginRateLimitedError) Error() string {
+	return "efb: login temporarily blocked by rate limit"
 }
 
 // Upload sends gpxData to the EFB portal as a multipart file upload.
@@ -669,6 +694,24 @@ const (
 func IsConsentRequiredBody(body []byte) bool {
 	return bytes.Contains(body, []byte(consentPhrase)) &&
 		bytes.Contains(body, []byte(consentButtonName))
+}
+
+// rateLimitMarker1 / rateLimitMarker2 are the two markers of EFB's
+// per-IP login rate-limit banner. Both required so a stray phrase
+// elsewhere on the site can't false-positive.
+const (
+	rateLimitMarker1 = "zu häufiger Login Versuche"
+	rateLimitMarker2 = `class="alert alert-danger"`
+)
+
+// IsRateLimitedBody reports whether body is the EFB login rate-limit
+// banner ("Zugang zum eFB vorübergehend wegen zu häufiger Login
+// Versuche gesperrt"). The login parser uses this to disambiguate the
+// rate-limit page from a genuine bad-password redirect, since both
+// land at /login.
+func IsRateLimitedBody(body []byte) bool {
+	return bytes.Contains(body, []byte(rateLimitMarker1)) &&
+		bytes.Contains(body, []byte(rateLimitMarker2))
 }
 
 // summariseResponse returns a concise summary of an HTML response body for

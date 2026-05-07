@@ -127,7 +127,7 @@ func (s *Server) runSyncAll() {
 		}
 	}
 
-	if err := s.syncEngine.SyncUsers(ctx, users, 2, onProgress); err != nil {
+	if err := s.syncEngine.SyncUsers(ctx, users, 1, onProgress); err != nil {
 		s.runAllMu.Lock()
 		s.runAllState.Error = err.Error()
 		s.runAllMu.Unlock()
