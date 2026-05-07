@@ -68,6 +68,10 @@ type SyncEngine struct {
 
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
 	sleepFunc func(min, max time.Duration)
+
+	// interUserPacing is the gap between users in SyncUsers, keeping
+	// the bulk runner under EFB's per-IP login rate limit.
+	interUserPacing time.Duration
 }
 
 // Option configures a [SyncEngine] at construction time.
@@ -90,6 +94,7 @@ func WithMailer(m Mailer) Option {
 func WithoutSleep() Option {
 	return func(s *SyncEngine) {
 		s.sleepFunc = func(_, _ time.Duration) {}
+		s.interUserPacing = 0
 	}
 }
 
@@ -119,6 +124,7 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 			jitter := min + time.Duration(rand.Int64N(int64(max-min)))
 			time.Sleep(jitter)
 		},
+		interUserPacing: 1 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -389,6 +395,22 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	// 7c. Login to EFB (once per sync run).
 	if err := efbClient.Login(ctx, efbUser, efbPass); err != nil {
+		// EFB rate-limited our IP — transient, do NOT invalidate the
+		// user's credentials (they are almost certainly fine; we just
+		// hit the portal too often). The wrapped error lets SyncUsers
+		// detect this and short-circuit the rest of the bulk run.
+		var rl *efb.LoginRateLimitedError
+		if errors.As(err, &rl) {
+			log.Warn("efb login rate-limited; not invalidating credentials", "body_size", rl.BodySize)
+			for _, act := range toSync {
+				if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "EFB rate limit, retry later"); recErr != nil {
+					log.Error("failed to record activity", "activity_id", act.garminID, "error", recErr)
+				}
+				failed++
+			}
+			return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login rate-limited: %w", err)
+		}
+
 		log.Warn("efb login failed, invalidating credentials", "error", err)
 		if invErr := s.db.InvalidateEFBCredentials(userID, err.Error()); invErr != nil {
 			log.Error("failed to invalidate efb credentials", "error", invErr)
@@ -887,6 +909,12 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 		workers = 1
 	}
 
+	// Derive a cancellable child context so any worker can short-circuit
+	// the rest of the bulk run on EFB rate-limit (continuing would just
+	// extend the cooldown).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	s.logger.Info("starting sync for all users", "user_count", len(users), "workers", workers)
 
 	// Feed users into a work channel.
@@ -927,6 +955,11 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 					log.Error("sync failed for user", "error", syncErr, "run_id", runID)
 					result.Status = "failed"
 					result.Error = syncErr.Error()
+					var rl *efb.LoginRateLimitedError
+					if errors.As(syncErr, &rl) {
+						log.Warn("EFB rate-limit detected; cancelling remaining users in this run")
+						cancel()
+					}
 				}
 
 				// Read the sync run from DB to get accurate counters.
@@ -950,6 +983,15 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				}
 
 				results <- indexedResult{result: result}
+
+				// Pace inter-user EFB logins to stay under the
+				// portal's per-IP rate limit. Skipped if the run is
+				// being cancelled.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(s.interUserPacing):
+				}
 			}
 		}()
 	}

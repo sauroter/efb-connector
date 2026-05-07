@@ -198,6 +198,26 @@ func newMockEFBServerBadLogin(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// newMockEFBServerRateLimited serves the production-shape rate-limit
+// banner directly at /login on POST (status 200, no redirect — final
+// URL still ends in /login). Mirrors the in-the-wild behaviour that
+// our login parser used to confuse with bad credentials.
+func newMockEFBServerRateLimited(t *testing.T) *httptest.Server {
+	t.Helper()
+	const banner = `<br />
+<div class="alert alert-danger" role="alert">Zugang zum eFB vorübergehend wegen zu häufiger Login Versuche gesperrt.</div>
+<br />
+`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(banner))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // newMockEFBServerPartialFailure creates a server that fails on the Nth upload.
 func newMockEFBServerPartialFailure(t *testing.T, failOnUploadN int) *httptest.Server {
 	t.Helper()
@@ -279,6 +299,7 @@ func makeActivities(n int) []garmin.Activity {
 func newEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient) *SyncEngine {
 	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ec }, discardLogger())
 	e.sleepFunc = noSleep
+	e.interUserPacing = 0
 	return e
 }
 
@@ -554,6 +575,100 @@ func TestSyncUser_EFBLoginFailure(t *testing.T) {
 	for _, u := range users {
 		if u.ID == user.ID {
 			t.Error("user should not be syncable after EFB login failure")
+		}
+	}
+}
+
+// Rate-limit MUST NOT trigger credential invalidation: the user's
+// stored password is fine, EFB is just throttling our IP.
+func TestSyncUser_EFBRateLimit_DoesNotInvalidate(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerRateLimited(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(2)}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	_, err := engine.SyncUser(context.Background(), user.ID, "scheduled")
+	if err == nil {
+		t.Fatal("expected error from rate-limited login")
+	}
+	var rl *efb.LoginRateLimitedError
+	if !errors.As(err, &rl) {
+		t.Fatalf("error type = %T, want wrapped *efb.LoginRateLimitedError; err = %v", err, err)
+	}
+
+	// Credentials must remain valid — this is the core regression.
+	efbValid, _ := db.GetEFBCredentialsValid(user.ID)
+	if !efbValid {
+		t.Error("EFB is_valid must remain 1 after a rate-limit response")
+	}
+
+	// User must still be in the syncable set so tonight's retry runs.
+	users, _ := db.GetSyncableUsers()
+	found := false
+	for _, u := range users {
+		if u.ID == user.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("rate-limited user should remain in syncable users")
+	}
+}
+
+// SyncUsers must short-circuit on a rate-limit hit: continuing would
+// just deepen the cooldown for the rest of the user list.
+func TestSyncUsers_RateLimit_ShortCircuitsBulk(t *testing.T) {
+	db := openTestDB(t)
+
+	// Three users — each with their own creds.
+	var users []database.User
+	for i := 1; i <= 3; i++ {
+		u, err := db.CreateUser(fmt.Sprintf("rl-user-%d@example.com", i))
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := db.SaveGarminCredentials(u.ID, fmt.Sprintf("g%d@example.com", i), "gp"); err != nil {
+			t.Fatalf("SaveGarminCredentials: %v", err)
+		}
+		if err := db.SaveEFBCredentials(u.ID, fmt.Sprintf("efbuser%d", i), "ep"); err != nil {
+			t.Fatalf("SaveEFBCredentials: %v", err)
+		}
+		users = append(users, *u)
+	}
+
+	srv := newMockEFBServerRateLimited(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger())
+	engine.sleepFunc = noSleep
+	engine.interUserPacing = 0
+
+	// Concurrency 1 mirrors production after this fix.
+	_ = engine.SyncUsers(context.Background(), users, 1, nil)
+
+	// Only the first user should have been attempted; the cancel
+	// signal drains the rest of the work channel before it's read.
+	var ran int
+	for _, u := range users {
+		hist, _ := db.GetSyncHistory(u.ID, 1)
+		if len(hist) > 0 {
+			ran++
+		}
+	}
+	if ran != 1 {
+		t.Errorf("expected exactly 1 user attempted (rest short-circuited), got %d", ran)
+	}
+
+	// And no user got their EFB creds invalidated.
+	for _, u := range users {
+		valid, _ := db.GetEFBCredentialsValid(u.ID)
+		if !valid {
+			t.Errorf("user %d EFB is_valid flipped to 0 — must not invalidate on rate-limit", u.ID)
 		}
 	}
 }
@@ -846,6 +961,7 @@ func TestSyncAllUsersProgress_ConcurrentSessionIsolation(t *testing.T) {
 		return efb.NewEFBClient(srv.URL)
 	}, discardLogger())
 	engine.sleepFunc = noSleep
+	engine.interUserPacing = 0
 
 	// Run with 2 concurrent workers (the configuration that triggered the bug).
 	err = engine.SyncAllUsersProgress(context.Background(), 2, nil)
