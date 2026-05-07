@@ -223,6 +223,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /internal/admin/users/{id}/sync-history", s.handleAdminUserSyncHistory)
 	mux.HandleFunc("POST /internal/admin/users/{id}/sync", s.handleAdminUserSync)
 	mux.HandleFunc("POST /internal/admin/users/{id}/debug-upload", s.handleAdminUserDebugUpload)
+	mux.HandleFunc("POST /internal/admin/users/{id}/efb/revalidate", s.handleAdminUserEFBRevalidate)
 	mux.HandleFunc("GET /internal/admin/errors", s.handleAdminErrors)
 	mux.HandleFunc("GET /internal/admin/activity-errors", s.handleAdminActivityErrors)
 	mux.HandleFunc("GET /internal/admin/activity-errors/{id}", s.handleAdminActivityError)

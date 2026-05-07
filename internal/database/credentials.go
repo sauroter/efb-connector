@@ -291,6 +291,24 @@ func (d *DB) RevalidateEFBCredentials(userID int64) error {
 	return nil
 }
 
+// EFBCredentialsExist reports whether an efb_credentials row exists for
+// userID. Distinct from GetEFBCredentialsValid, which collapses
+// "no row" and "row with is_valid=0" into the same return.
+func (d *DB) EFBCredentialsExist(userID int64) (bool, error) {
+	var n int
+	err := d.db.QueryRow(
+		`SELECT 1 FROM efb_credentials WHERE user_id = ?`,
+		userID,
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("database: check efb credentials exist for user %d: %w", userID, err)
+	}
+	return true, nil
+}
+
 // GetEFBCredentialsValid returns is_valid for the user's EFB row, or
 // (false, nil) when no row exists.
 func (d *DB) GetEFBCredentialsValid(userID int64) (bool, error) {
