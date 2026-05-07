@@ -102,6 +102,46 @@ func (s *Server) handleAdminUserSync(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAdminUserEFBRevalidate clears a stale is_valid=0 flag on the user's
+// EFB credentials row. Used to recover users whose credentials were falsely
+// invalidated by transient EFB failures (rate-limit, 5xx, network) — the
+// engine itself does this on the next successful login, but a stuck flag
+// can block that retry path.
+//
+// Idempotent: safe to call when is_valid is already 1 (UPDATE matches no
+// rows). Returns 404 only when the user has no efb_credentials row at all.
+func (s *Server) handleAdminUserEFBRevalidate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	exists, err := s.db.EFBCredentialsExist(userID)
+	if err != nil {
+		s.logger.Error("admin: check efb credentials exist", "user_id", userID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "user has no EFB credentials", http.StatusNotFound)
+		return
+	}
+
+	if err := s.db.RevalidateEFBCredentials(userID); err != nil {
+		s.logger.Error("admin: revalidate efb credentials", "user_id", userID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("admin: revalidated efb credentials", "user_id", userID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleAdminErrors returns recent failed/partial sync runs across all users.
 func (s *Server) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInternalAuth(w, r) {

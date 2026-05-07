@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -272,6 +273,7 @@ func TestAdminEndpoints_AllRejectMissingAuth(t *testing.T) {
 		{"GET", "/internal/admin/users/1/sync-history"},
 		{"POST", "/internal/admin/users/1/sync"},
 		{"POST", "/internal/admin/users/1/debug-upload"},
+		{"POST", "/internal/admin/users/1/efb/revalidate"},
 		{"GET", "/internal/admin/errors"},
 		{"GET", "/internal/admin/activity-errors"},
 		{"GET", "/internal/admin/activity-errors/1"},
@@ -312,6 +314,92 @@ func TestAdminStatus_ReturnsSystemStatsJSON(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("content-type = %q, want application/json", ct)
+	}
+}
+
+func TestAdminUserEFBRevalidate_ClearsStaleInvalidFlag(t *testing.T) {
+	h := newTestHarness(t)
+
+	u, err := h.db.CreateUser("revalidate@example.com")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := h.db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+		t.Fatalf("save efb credentials: %v", err)
+	}
+	if err := h.db.InvalidateEFBCredentials(u.ID, "transient"); err != nil {
+		t.Fatalf("invalidate: %v", err)
+	}
+
+	url := h.srv.URL + "/internal/admin/users/" + strconv.FormatInt(u.ID, 10) + "/efb/revalidate"
+	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+
+	valid, err := h.db.GetEFBCredentialsValid(u.ID)
+	if err != nil {
+		t.Fatalf("GetEFBCredentialsValid: %v", err)
+	}
+	if !valid {
+		t.Errorf("is_valid still false after revalidate")
+	}
+
+	// Idempotent: second call also returns 204.
+	req2, _ := http.NewRequest(http.MethodPost, url, nil)
+	req2.Header.Set("Authorization", "Bearer test-secret")
+	resp2, err := h.client.Do(req2)
+	if err != nil {
+		t.Fatalf("post 2: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNoContent {
+		t.Errorf("second call status = %d, want 204", resp2.StatusCode)
+	}
+}
+
+func TestAdminUserEFBRevalidate_404WhenNoCredentialsRow(t *testing.T) {
+	h := newTestHarness(t)
+
+	u, err := h.db.CreateUser("nocreds@example.com")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	url := h.srv.URL + "/internal/admin/users/" + strconv.FormatInt(u.ID, 10) + "/efb/revalidate"
+	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAdminUserEFBRevalidate_400OnInvalidUserID(t *testing.T) {
+	h := newTestHarness(t)
+
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/admin/users/notanumber/efb/revalidate", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
 

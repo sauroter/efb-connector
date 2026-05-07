@@ -51,6 +51,7 @@ var registeredRoutes = []string{
 	"GET /internal/admin/users/{id}/sync-history",
 	"POST /internal/admin/users/{id}/sync",
 	"POST /internal/admin/users/{id}/debug-upload",
+	"POST /internal/admin/users/{id}/efb/revalidate",
 	"GET /internal/admin/errors",
 	"GET /internal/admin/activity-errors",
 	"GET /internal/admin/activity-errors/{id}",
