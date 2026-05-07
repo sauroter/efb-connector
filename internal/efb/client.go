@@ -109,17 +109,19 @@ func (c *EFBClient) Login(ctx context.Context, username, password string) error 
 	defer resp.Body.Close()
 
 	// Read a capped prefix so we can inspect for the rate-limit banner,
-	// then drain the rest so the connection can be reused.
+	// then drain (and count) the rest so the connection can be reused
+	// and BodySize reflects the true response size.
 	prefix := make([]byte, MaxResponseBodyExcerpt)
 	n, _ := io.ReadFull(resp.Body, prefix)
 	prefix = prefix[:n]
-	_, _ = io.Copy(io.Discard, resp.Body)
+	tail, _ := io.Copy(io.Discard, resp.Body)
+	totalSize := n + int(tail)
 
 	if strings.HasSuffix(resp.Request.URL.Path, defaultLoginPath) {
 		if IsRateLimitedBody(prefix) {
 			return &LoginRateLimitedError{
 				StatusCode:  resp.StatusCode,
-				BodySize:    n,
+				BodySize:    totalSize,
 				BodyExcerpt: string(prefix),
 			}
 		}
