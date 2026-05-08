@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	"efb-connector/internal/database"
@@ -72,6 +73,13 @@ type SyncEngine struct {
 	// interUserPacing is the gap between users in SyncUsers, keeping
 	// the bulk runner under EFB's per-IP login rate limit.
 	interUserPacing time.Duration
+
+	// rateLimitBackoff is how long SyncUsers sleeps after the first
+	// *efb.LoginRateLimitedError before attempting the next user. A
+	// second rate-limit after the backoff cancels the run. Tests set
+	// this to 0 via WithRateLimitBackoff (or WithoutSleep) to keep
+	// fast.
+	rateLimitBackoff time.Duration
 }
 
 // Option configures a [SyncEngine] at construction time.
@@ -95,7 +103,22 @@ func WithoutSleep() Option {
 	return func(s *SyncEngine) {
 		s.sleepFunc = func(_, _ time.Duration) {}
 		s.interUserPacing = 0
+		s.rateLimitBackoff = 0
 	}
+}
+
+// WithInterUserPacing overrides the gap between users in SyncUsers. The
+// default keeps the bulk runner under EFB's per-IP login rate limit;
+// tests pass 0 to skip the wait.
+func WithInterUserPacing(d time.Duration) Option {
+	return func(s *SyncEngine) { s.interUserPacing = d }
+}
+
+// WithRateLimitBackoff overrides how long SyncUsers sleeps after the
+// first EFB login rate-limit hit before attempting the next user. Tests
+// pass 0 so the recovery path runs synchronously.
+func WithRateLimitBackoff(d time.Duration) Option {
+	return func(s *SyncEngine) { s.rateLimitBackoff = d }
 }
 
 // NewSyncEngine creates a SyncEngine with the given dependencies.
@@ -124,7 +147,8 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 			jitter := min + time.Duration(rand.Int64N(int64(max-min)))
 			time.Sleep(jitter)
 		},
-		interUserPacing: 1 * time.Second,
+		interUserPacing:  5 * time.Second,
+		rateLimitBackoff: 10 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -909,11 +933,19 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 		workers = 1
 	}
 
-	// Derive a cancellable child context so any worker can short-circuit
-	// the rest of the bulk run on EFB rate-limit (continuing would just
-	// extend the cooldown).
+	// Derive a cancellable child context. After the first
+	// *efb.LoginRateLimitedError we sleep rateLimitBackoff and resume; if
+	// a second rate-limit lands after the sleep, we cancel — the cooldown
+	// is then long enough that continuing would just extend it further.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Tracks whether we have already absorbed one EFB rate-limit hit in
+	// this run. CAS gives the right semantics under workers > 1: the
+	// first worker to hit a rate-limit performs the recovery sleep;
+	// subsequent simultaneous rate-limits fall straight through to
+	// cancel(), since the cooldown clearly is not lifting in 10 minutes.
+	var rateLimitBackoffUsed atomic.Bool
 
 	s.logger.Info("starting sync for all users", "user_count", len(users), "workers", workers)
 
@@ -957,8 +989,18 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 					result.Error = syncErr.Error()
 					var rl *efb.LoginRateLimitedError
 					if errors.As(syncErr, &rl) {
-						log.Warn("EFB rate-limit detected; cancelling remaining users in this run")
-						cancel()
+						if rateLimitBackoffUsed.CompareAndSwap(false, true) {
+							log.Warn("EFB rate-limit detected; sleeping once before resuming",
+								"backoff", s.rateLimitBackoff)
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(s.rateLimitBackoff):
+							}
+						} else {
+							log.Warn("EFB rate-limit re-hit after backoff; cancelling remaining users")
+							cancel()
+						}
 					}
 				}
 

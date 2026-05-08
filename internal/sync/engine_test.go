@@ -218,6 +218,64 @@ func newMockEFBServerRateLimited(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// newMockEFBServerRateLimitedThenOK serves the rate-limit banner on the
+// first /login POST and behaves normally afterwards. Used to verify the
+// SyncUsers backoff-and-resume path.
+func newMockEFBServerRateLimitedThenOK(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+	const banner = `<br />
+<div class="alert alert-danger" role="alert">Zugang zum eFB vorübergehend wegen zu häufiger Login Versuche gesperrt.</div>
+<br />
+`
+	var loginCount atomic.Int32
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		if loginCount.Add(1) == 1 {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(banner))
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		hasSession := err == nil && cookie.Value == "1"
+		if r.Method == http.MethodGet {
+			if !hasSession {
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>usersmap</html>"))
+			return
+		}
+		if !hasSession {
+			http.Error(w, "not authenticated", http.StatusForbidden)
+			return
+		}
+		_ = r.ParseMultipartForm(10 << 20)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Datenbank gespeichert"))
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // newMockEFBServerPartialFailure creates a server that fails on the Nth upload.
 func newMockEFBServerPartialFailure(t *testing.T, failOnUploadN int) *httptest.Server {
 	t.Helper()
@@ -300,6 +358,7 @@ func newEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient) *Sy
 	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ec }, discardLogger())
 	e.sleepFunc = noSleep
 	e.interUserPacing = 0
+	e.rateLimitBackoff = 0
 	return e
 }
 
@@ -618,8 +677,9 @@ func TestSyncUser_EFBRateLimit_DoesNotInvalidate(t *testing.T) {
 	}
 }
 
-// SyncUsers must short-circuit on a rate-limit hit: continuing would
-// just deepen the cooldown for the rest of the user list.
+// SyncUsers absorbs ONE rate-limit hit (sleep + resume) before
+// cancelling. A second hit after the recovery sleep does cancel: the
+// cooldown is then long enough that continuing would just extend it.
 func TestSyncUsers_RateLimit_ShortCircuitsBulk(t *testing.T) {
 	db := openTestDB(t)
 
@@ -644,15 +704,14 @@ func TestSyncUsers_RateLimit_ShortCircuitsBulk(t *testing.T) {
 	gp := &mockGarminProvider{activities: makeActivities(1)}
 	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
 		return efb.NewEFBClient(srv.URL)
-	}, discardLogger())
-	engine.sleepFunc = noSleep
-	engine.interUserPacing = 0
+	}, discardLogger(), WithoutSleep())
 
 	// Concurrency 1 mirrors production after this fix.
 	_ = engine.SyncUsers(context.Background(), users, 1, nil)
 
-	// Only the first user should have been attempted; the cancel
-	// signal drains the rest of the work channel before it's read.
+	// User 1 hits rate-limit, the bulk loop sleeps (zero in tests) and
+	// resumes; user 2 also rate-limits and that second strike triggers
+	// the cancel. User 3 must NOT be attempted.
 	var ran int
 	for _, u := range users {
 		hist, _ := db.GetSyncHistory(u.ID, 1)
@@ -660,8 +719,13 @@ func TestSyncUsers_RateLimit_ShortCircuitsBulk(t *testing.T) {
 			ran++
 		}
 	}
-	if ran != 1 {
-		t.Errorf("expected exactly 1 user attempted (rest short-circuited), got %d", ran)
+	if ran != 2 {
+		t.Errorf("expected exactly 2 users attempted (rate-limit then second-strike cancel), got %d", ran)
+	}
+
+	hist3, _ := db.GetSyncHistory(users[2].ID, 1)
+	if len(hist3) != 0 {
+		t.Errorf("user 3 must NOT be attempted after second-strike cancel; got %d sync_runs", len(hist3))
 	}
 
 	// And no user got their EFB creds invalidated.
@@ -670,6 +734,91 @@ func TestSyncUsers_RateLimit_ShortCircuitsBulk(t *testing.T) {
 		if !valid {
 			t.Errorf("user %d EFB is_valid flipped to 0 — must not invalidate on rate-limit", u.ID)
 		}
+	}
+}
+
+// SyncUsers absorbs a rate-limit and finishes the run when EFB's
+// cooldown lifts in time for the next user.
+func TestSyncUsers_RateLimit_BackoffRecovery(t *testing.T) {
+	db := openTestDB(t)
+
+	var users []database.User
+	for i := 1; i <= 3; i++ {
+		u, err := db.CreateUser(fmt.Sprintf("rl-rec-user-%d@example.com", i))
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := db.SaveGarminCredentials(u.ID, fmt.Sprintf("g%d@example.com", i), "gp"); err != nil {
+			t.Fatalf("SaveGarminCredentials: %v", err)
+		}
+		if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+			t.Fatalf("SaveEFBCredentials: %v", err)
+		}
+		users = append(users, *u)
+	}
+
+	srv := newMockEFBServerRateLimitedThenOK(t)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger(), WithoutSleep())
+
+	if err := engine.SyncUsers(context.Background(), users, 1, nil); err != nil {
+		t.Fatalf("SyncUsers returned error after recovery: %v", err)
+	}
+
+	// All three users should have a sync_run row. User 1 failed
+	// (rate-limited), users 2 and 3 succeeded.
+	for i, u := range users {
+		hist, _ := db.GetSyncHistory(u.ID, 1)
+		if len(hist) == 0 {
+			t.Fatalf("user %d (idx %d) has no sync_run row", u.ID, i)
+		}
+		switch i {
+		case 0:
+			if hist[0].Status != "failed" {
+				t.Errorf("user 1 status = %q, want failed", hist[0].Status)
+			}
+		default:
+			// completed if synced, no-op (no activities new) etc.
+			if hist[0].Status == "failed" {
+				t.Errorf("user %d (idx %d) marked failed after recovery; status=%q err=%q",
+					u.ID, i, hist[0].Status, hist[0].ErrorMessage)
+			}
+		}
+	}
+}
+
+// Trivial Option assertions — document the surface and guard against
+// silent default drift.
+func TestNewSyncEngine_WithInterUserPacing(t *testing.T) {
+	db := openTestDB(t)
+	e := NewSyncEngine(db, &mockGarminProvider{}, func() efb.EFBProvider { return nil },
+		discardLogger(), WithInterUserPacing(42*time.Second))
+	if e.interUserPacing != 42*time.Second {
+		t.Errorf("interUserPacing = %v, want 42s", e.interUserPacing)
+	}
+}
+
+func TestNewSyncEngine_WithRateLimitBackoff(t *testing.T) {
+	db := openTestDB(t)
+	e := NewSyncEngine(db, &mockGarminProvider{}, func() efb.EFBProvider { return nil },
+		discardLogger(), WithRateLimitBackoff(7*time.Minute))
+	if e.rateLimitBackoff != 7*time.Minute {
+		t.Errorf("rateLimitBackoff = %v, want 7m", e.rateLimitBackoff)
+	}
+}
+
+func TestNewSyncEngine_DefaultsAreNonZero(t *testing.T) {
+	db := openTestDB(t)
+	e := NewSyncEngine(db, &mockGarminProvider{}, func() efb.EFBProvider { return nil },
+		discardLogger())
+	if e.interUserPacing <= 0 {
+		t.Errorf("default interUserPacing = %v; want > 0 to throttle bulk runs", e.interUserPacing)
+	}
+	if e.rateLimitBackoff <= 0 {
+		t.Errorf("default rateLimitBackoff = %v; want > 0 so rate-limit recovery sleeps", e.rateLimitBackoff)
 	}
 }
 
