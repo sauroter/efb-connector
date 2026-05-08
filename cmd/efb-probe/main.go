@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -92,8 +93,11 @@ func diagnoseRaw(ctx context.Context, baseURL, user, pass string) {
 	}
 	defer resp.Body.Close()
 
+	// io.ReadFull mirrors production behaviour at internal/efb/client.go:115
+	// — a single Read may short-read and miss markers that fall past the
+	// chunk boundary.
 	prefix := make([]byte, 16*1024)
-	n, _ := resp.Body.Read(prefix)
+	n, _ := io.ReadFull(resp.Body, prefix)
 	prefix = prefix[:n]
 
 	// The two markers IsRateLimitedBody requires.

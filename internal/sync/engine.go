@@ -992,9 +992,13 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 						if rateLimitBackoffUsed.CompareAndSwap(false, true) {
 							log.Warn("EFB rate-limit detected; sleeping once before resuming",
 								"backoff", s.rateLimitBackoff)
+							// Fall through on ctx cancellation rather than
+							// returning, so the rate-limited user's result
+							// still reaches the bulk-loop counters. The
+							// inter-user pacing select below will exit on
+							// the same ctx.Done channel.
 							select {
 							case <-ctx.Done():
-								return
 							case <-time.After(s.rateLimitBackoff):
 							}
 						} else {
