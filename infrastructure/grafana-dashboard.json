@@ -72,7 +72,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_total{app=\"efb-connector\"}",
+          "expr": "max(users_total{app=\"efb-connector\"})",
           "legendFormat": "Total",
           "refId": "A"
         }
@@ -126,7 +126,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_active{app=\"efb-connector\"}",
+          "expr": "max(users_active{app=\"efb-connector\"})",
           "legendFormat": "Active",
           "refId": "A"
         }
@@ -180,7 +180,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_syncable{app=\"efb-connector\"}",
+          "expr": "max(users_syncable{app=\"efb-connector\"})",
           "legendFormat": "Syncable",
           "refId": "A"
         }
@@ -235,7 +235,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_total{app=\"efb-connector\"}",
+          "expr": "max(users_total{app=\"efb-connector\"})",
           "legendFormat": "Total users",
           "refId": "A"
         },
@@ -244,7 +244,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_active{app=\"efb-connector\"}",
+          "expr": "max(users_active{app=\"efb-connector\"})",
           "legendFormat": "Active users",
           "refId": "B"
         },
@@ -253,7 +253,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_syncable{app=\"efb-connector\"}",
+          "expr": "max(users_syncable{app=\"efb-connector\"})",
           "legendFormat": "Fully connected",
           "refId": "C"
         },
@@ -262,7 +262,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "users_synced_distinct{app=\"efb-connector\", window=\"7d\"}",
+          "expr": "max(users_synced_distinct{app=\"efb-connector\", window=\"7d\"})",
           "legendFormat": "Synced in last 7d",
           "refId": "D"
         }
@@ -447,7 +447,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(sync_runs_total{app=\"efb-connector\"}[1h])",
+          "expr": "sum by (trigger, status) (increase(sync_runs_total{app=\"efb-connector\"}[1h]))",
           "legendFormat": "{{trigger}} / {{status}}",
           "refId": "A"
         }
@@ -494,7 +494,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(sync_activities_total{app=\"efb-connector\"}[1h])",
+          "expr": "sum by (result) (increase(sync_activities_total{app=\"efb-connector\"}[1h]))",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -645,7 +645,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(sync_activities_total{app=\"efb-connector\", result=\"synced\"}[1d])",
+          "expr": "sum(increase(sync_activities_total{app=\"efb-connector\", result=\"synced\"}[1d]))",
           "legendFormat": "tracks uploaded",
           "refId": "A"
         }
@@ -697,7 +697,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(sync_activities_total{app=\"efb-connector\", result=\"trips_created\"}[1d])",
+          "expr": "sum(increase(sync_activities_total{app=\"efb-connector\", result=\"trips_created\"}[1d]))",
           "legendFormat": "trips created",
           "refId": "A"
         }
@@ -749,7 +749,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(user_signups_total{app=\"efb-connector\"}[7d])",
+          "expr": "sum(increase(user_signups_total{app=\"efb-connector\"}[7d]))",
           "legendFormat": "signups (7d)",
           "refId": "A"
         }
@@ -958,7 +958,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "db_size_bytes{app=\"efb-connector\"}",
+          "expr": "max(db_size_bytes{app=\"efb-connector\"})",
           "legendFormat": "db file size",
           "refId": "A"
         }
