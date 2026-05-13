@@ -116,7 +116,7 @@ See [`infrastructure/README.md`](infrastructure/README.md) for detailed deployme
 
 ### EFB egress IP rotation
 
-EFB rate-limits the source IP of our login requests. We keep a static Fly egress IPv6 allocated so it can be whitelisted by the EFB maintainers. If the nightly sync fails with `efb login rate-limited`, rotate to a fresh egress IP and notify Tim (kanu-efb.de) of the new address:
+EFB rate-limits the source IP of our login requests. We keep a static Fly egress IPv6 allocated so it can be whitelisted by the EFB maintainers. The nightly bulk run paces at ~30s/user, so a healthy run is roughly 60–80 min; runs that approach the 120-min cap indicate the absorbed-rate-limit-backoff path tripped. If the nightly sync fails with `efb login rate-limited`, rotate to a fresh egress IP and notify Tim (kanu-efb.de) of the new address:
 
 ```bash
 make egress-status   # show current allocations + live outbound IPv6

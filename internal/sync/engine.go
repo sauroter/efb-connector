@@ -70,8 +70,10 @@ type SyncEngine struct {
 	// sleepFunc is called between uploads; overridden in tests to avoid delays.
 	sleepFunc func(min, max time.Duration)
 
-	// interUserPacing is the gap between users in SyncUsers, keeping
-	// the bulk runner under EFB's per-IP login rate limit.
+	// interUserPacing is the base gap between users in SyncUsers, sized
+	// to stay comfortably under EFB's per-IP login rate-limit threshold.
+	// A 0–20% random jitter is added on top by pacingDelay so we don't
+	// hit EFB on a perfectly regular clock.
 	interUserPacing time.Duration
 
 	// rateLimitBackoff is how long SyncUsers sleeps after the first
@@ -147,8 +149,8 @@ func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func
 			jitter := min + time.Duration(rand.Int64N(int64(max-min)))
 			time.Sleep(jitter)
 		},
-		interUserPacing:  5 * time.Second,
-		rateLimitBackoff: 10 * time.Minute,
+		interUserPacing:  30 * time.Second,
+		rateLimitBackoff: 30 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -924,6 +926,22 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 	return s.SyncUsers(ctx, users, workers, onProgress)
 }
 
+// pacingDelay returns the wait time between users in SyncUsers: interUserPacing
+// plus up to 20% random jitter, so the bulk run doesn't drive EFB's per-IP
+// counter on a perfectly regular clock. Returns 0 when interUserPacing is 0
+// (tests via WithoutSleep or WithInterUserPacing(0)) and skips the jitter when
+// the configured pacing is smaller than 5 ns so rand.Int64N never sees 0.
+func (s *SyncEngine) pacingDelay() time.Duration {
+	if s.interUserPacing <= 0 {
+		return 0
+	}
+	jitter := int64(s.interUserPacing) / 5
+	if jitter <= 0 {
+		return s.interUserPacing
+	}
+	return s.interUserPacing + time.Duration(rand.Int64N(jitter))
+}
+
 // SyncUsers syncs the given pre-fetched slice of users using a pool of
 // concurrent workers. Callers that need the user count up-front (e.g. for
 // progress reporting) can fetch via GetSyncableUsers themselves and pass
@@ -1036,7 +1054,7 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(s.interUserPacing):
+				case <-time.After(s.pacingDelay()):
 				}
 			}
 		}()

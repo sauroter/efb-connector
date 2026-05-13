@@ -31,7 +31,7 @@ jobs:
           # for the Fly machine (idle_timeout = 300s) and as a watchdog: if
           # the goroutine restarts (e.g. server crashed mid-run), we'll see
           # started_at change and surface that as a failure.
-          DEADLINE=$(( $(date +%s) + 1800 ))   # 30 min cap, matches server timeout
+          DEADLINE=$(( $(date +%s) + 7200 ))   # 120 min cap, matches server timeout
           STATUS=""
           STARTED_AT_FIRST=""
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
