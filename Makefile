@@ -1,4 +1,4 @@
-.PHONY: dev dev-consent build test cover lint lint-install clean
+.PHONY: dev dev-consent build test cover lint lint-install clean egress-status rotate-egress
 
 ENCRYPTION_KEY ?= $(shell openssl rand -base64 32)
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -34,3 +34,33 @@ lint-install:
 
 clean:
 	rm -f efb-connector efb-connector.db coverage.out
+
+# Print currently-allocated Fly egress IPs and the live outbound IPv6 the
+# machine actually uses. The two should match; if they diverge after a
+# rotation, the machine hasn't picked up the new pair yet — restart it.
+egress-status:
+	@fly ips list --app efb-connector --json | jq -r '.[] | select(.Type=="egress_v6" or .Type=="egress_v4") | "\(.Type)\t\(.Address)\t\(.Region)"'
+	@echo "live egress (from inside machine):"
+	@fly ssh console --app efb-connector -C 'sh -c "wget -qO- https://api6.ipify.org"'
+
+# When EFB rate-limits the current egress IP: allocate a new pair, drop
+# the v4 (we only need v6 — outbound v4 falls back to Fly default NAT for
+# free), restart the machine to pick up the new v6, then release the old
+# v6. The "allocate before release" order matters — Fly's allocator
+# returns the just-released IP back if you release first.
+rotate-egress:
+	@OLD_V6=$$(fly ips list --app efb-connector --json | jq -r '.[] | select(.Type=="egress_v6") | .Address'); \
+	echo "old egress v6: $$OLD_V6"; \
+	echo "allocating new pair..."; \
+	fly ips allocate-egress --app efb-connector -r fra --yes; \
+	echo "releasing all egress v4 (we use Fly default NAT for v4 — saves \$$3.60/mo per pair):"; \
+	for v4 in $$(fly ips list --app efb-connector --json | jq -r '.[] | select(.Type=="egress_v4") | .Address'); do \
+		fly ips release-egress $$v4 --app efb-connector; \
+	done; \
+	echo "restarting machine..."; \
+	fly machine restart $$(fly machines list --app efb-connector --json | jq -r '.[0].id') --app efb-connector; \
+	sleep 10; \
+	echo "live egress after rotation:"; \
+	fly ssh console --app efb-connector -C 'sh -c "wget -qO- https://api6.ipify.org"'; \
+	[ -n "$$OLD_V6" ] && fly ips release-egress $$OLD_V6 --app efb-connector || true; \
+	echo "done. send the new v6 above to Tim (kanu-efb.de) for whitelisting."

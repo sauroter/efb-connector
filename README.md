@@ -114,6 +114,15 @@ fly deploy
 
 See [`infrastructure/README.md`](infrastructure/README.md) for detailed deployment and operations instructions.
 
+### EFB egress IP rotation
+
+EFB rate-limits the source IP of our login requests. We keep a static Fly egress IPv6 allocated so it can be whitelisted by the EFB maintainers. If the nightly sync fails with `efb login rate-limited`, rotate to a fresh egress IP and notify Tim (kanu-efb.de) of the new address:
+
+```bash
+make egress-status   # show current allocations + live outbound IPv6
+make rotate-egress   # allocate new pair, restart machine, release old pair
+```
+
 ## API Documentation
 
 The full REST API (public, authenticated, and internal endpoints) is documented in [`openapi.yaml`](openapi.yaml) using the OpenAPI 3.1 specification. You can view it with any OpenAPI-compatible tool (Swagger UI, Redoc, etc.).
