@@ -929,12 +929,17 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 // pacingDelay returns the wait time between users in SyncUsers: interUserPacing
 // plus up to 20% random jitter, so the bulk run doesn't drive EFB's per-IP
 // counter on a perfectly regular clock. Returns 0 when interUserPacing is 0
-// (tests via WithoutSleep or WithInterUserPacing(0)).
+// (tests via WithoutSleep or WithInterUserPacing(0)) and skips the jitter when
+// the configured pacing is smaller than 5 ns so rand.Int64N never sees 0.
 func (s *SyncEngine) pacingDelay() time.Duration {
 	if s.interUserPacing <= 0 {
 		return 0
 	}
-	return s.interUserPacing + time.Duration(rand.Int64N(int64(s.interUserPacing)/5))
+	jitter := int64(s.interUserPacing) / 5
+	if jitter <= 0 {
+		return s.interUserPacing
+	}
+	return s.interUserPacing + time.Duration(rand.Int64N(jitter))
 }
 
 // SyncUsers syncs the given pre-fetched slice of users using a pool of
