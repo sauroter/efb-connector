@@ -822,6 +822,27 @@ func TestNewSyncEngine_DefaultsAreNonZero(t *testing.T) {
 	}
 }
 
+// pacingDelay must return a value in [interUserPacing, interUserPacing*6/5)
+// when pacing is configured, and exactly 0 when pacing is disabled. The
+// jitter window is what keeps the bulk run off a perfectly regular clock.
+func TestSyncEngine_pacingDelay(t *testing.T) {
+	db := openTestDB(t)
+	e := NewSyncEngine(db, &mockGarminProvider{}, func() efb.EFBProvider { return nil },
+		discardLogger(), WithInterUserPacing(30*time.Second))
+	for i := 0; i < 200; i++ {
+		d := e.pacingDelay()
+		if d < 30*time.Second || d >= 36*time.Second {
+			t.Fatalf("pacingDelay() = %v; want in [30s, 36s)", d)
+		}
+	}
+
+	e0 := NewSyncEngine(db, &mockGarminProvider{}, func() efb.EFBProvider { return nil },
+		discardLogger(), WithInterUserPacing(0))
+	if d := e0.pacingDelay(); d != 0 {
+		t.Errorf("pacingDelay() with zero pacing = %v; want 0", d)
+	}
+}
+
 // Stuck is_valid=0 from a past transient failure must self-heal once auth succeeds again.
 func TestSyncUser_RevalidatesStuckCredentialsOnSuccess(t *testing.T) {
 	db := openTestDB(t)

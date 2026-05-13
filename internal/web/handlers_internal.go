@@ -14,10 +14,11 @@ import (
 )
 
 // runAllTimeout caps how long a single fire-and-forget run-all execution
-// may take server-side. Generous: each user takes a few seconds, and we
-// want to outlive transient slowness without leaving a stuck "in progress"
-// flag forever.
-const runAllTimeout = 30 * time.Minute
+// may take server-side. Sized for the ~30s/user pacing in SyncUsers: with
+// ~113 syncable users plus per-user EFB+Garmin work the expected wall-time
+// is ~65 min, and a single absorbed rate-limit hit adds another 30 min.
+// 90 min gives headroom without leaving a stuck "in progress" flag forever.
+const runAllTimeout = 90 * time.Minute
 
 // requireInternalAuth checks the Authorization: Bearer <INTERNAL_SECRET> header.
 // Returns true if authorized, false (and writes 401) if not.
