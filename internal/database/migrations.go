@@ -122,4 +122,13 @@ ALTER TABLE synced_activities ADD COLUMN response_body_excerpt TEXT;`,
 	// notification email to ≤ once per 7 days.
 	`ALTER TABLE efb_credentials ADD COLUMN consent_required INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE efb_credentials ADD COLUMN consent_notified_at TEXT;`,
+
+	// 0010 – flip the recommended default for auto_create_trips to ON for
+	// users who haven't yet completed onboarding. Migration 0002 added the
+	// column with DEFAULT 0; in practice that meant new users finished
+	// setup with tracks-only uploads and reported "doesn't work" because
+	// no Fahrtenbuch entries appeared. Users who already completed
+	// onboarding (setup_completed = 1) made an explicit choice and are
+	// left untouched.
+	`UPDATE users SET auto_create_trips = 1 WHERE setup_completed = 0;`,
 }

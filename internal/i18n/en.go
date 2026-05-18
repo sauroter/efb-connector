@@ -87,6 +87,11 @@ var En = map[string]string{
 	"dashboard.creds_invalid.fix_garmin": "Check Garmin login",
 	"dashboard.creds_invalid.fix_efb":    "Check EFB login",
 
+	// ── Tracks uploaded but no logbook entries banner ──
+	"dashboard.tracks_no_trips.heading": "Tracks uploaded, but no logbook entries",
+	"dashboard.tracks_no_trips.body":    "Your last sync uploaded the Garmin tracks to EFB successfully, but no logbook entries (Fahrten) were created. The \"automatic trip creation\" option is disabled in your settings.",
+	"dashboard.tracks_no_trips.fix":     "Enable automatic trip creation",
+
 	// ── Getting started ──
 	"setup.heading":            "Getting Started",
 	"setup.intro":              "Set up your account in four steps:",
@@ -111,6 +116,8 @@ var En = map[string]string{
 	"sync.synced":          "Synced:",
 	"sync.trips":           "Entries created:",
 	"sync.skipped":         "Skipped:",
+	"sync.skipped_tooltip": "Already uploaded in a previous run — not re-transferred.",
+	"sync.all_on_efb":      "All already on EFB",
 	"sync.failed":          "Failed:",
 	"sync.error":           "Error:",
 	"sync.syncing":         "Syncing\u2026",
@@ -200,6 +207,7 @@ var En = map[string]string{
 	"history.synced":                "Synced",
 	"history.trips":                 "Entries created",
 	"history.skipped":               "Skipped",
+	"history.skipped_tooltip":       "Already uploaded in a previous run — not re-transferred.",
 	"history.failed":                "Failed",
 	"history.trigger_manual_custom": "manual (custom)",
 	"history.no_runs":               "No sync runs yet. Go to the dashboard to trigger your first sync.",

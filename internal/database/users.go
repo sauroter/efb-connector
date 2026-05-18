@@ -23,9 +23,12 @@ type User struct {
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
+// auto_create_trips is set to 1 here (recommended onboarding default) rather
+// than relying on the column's NOT NULL DEFAULT 0 from migration 0002 — see
+// migration 0010 for the rationale.
 func (d *DB) CreateUser(email string) (*User, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO users (email) VALUES (?)`,
+		`INSERT INTO users (email, auto_create_trips) VALUES (?, 1)`,
 		email,
 	)
 	if err != nil {
