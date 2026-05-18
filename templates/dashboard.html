@@ -150,16 +150,18 @@
       <div id="sync-status" class="sync-status-container">
         {{if .LastSync}}
           {{$status := index .LastSync "Status"}}
+          {{$allOnEFB := and (gt (index .LastSync "ActivitiesFound") 0) (eq (index .LastSync "ActivitiesSynced") 0) (eq (index .LastSync "ActivitiesFailed") 0) (gt (index .LastSync "ActivitiesSkipped") 0)}}
           <p>
             {{call .T "sync.last_sync"}}
             <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "completed"}}status-completed{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
               {{$status}}
             </span>
+            {{if $allOnEFB}}<span class="status-badge status-success">{{call .T "sync.all_on_efb"}}</span>{{end}}
             &mdash;
             {{call .T "sync.found"}} {{index .LastSync "ActivitiesFound"}},
             {{call .T "sync.synced"}} {{index .LastSync "ActivitiesSynced"}},
             {{if index .LastSync "TripsCreated"}}{{call .T "sync.trips"}} {{index .LastSync "TripsCreated"}},{{end}}
-            {{call .T "sync.skipped"}} {{index .LastSync "ActivitiesSkipped"}},
+            <span title="{{call .T "sync.skipped_tooltip"}}" style="cursor: help; text-decoration: underline dotted;">{{call .T "sync.skipped"}}</span> {{index .LastSync "ActivitiesSkipped"}},
             {{call .T "sync.failed"}} {{index .LastSync "ActivitiesFailed"}}
           </p>
           {{if index .LastSync "ErrorMessage"}}
@@ -169,6 +171,16 @@
           <p style="color: var(--pico-muted-color);">{{call .T "sync.no_runs"}}</p>
         {{end}}
       </div>
+
+      {{if .LastSync}}
+        {{if and (gt (index .LastSync "ActivitiesSynced") 0) (eq (index .LastSync "TripsCreated") 0) (not .AutoCreateTrips)}}
+        <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
+          <header><strong>{{call .T "dashboard.tracks_no_trips.heading"}}</strong></header>
+          <p>{{call .T "dashboard.tracks_no_trips.body"}}</p>
+          <p><a href="/settings" role="button">{{call .T "dashboard.tracks_no_trips.fix"}}</a></p>
+        </article>
+        {{end}}
+      {{end}}
 
       {{if and .GarminConnected .EFBConnected}}
       <form method="POST" action="/sync/trigger"

@@ -87,6 +87,11 @@ var De = map[string]string{
 	"dashboard.creds_invalid.fix_garmin": "Garmin-Zugang prüfen",
 	"dashboard.creds_invalid.fix_efb":    "EFB-Zugang prüfen",
 
+	// ── Banner: Tracks hochgeladen, aber keine Fahrtenbuch-Einträge ──
+	"dashboard.tracks_no_trips.heading": "Tracks hochgeladen, aber keine Fahrtenbuch-Einträge",
+	"dashboard.tracks_no_trips.body":    "Beim letzten Sync wurden deine Garmin-Tracks erfolgreich nach EFB hochgeladen, aber es wurden keine Fahrtenbuch-Einträge (Fahrten) angelegt. Die Option „Automatische Fahrtenerstellung“ ist in deinen Einstellungen deaktiviert.",
+	"dashboard.tracks_no_trips.fix":     "Automatische Fahrtenerstellung aktivieren",
+
 	// ── Getting started ──
 	"setup.heading":            "Erste Schritte",
 	"setup.intro":              "Richte dein Konto in vier Schritten ein:",
@@ -111,6 +116,8 @@ var De = map[string]string{
 	"sync.synced":          "Synchronisiert:",
 	"sync.trips":           "Einträge erstellt:",
 	"sync.skipped":         "Übersprungen:",
+	"sync.skipped_tooltip": "Bereits in einem früheren Lauf hochgeladen — wird nicht erneut übertragen.",
+	"sync.all_on_efb":      "Alles bereits auf EFB",
 	"sync.failed":          "Fehlgeschlagen:",
 	"sync.error":           "Fehler:",
 	"sync.syncing":         "Synchronisiere\u2026",
@@ -200,6 +207,7 @@ var De = map[string]string{
 	"history.synced":                "Synchronisiert",
 	"history.trips":                 "Einträge erstellt",
 	"history.skipped":               "Übersprungen",
+	"history.skipped_tooltip":       "Bereits in einem früheren Lauf hochgeladen — wird nicht erneut übertragen.",
 	"history.failed":                "Fehlgeschlagen",
 	"history.trigger_manual_custom": "manuell (Zeitraum)",
 	"history.no_runs":               "Noch keine Synchronisierungen. Gehe zum Dashboard, um deine erste Synchronisierung zu starten.",

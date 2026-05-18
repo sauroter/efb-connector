@@ -1409,7 +1409,11 @@ func TestSync_AutoCreateTrips_Enabled(t *testing.T) {
 func TestSync_AutoCreateTrips_Disabled(t *testing.T) {
 	db := openTestDB(t)
 	user := setupUser(t, db)
-	// AutoCreateTrips is false by default — no need to set it.
+	// CreateUser sets auto_create_trips = 1 (recommended onboarding default,
+	// see migration 0010); flip it off explicitly for this test.
+	if err := db.UpdateAutoCreateTrips(user.ID, false); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips(false): %v", err)
+	}
 
 	mockEFB := &mockEFBProvider{
 		findTrackResult: "track-123",

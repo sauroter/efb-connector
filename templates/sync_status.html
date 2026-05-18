@@ -11,15 +11,17 @@
     <span class="spinner"></span>
     {{call .T "sync.syncing"}}
     {{else}}
+    {{$allOnEFB := and (gt .ActivitiesFound 0) (eq .ActivitiesSynced 0) (eq .ActivitiesFailed 0) (gt .ActivitiesSkipped 0)}}
     {{call .T "sync.last_sync"}}
     <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{end}}">
       {{.Status}}
     </span>
+    {{if $allOnEFB}}<span class="status-badge status-success">{{call .T "sync.all_on_efb"}}</span>{{end}}
     &mdash;
     {{call .T "sync.found"}} {{.ActivitiesFound}},
     {{call .T "sync.synced"}} {{.ActivitiesSynced}},
     {{if .TripsCreated}}{{call .T "sync.trips"}} {{.TripsCreated}},{{end}}
-    {{call .T "sync.skipped"}} {{.ActivitiesSkipped}},
+    <span title="{{call .T "sync.skipped_tooltip"}}" style="cursor: help; text-decoration: underline dotted;">{{call .T "sync.skipped"}}</span> {{.ActivitiesSkipped}},
     {{call .T "sync.failed"}} {{.ActivitiesFailed}}
     {{end}}
   </p>
