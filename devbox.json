@@ -1,9 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.0/.schema/devbox.schema.json",
   "packages": [
-    "go@1.25",
-    "python@3.12",
-    "python312Packages.pip",
+    "go@1.26",
+    "python@3.13",
+    "python313Packages.pip",
     "gnumake"
   ],
   "shell": {
