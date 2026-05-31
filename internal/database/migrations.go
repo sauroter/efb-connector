@@ -137,10 +137,15 @@ ALTER TABLE efb_credentials ADD COLUMN consent_notified_at TEXT;`,
 	// hint when activities_found=0. type_keys_seen is a JSON array of
 	// strings (sorted, deduplicated by the Python script); raw_count is the
 	// total activity count Garmin returned before the water-sport filter.
-	// Both are nullable so historical rows (and runs that hit Garmin auth
-	// failures before listing anything) are not retroactively misrepresented.
+	// name_matched_count records how many activities the opt-in
+	// match_by_name fallback recovered (always 0 when the flag is off);
+	// it lets the dashboard render "we recovered N mis-tagged activities
+	// this run" without re-querying Garmin. All three columns are nullable
+	// so historical rows (and runs that hit Garmin auth failures before
+	// listing anything) are not retroactively misrepresented.
 	`ALTER TABLE sync_runs ADD COLUMN type_keys_seen TEXT;
-ALTER TABLE sync_runs ADD COLUMN raw_count INTEGER;`,
+ALTER TABLE sync_runs ADD COLUMN raw_count INTEGER;
+ALTER TABLE sync_runs ADD COLUMN name_matched_count INTEGER;`,
 
 	// 0012 – opt-in fallback: include activities tagged "Other" /
 	// parent_type_id 17 (generic fitness) when their activityName contains

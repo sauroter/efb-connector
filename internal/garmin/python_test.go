@@ -6,13 +6,43 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"efb-connector/internal/crypto"
 )
+
+// TestGarminFetchPyRegression drives scripts/garmin_fetch_test.py through
+// `python3 -m unittest` so the pure-Python filter / regex logic gets
+// regression coverage in CI without needing a separate Python test runner
+// in the workflow file. Skipped when python3 is not on PATH (Windows dev
+// box, broken installer).
+func TestGarminFetchPyRegression(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("python3 invocation pattern differs on Windows")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH; skipping garmin_fetch_test.py regression run")
+	}
+
+	// Locate the project root: this test sits in internal/garmin/, so
+	// repo root is two levels up.
+	projectRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve project root: %v", err)
+	}
+
+	cmd := exec.Command("python3", "-m", "unittest", "scripts.garmin_fetch_test")
+	cmd.Dir = projectRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("garmin_fetch_test.py failed:\n%s\nerror: %v", out, err)
+	}
+}
 
 // writeMockScript writes a Python mock script to dir/garmin_mock.py and
 // returns its path.  The script reads credentials from stdin, validates them

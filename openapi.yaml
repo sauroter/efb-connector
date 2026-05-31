@@ -1468,6 +1468,13 @@ paths:
                       type: object
                   diagnostics:
                     type: object
+                    description: |
+                      Pre-filter Garmin counts. Field names are PascalCase
+                      to match the Go struct layout (Go's encoding/json
+                      default). NameMatchedCount is always 0 in this
+                      endpoint because include_all=true bypasses the
+                      filter entirely; use it via sync_runs to see
+                      historical recoveries.
                     properties:
                       RawCount:
                         type: integer
@@ -1475,6 +1482,8 @@ paths:
                         type: array
                         items:
                           type: string
+                      NameMatchedCount:
+                        type: integer
         "400":
           description: Invalid user id or days parameter
         "401":

@@ -31,6 +31,11 @@ type SyncRun struct {
 	// returned before water-sport filtering. nil when not populated
 	// (legacy rows; pre-Garmin-call failures).
 	TypeKeysSeen []string
+	// NameMatchedCount is the count of activities that were accepted only
+	// via the opt-in name-based fallback (users.match_by_name) — they
+	// failed the strict water-sport filter but their name matched a
+	// keyword. Always 0 when match_by_name was off for this user.
+	NameMatchedCount int
 }
 
 // CreateSyncRun inserts a new sync_run row with status "running" and returns
@@ -72,14 +77,15 @@ func (d *DB) UpdateSyncRun(id int64, status string, found, synced, skipped, fail
 }
 
 // RecordSyncDiagnostics persists pre-filter Garmin diagnostics
-// (raw_count, type_keys_seen) onto a sync_run. Called between the
-// Garmin list step and the eventual UpdateSyncRun so a later failure
-// still leaves the diagnostics readable. Best-effort: a failure here
-// is logged at the call site and does not abort the sync.
+// (raw_count, type_keys_seen, name_matched_count) onto a sync_run.
+// Called between the Garmin list step and the eventual UpdateSyncRun
+// so a later failure still leaves the diagnostics readable.
+// Best-effort: a failure here is logged at the call site and does
+// not abort the sync.
 //
 // typeKeys==nil writes NULL, distinguishing "never reached Garmin"
 // from "Garmin returned zero activities at all".
-func (d *DB) RecordSyncDiagnostics(runID int64, rawCount int, typeKeys []string) error {
+func (d *DB) RecordSyncDiagnostics(runID int64, rawCount int, typeKeys []string, nameMatchedCount int) error {
 	var encoded sql.NullString
 	if typeKeys != nil {
 		b, err := json.Marshal(typeKeys)
@@ -89,8 +95,8 @@ func (d *DB) RecordSyncDiagnostics(runID int64, rawCount int, typeKeys []string)
 		encoded = sql.NullString{String: string(b), Valid: true}
 	}
 	_, err := d.db.Exec(
-		`UPDATE sync_runs SET raw_count = ?, type_keys_seen = ? WHERE id = ?`,
-		rawCount, encoded, runID,
+		`UPDATE sync_runs SET raw_count = ?, type_keys_seen = ?, name_matched_count = ? WHERE id = ?`,
+		rawCount, encoded, nameMatchedCount, runID,
 	)
 	if err != nil {
 		return fmt.Errorf("database: record sync diagnostics %d: %w", runID, err)
@@ -104,7 +110,7 @@ func (d *DB) GetSyncRun(id int64) (*SyncRun, error) {
 		SELECT id, user_id, trigger, started_at, finished_at, status,
 		       activities_found, activities_synced, activities_skipped,
 		       activities_failed, trips_created, error_message,
-		       raw_count, type_keys_seen
+		       raw_count, type_keys_seen, name_matched_count
 		  FROM sync_runs WHERE id = ?
 	`, id)
 
@@ -121,7 +127,7 @@ func (d *DB) GetSyncHistory(userID int64, limit int) ([]SyncRun, error) {
 		SELECT id, user_id, trigger, started_at, finished_at, status,
 		       activities_found, activities_synced, activities_skipped,
 		       activities_failed, trips_created, error_message,
-		       raw_count, type_keys_seen
+		       raw_count, type_keys_seen, name_matched_count
 		  FROM sync_runs
 		 WHERE user_id = ?
 		 ORDER BY started_at DESC
@@ -151,12 +157,13 @@ func scanSyncRun(row *sql.Row) (*SyncRun, error) {
 	var errMsg *string
 	var rawCount sql.NullInt64
 	var typeKeysJSON sql.NullString
+	var nameMatchedCount sql.NullInt64
 
 	err := row.Scan(
 		&r.ID, &r.UserID, &r.Trigger, &startedAt, &finishedAt, &r.Status,
 		&r.ActivitiesFound, &r.ActivitiesSynced, &r.ActivitiesSkipped,
 		&r.ActivitiesFailed, &r.TripsCreated, &errMsg,
-		&rawCount, &typeKeysJSON,
+		&rawCount, &typeKeysJSON, &nameMatchedCount,
 	)
 	if err != nil {
 		return nil, err
@@ -176,6 +183,9 @@ func scanSyncRun(row *sql.Row) (*SyncRun, error) {
 	if typeKeysJSON.Valid && typeKeysJSON.String != "" {
 		_ = json.Unmarshal([]byte(typeKeysJSON.String), &r.TypeKeysSeen)
 	}
+	if nameMatchedCount.Valid {
+		r.NameMatchedCount = int(nameMatchedCount.Int64)
+	}
 	return &r, nil
 }
 
@@ -187,12 +197,13 @@ func scanSyncRunRow(rows *sql.Rows) (*SyncRun, error) {
 	var errMsg *string
 	var rawCount sql.NullInt64
 	var typeKeysJSON sql.NullString
+	var nameMatchedCount sql.NullInt64
 
 	err := rows.Scan(
 		&r.ID, &r.UserID, &r.Trigger, &startedAt, &finishedAt, &r.Status,
 		&r.ActivitiesFound, &r.ActivitiesSynced, &r.ActivitiesSkipped,
 		&r.ActivitiesFailed, &r.TripsCreated, &errMsg,
-		&rawCount, &typeKeysJSON,
+		&rawCount, &typeKeysJSON, &nameMatchedCount,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan sync run: %w", err)
@@ -211,6 +222,9 @@ func scanSyncRunRow(rows *sql.Rows) (*SyncRun, error) {
 	}
 	if typeKeysJSON.Valid && typeKeysJSON.String != "" {
 		_ = json.Unmarshal([]byte(typeKeysJSON.String), &r.TypeKeysSeen)
+	}
+	if nameMatchedCount.Valid {
+		r.NameMatchedCount = int(nameMatchedCount.Int64)
 	}
 	return &r, nil
 }

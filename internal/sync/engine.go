@@ -327,9 +327,10 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	)
 
 	// Persist pre-filter diagnostics on the sync_run so the dashboard can
-	// later render a "we saw cycling/running but no kayaking" hint without
+	// later render a "we saw cycling/running but no kayaking" hint, and
+	// expose how many name-fallback recoveries happened this run, without
 	// re-running Garmin. Best-effort: a failure here doesn't abort the sync.
-	if recErr := s.db.RecordSyncDiagnostics(runID, diag.RawCount, diag.TypeKeysSeen); recErr != nil {
+	if recErr := s.db.RecordSyncDiagnostics(runID, diag.RawCount, diag.TypeKeysSeen, diag.NameMatchedCount); recErr != nil {
 		log.Warn("failed to record sync diagnostics", "error", recErr)
 	}
 

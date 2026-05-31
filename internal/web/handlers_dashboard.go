@@ -98,6 +98,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"ErrorMessage":      run.ErrorMessage,
 			"TypeKeysSeen":      run.TypeKeysSeen,
 			"RawCount":          run.RawCount,
+			"NameMatchedCount":  run.NameMatchedCount,
 		}
 		isClean := run.Status == "success" || run.Status == "completed"
 		hasSynced = isClean || run.Status == "partial"

@@ -14,7 +14,7 @@ func TestRecordSyncDiagnostics_RoundTrip(t *testing.T) {
 	}
 
 	keys := []string{"cycling", "other", "running"}
-	if err := db.RecordSyncDiagnostics(runID, 351, keys); err != nil {
+	if err := db.RecordSyncDiagnostics(runID, 351, keys, 2); err != nil {
 		t.Fatalf("RecordSyncDiagnostics: %v", err)
 	}
 
@@ -28,6 +28,9 @@ func TestRecordSyncDiagnostics_RoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(r.TypeKeysSeen, keys) {
 		t.Errorf("TypeKeysSeen = %v, want %v", r.TypeKeysSeen, keys)
 	}
+	if r.NameMatchedCount != 2 {
+		t.Errorf("NameMatchedCount = %d, want 2", r.NameMatchedCount)
+	}
 }
 
 func TestRecordSyncDiagnostics_NilTypeKeysWritesNull(t *testing.T) {
@@ -39,12 +42,15 @@ func TestRecordSyncDiagnostics_NilTypeKeysWritesNull(t *testing.T) {
 	u, _ := db.CreateUser("diag-nil@example.com")
 	runID, _ := db.CreateSyncRun(u.ID, "scheduled")
 
-	if err := db.RecordSyncDiagnostics(runID, 0, nil); err != nil {
+	if err := db.RecordSyncDiagnostics(runID, 0, nil, 0); err != nil {
 		t.Fatalf("RecordSyncDiagnostics: %v", err)
 	}
 	r, _ := db.GetSyncRun(runID)
 	if r.TypeKeysSeen != nil {
 		t.Errorf("TypeKeysSeen = %v, want nil", r.TypeKeysSeen)
+	}
+	if r.NameMatchedCount != 0 {
+		t.Errorf("NameMatchedCount = %d, want 0", r.NameMatchedCount)
 	}
 }
 

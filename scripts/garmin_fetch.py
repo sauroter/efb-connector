@@ -26,14 +26,21 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-try:
-    from garminconnect import (
-        Garmin,
-        GarminConnectAuthenticationError,
-    )
-except ImportError:
-    print("Error: garminconnect not installed. Run: pip install garminconnect", file=sys.stderr)
-    sys.exit(1)
+# garminconnect is imported lazily inside the functions that need it,
+# not at module load. This keeps the pure-Python filter helpers
+# (is_water_sport, name_matches_water_sport, WATER_SPORT_NAME_PATTERN)
+# importable from tests without requiring garminconnect to be installed
+# in the test environment.
+def _import_garmin():
+    try:
+        from garminconnect import (
+            Garmin,
+            GarminConnectAuthenticationError,
+        )
+        return Garmin, GarminConnectAuthenticationError
+    except ImportError:
+        print("Error: garminconnect not installed. Run: pip install garminconnect", file=sys.stderr)
+        sys.exit(1)
 
 
 def get_credentials_from_stdin():
@@ -77,26 +84,36 @@ LEGACY_WATER_SPORT_TYPES = {
     "whitewater_rafting_kayaking",
 }
 
-# Case-insensitive whole-word patterns used by the opt-in name-fallback.
-# Word boundaries (\b) prevent false positives on substrings like
-# "support" or "supper" while still matching "SUP-Session" or "Münster
-# Kajak" anchored anywhere in the name. SUP needs a trailing \b too
-# because "support" / "supper" start with "sup" at a word boundary;
-# the other keywords work as prefixes (kajak → kajakfahren, paddl →
-# paddling/paddler). The hyphen-or-space alternation in
-# "stand[- ]?up[- ]?paddl" handles both German and English casings.
+# Case-insensitive patterns used by the opt-in name-fallback.
+#
+# Two matching styles, chosen per-keyword:
+#
+#   - SUP needs both leading and trailing word boundaries — "support" and
+#     "supper" both begin with "sup" at a word start, so a leading \b
+#     alone isn't enough. `\bsup\b` matches "SUP", "SUP-Workshop", "Stand
+#     Up SUP" but not "support".
+#
+#   - The other keywords (kajak, kanu, paddel, paddl, rudern, rowing,
+#     canoe, kayak) match as bare substrings on purpose: German speakers
+#     write compound nouns without separators — "Doppelpaddel",
+#     "Wildwasserkajak", "Seekajak", "Bootspaddel", "Drachenbootrudern" —
+#     and the opt-in flag exists precisely to recover Venu-3-style
+#     mis-tags from that audience. A leading \b would silently regress
+#     those compounds. False positives from these short fragments inside
+#     unrelated words are unlikely in activity names (Garmin's activity
+#     names are short and mostly nouns) and are further gated by the
+#     parent_type_id=17 guard in name_matches_water_sport.
 #
 # Compiled once at module import — re.search is cheap, but doing it per
 # activity inside a hot loop is still wasteful if we're listing 365 days
 # of activities.
 WATER_SPORT_NAME_PATTERN = re.compile(
-    r"\b("
-    r"kajak|kayak|"
-    r"kanu|canoe|"
-    r"paddel|paddl|"
-    r"rudern|rowing|"
-    r"sup\b|stand[- ]?up[- ]?paddl"
-    r")",
+    r"\bsup\b"
+    r"|stand[- ]?up[- ]?paddl"
+    r"|kajak|kayak"
+    r"|kanu|canoe"
+    r"|paddel|paddl"
+    r"|rudern|rowing",
     re.IGNORECASE,
 )
 
@@ -207,6 +224,7 @@ def connect_garmin(config):
     if not tokenstore:
         tokenstore = get_tokenstore_path()
 
+    Garmin, _ = _import_garmin()
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
@@ -315,6 +333,7 @@ def validate_credentials(config):
     if not tokenstore:
         tokenstore = get_tokenstore_path()
 
+    Garmin, GarminConnectAuthenticationError = _import_garmin()
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
@@ -371,6 +390,7 @@ def validate_mfa():
     if not tokenstore:
         tokenstore = get_tokenstore_path()
 
+    Garmin, GarminConnectAuthenticationError = _import_garmin()
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password, return_on_mfa=True)
