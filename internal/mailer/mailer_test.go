@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"efb-connector/internal/i18n"
 )
@@ -170,6 +171,77 @@ func TestMailer_Feedback_FormattedSubjectAndUserContent(t *testing.T) {
 		}
 		if !strings.Contains(got.Text, want) {
 			t.Errorf("text missing %q", want)
+		}
+	}
+}
+
+func TestMailer_Feedback_DiagnosticsRenderedWhenPresent(t *testing.T) {
+	fs := &fakeSender{}
+	m := newTestMailer(t, fs)
+
+	// Test struct mirroring database.FeedbackDiagnostics — keeping the
+	// mailer test free of the database import (which would form a cycle)
+	// while exercising the template's field accesses.
+	type lastSync struct {
+		ID                int64
+		Trigger           string
+		StartedAt         time.Time
+		Status            string
+		ActivitiesFound   int
+		ActivitiesSynced  int
+		ActivitiesSkipped int
+		ActivitiesFailed  int
+		ErrorMessage      string
+	}
+	type diag struct {
+		HasGarminCredentials bool
+		GarminInvalid        bool
+		GarminLastError      string
+		HasEFBCredentials    bool
+		EFBInvalid           bool
+		EFBLastError         string
+		EFBConsentRequired   bool
+		LastSync             *lastSync
+	}
+
+	d := &diag{
+		HasGarminCredentials: true,
+		HasEFBCredentials:    true,
+		EFBConsentRequired:   true,
+		LastSync: &lastSync{
+			ID:              4479,
+			Trigger:         "manual",
+			StartedAt:       time.Date(2026, 5, 31, 10, 52, 0, 0, time.UTC),
+			Status:          "completed",
+			ActivitiesFound: 0,
+		},
+	}
+
+	err := m.Send(
+		"admin@example.com",
+		i18n.EN,
+		"feedback",
+		map[string]any{
+			"UserEmail":   "axel@example.com",
+			"UserID":      int64(216),
+			"Category":    "bug",
+			"Message":     "no imports",
+			"Diagnostics": d,
+		},
+		"bug",
+	)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got := fs.last()
+	for _, want := range []string{
+		"Diagnostics",         // section heading
+		"consent gate active", // EFB state surfaced
+		"#4479",               // sync run id
+		"found=0",             // counts substring
+	} {
+		if !strings.Contains(got.Text, want) {
+			t.Errorf("text missing %q in:\n%s", want, got.Text)
 		}
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"efb-connector/internal/garmin"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,6 +275,7 @@ func TestAdminEndpoints_AllRejectMissingAuth(t *testing.T) {
 		{"GET", "/internal/admin/users/1/sync-history"},
 		{"POST", "/internal/admin/users/1/sync"},
 		{"POST", "/internal/admin/users/1/debug-upload"},
+		{"GET", "/internal/admin/users/1/garmin/activities-raw"},
 		{"POST", "/internal/admin/users/1/efb/revalidate"},
 		{"GET", "/internal/admin/errors"},
 		{"GET", "/internal/admin/activity-errors"},
@@ -314,6 +317,100 @@ func TestAdminStatus_ReturnsSystemStatsJSON(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("content-type = %q, want application/json", ct)
+	}
+}
+
+func TestAdminGarminActivitiesRaw_ReturnsActivitiesAndDiagnostics(t *testing.T) {
+	h := newTestHarness(t)
+	u, err := h.db.CreateUser("raw@example.com")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := h.db.SaveGarminCredentials(u.ID, "g@example.com", "p"); err != nil {
+		t.Fatalf("save garmin: %v", err)
+	}
+
+	// Inject a non-water-sport activity into the mock so the test asserts
+	// the endpoint truly bypasses the filter (water-sport-only would
+	// still pass through the mock by default).
+	now := time.Now()
+	h.garmin.Activities = []garmin.Activity{
+		{ProviderID: "raw-1", Name: "Münster Kajak", Type: "other", Date: now, StartTime: now},
+	}
+	h.garmin.Diagnostics = garmin.ListDiagnostics{
+		RawCount:     5,
+		TypeKeysSeen: []string{"cycling", "other", "running"},
+	}
+
+	url := h.srv.URL + "/internal/admin/users/" + strconv.FormatInt(u.ID, 10) + "/garmin/activities-raw?days=14"
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body struct {
+		Days       int `json:"days"`
+		Activities []struct {
+			ProviderID string `json:"ProviderID"`
+			Type       string `json:"Type"`
+		} `json:"activities"`
+		Diagnostics struct {
+			RawCount     int      `json:"RawCount"`
+			TypeKeysSeen []string `json:"TypeKeysSeen"`
+		} `json:"diagnostics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Days != 14 {
+		t.Errorf("days = %d, want 14", body.Days)
+	}
+	if len(body.Activities) != 1 || body.Activities[0].Type != "other" {
+		t.Errorf("activities = %+v, want one with type=other", body.Activities)
+	}
+	if body.Diagnostics.RawCount != 5 || len(body.Diagnostics.TypeKeysSeen) != 3 {
+		t.Errorf("diagnostics = %+v, want RawCount=5 + 3 typeKeys", body.Diagnostics)
+	}
+}
+
+func TestAdminGarminActivitiesRaw_404WhenNoCredentials(t *testing.T) {
+	h := newTestHarness(t)
+	u, _ := h.db.CreateUser("rawnocreds@example.com")
+
+	url := h.srv.URL + "/internal/admin/users/" + strconv.FormatInt(u.ID, 10) + "/garmin/activities-raw"
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAdminGarminActivitiesRaw_400OnDaysOutOfRange(t *testing.T) {
+	h := newTestHarness(t)
+	u, _ := h.db.CreateUser("rawbaddays@example.com")
+	_ = h.db.SaveGarminCredentials(u.ID, "g@example.com", "p")
+
+	url := h.srv.URL + "/internal/admin/users/" + strconv.FormatInt(u.ID, 10) + "/garmin/activities-raw?days=400"
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
 

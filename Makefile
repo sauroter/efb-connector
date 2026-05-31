@@ -1,4 +1,9 @@
-.PHONY: dev dev-consent build test cover lint lint-install clean egress-status rotate-egress
+.PHONY: dev dev-consent build test test-python cover lint lint-install clean egress-status rotate-egress
+
+# Python interpreter used by `make test-python`. Defaults to .venv if
+# present (developer setup), else falls back to system python3 (CI may
+# install garminconnect into the system python).
+PYTHON ?= $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 
 ENCRYPTION_KEY ?= $(shell openssl rand -base64 32)
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -18,8 +23,15 @@ dev-consent:
 build:
 	go build -ldflags="-X main.version=$(VERSION)" -o efb-connector ./cmd/server
 
-test:
+test: test-python
 	go test ./...
+
+# Regression tests for the pure-Python helpers in scripts/garmin_fetch.py
+# (filter logic, name-fallback regex). Run as part of `make test`.
+# The garminconnect import in garmin_fetch.py is deferred so these tests
+# do not require it to be installed.
+test-python:
+	$(PYTHON) -m unittest scripts.garmin_fetch_test
 
 cover:
 	go test ./... -coverprofile=coverage.out -covermode=atomic

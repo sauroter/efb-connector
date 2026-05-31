@@ -3,12 +3,14 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"efb-connector/internal/efb"
+	"efb-connector/internal/garmin"
 	"efb-connector/internal/i18n"
 )
 
@@ -260,6 +262,83 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// handleAdminGarminActivitiesRaw lists every activity Garmin reports for
+// a user over the last `days` days (default 30, max 365), bypassing the
+// water-sport filter. Permanent operator tool for diagnosing "no imports"
+// feedback — the typical first question is "what activity types does this
+// user actually have?" and this answers it without ad-hoc probes.
+//
+// Returns 503 when Garmin is rate-limiting or unavailable, 401 on auth
+// failure, otherwise JSON: {activities: [...], diagnostics: {raw_count, type_keys_seen}}.
+func (s *Server) handleAdminGarminActivitiesRaw(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuth(w, r) {
+		return
+	}
+
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		parsed, err := strconv.Atoi(d)
+		if err != nil || parsed < 1 || parsed > 365 {
+			http.Error(w, "days must be between 1 and 365", http.StatusBadRequest)
+			return
+		}
+		days = parsed
+	}
+
+	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
+	if err != nil {
+		s.logger.Warn("admin: get garmin creds", "user_id", userID, "error", err)
+		http.Error(w, "garmin credentials not configured for user", http.StatusNotFound)
+		return
+	}
+
+	creds := garmin.GarminCredentials{
+		Email:          garminEmail,
+		Password:       garminPass,
+		TokenStorePath: s.garminTokenStorePath(userID),
+	}
+
+	// Allow up to 90s — same budget as debug-upload; Garmin can be slow.
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
+	activities, diag, err := s.garmin.ListActivitiesRaw(ctx, creds, days)
+	if err != nil {
+		s.logger.Warn("admin: list raw garmin activities",
+			"user_id", userID, "days", days, "error", err)
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, garmin.ErrGarminAuth):
+			status = http.StatusUnauthorized
+		case errors.Is(err, garmin.ErrGarminUnavailable):
+			status = http.StatusServiceUnavailable
+		case errors.Is(err, garmin.ErrGarminMFARequired):
+			status = http.StatusConflict
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":      "error",
+			"error":       err.Error(),
+			"diagnostics": diag,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"days":        days,
+		"activities":  activities,
+		"diagnostics": diag,
+	})
 }
 
 // handleAdminDevMockEFBConsentGate toggles the simulated EFB consent

@@ -86,3 +86,20 @@ The server is configured via environment variables:
 
 The full REST API is documented in [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1). A validation test in `tests/openapi/` ensures the spec stays in sync with registered routes — add new endpoints to both `server.go` and `openapi.yaml`.
 
+## Operator endpoints
+
+All `/internal/admin/*` routes require `Authorization: Bearer $INTERNAL_SECRET`. The full list lives in `openapi.yaml`; these are the ones you reach for most often during incident triage:
+
+- `GET /internal/admin/users/{id}/sync-history` — last 50 sync_runs for a user (status, found/synced/failed counters, `error_message`, `raw_count`, `type_keys_seen`).
+- `GET /internal/admin/users/{id}/garmin/activities-raw?days=N` — every activity Garmin returns for the user, **bypassing the water-sport filter**. First thing to hit on any "no imports" feedback: it answers "what activity types does this user actually have?" Hits Garmin directly using cached tokens; subject to rate limits. `days` capped at 365.
+- `GET /internal/admin/activity-errors?include_body=1` — recent failed activity uploads with EFB response excerpts (capped at 5 stored bodies).
+- `POST /internal/admin/users/{id}/debug-upload` — dry-run a single EFB upload using stored credentials, returning the raw EFB response. Does not mutate `synced_activities` or `sync_runs`.
+
+## Water-sport filter
+
+`scripts/garmin_fetch.py:is_water_sport` filters Garmin activities to `parentTypeId == 228` plus a hardcoded legacy `typeKey` list. Anything that fails this filter is dropped silently.
+
+Per-user opt-in escape hatch: `users.match_by_name` (column added in migration 0012, default off). When enabled, activities under `parent_type_id == 17` (generic fitness, e.g. Venu 3 "Sonstiges") are accepted if their `activityName` contains a water-sport keyword (Kajak, Kanu, Paddel, Rudern, SUP, kayak, canoe, paddle, row, stand up paddl). The parent-id guard prevents non-water-sport activities tagged with a specific parent from leaking in. Driven through the engine via `garmin.ListOptions.MatchByName` → `garmin_fetch.py --match-by-name`. Settings toggle at `POST /settings/match-by-name`.
+
+When triaging "0 imports" feedback: the `"fetched garmin activities"` log line carries `raw_count`, `type_keys_seen`, and `name_matched_count`. Same data persists on `sync_runs` so the dashboard's "no matching activities" hint can render historical typeKeys without re-querying Garmin.
+

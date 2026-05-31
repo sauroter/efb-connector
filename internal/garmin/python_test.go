@@ -6,13 +6,43 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"efb-connector/internal/crypto"
 )
+
+// TestGarminFetchPyRegression drives scripts/garmin_fetch_test.py through
+// `python3 -m unittest` so the pure-Python filter / regex logic gets
+// regression coverage in CI without needing a separate Python test runner
+// in the workflow file. Skipped when python3 is not on PATH (Windows dev
+// box, broken installer).
+func TestGarminFetchPyRegression(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("python3 invocation pattern differs on Windows")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH; skipping garmin_fetch_test.py regression run")
+	}
+
+	// Locate the project root: this test sits in internal/garmin/, so
+	// repo root is two levels up.
+	projectRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve project root: %v", err)
+	}
+
+	cmd := exec.Command("python3", "-m", "unittest", "scripts.garmin_fetch_test")
+	cmd.Dir = projectRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("garmin_fetch_test.py failed:\n%s\nerror: %v", out, err)
+	}
+}
 
 // writeMockScript writes a Python mock script to dir/garmin_mock.py and
 // returns its path.  The script reads credentials from stdin, validates them
@@ -80,7 +110,7 @@ print(json.dumps(activities))
 	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 
-	activities, err := p.ListActivities(ctx, newCreds(), start, end)
+	activities, _, err := p.ListActivities(ctx, newCreds(), start, end, ListOptions{})
 	if err != nil {
 		t.Fatalf("ListActivities returned error: %v", err)
 	}
@@ -148,8 +178,8 @@ print(json.dumps([]))
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	activities, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	activities, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,8 +203,8 @@ sys.exit(1)
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -198,13 +228,151 @@ sys.exit(1)
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if !errors.Is(err, ErrGarminMFARequired) {
 		t.Errorf("expected ErrGarminMFARequired, got: %v", err)
+	}
+}
+
+func TestListActivities_ForwardsMatchByNameFlag(t *testing.T) {
+	dir := t.TempDir()
+	// Mock script that records whether --match-by-name was passed by
+	// returning a distinct activity name based on the flag.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+lp.add_argument("--no-filter", action="store_true")
+lp.add_argument("--match-by-name", action="store_true")
+ns = parser.parse_args()
+print(json.dumps([{
+    "id": 1,
+    "name": "match-by-name=" + str(ns.match_by_name),
+    "type": "kayaking_v2",
+    "parent_type_id": 228,
+    "date": "2026-05-01",
+    "start_time": "2026-05-01 12:00:00",
+    "start_lat": 0, "start_lng": 0, "end_lat": 0, "end_lng": 0,
+    "duration": 0, "distance": 0,
+}]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+
+	// Off: expect "match-by-name=False" in returned name.
+	acts, _, err := p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities (off): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "match-by-name=False" {
+		t.Fatalf("expected one activity with name 'match-by-name=False', got %+v", acts)
+	}
+
+	// On: expect "match-by-name=True".
+	acts, _, err = p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{MatchByName: true})
+	if err != nil {
+		t.Fatalf("ListActivities (on): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "match-by-name=True" {
+		t.Fatalf("expected one activity with name 'match-by-name=True', got %+v", acts)
+	}
+}
+
+func TestParseListDiagnostics_RequiresLineStart(t *testing.T) {
+	// A Python traceback line that happens to contain the substring
+	// "DIAGNOSTICS: " mid-line must not be parsed as a real diagnostics
+	// envelope. The marker has to be the first non-whitespace token.
+	stderr := `Some debug output
+Traceback (most recent call last):
+  File "x.py", line 42, in <module>
+    raise ValueError("printing DIAGNOSTICS: {fake} for context")
+DIAGNOSTICS: {"raw_count": 5, "type_keys_seen": ["cycling"], "name_matched_count": 1}
+`
+
+	diag := parseListDiagnostics(stderr)
+	if diag.RawCount != 5 {
+		t.Errorf("RawCount = %d, want 5 (parser took the real line, not the traceback)", diag.RawCount)
+	}
+	if diag.NameMatchedCount != 1 {
+		t.Errorf("NameMatchedCount = %d, want 1", diag.NameMatchedCount)
+	}
+}
+
+func TestParseListDiagnostics_IgnoresInlineMarker(t *testing.T) {
+	// No real DIAGNOSTICS line at all — only an inline mention inside
+	// a traceback. Must return zero value, not fish out the inline JSON.
+	stderr := `raise ValueError("fake DIAGNOSTICS: {\"raw_count\": 999}")`
+
+	diag := parseListDiagnostics(stderr)
+	if diag.RawCount != 0 || diag.TypeKeysSeen != nil {
+		t.Errorf("expected zero diagnostics, got %+v", diag)
+	}
+}
+
+func TestListActivities_DiagnosticsParsedFromStderr(t *testing.T) {
+	dir := t.TempDir()
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+parser.parse_args()
+# Emit a diagnostics line on stderr alongside the (filtered) JSON list.
+print('DIAGNOSTICS: {"raw_count": 351, "type_keys_seen": ["cycling","other","running"], "name_matched_count": 2}', file=sys.stderr)
+print(json.dumps([]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	_, diag, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities: %v", err)
+	}
+	if diag.RawCount != 351 {
+		t.Errorf("RawCount = %d, want 351", diag.RawCount)
+	}
+	if got, want := strings.Join(diag.TypeKeysSeen, ","), "cycling,other,running"; got != want {
+		t.Errorf("TypeKeysSeen = %v, want %s", diag.TypeKeysSeen, want)
+	}
+	if diag.NameMatchedCount != 2 {
+		t.Errorf("NameMatchedCount = %d, want 2", diag.NameMatchedCount)
+	}
+}
+
+func TestListActivities_MissingDiagnosticsLineIsTolerated(t *testing.T) {
+	dir := t.TempDir()
+	// Old-style script with no DIAGNOSTICS line at all — Python rollback
+	// shouldn't break Go callers.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+parser.parse_args()
+print(json.dumps([]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	_, diag, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities: %v", err)
+	}
+	if diag.RawCount != 0 || diag.TypeKeysSeen != nil {
+		t.Errorf("expected zero diagnostics, got %+v", diag)
 	}
 }
 
@@ -222,8 +390,8 @@ print("this is not JSON")
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}

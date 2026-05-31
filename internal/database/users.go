@@ -20,6 +20,11 @@ type User struct {
 	EnrichTrips     bool
 	SetupCompleted  bool
 	PreferredLang   string
+	// MatchByName, when true, asks the sync engine to additionally
+	// include activities whose Garmin activityName contains a
+	// water-sport keyword even though their typeKey/parentTypeId did
+	// not match the strict filter. Off by default — see migration 0012.
+	MatchByName bool
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
@@ -47,7 +52,7 @@ func (d *DB) CreateUser(email string) (*User, error) {
 // no such row exists.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name
 		   FROM users WHERE email = ?`, email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -60,7 +65,7 @@ func (d *DB) GetUserByEmail(email string) (*User, error) {
 // found.
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name
 		   FROM users WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -117,6 +122,22 @@ func (d *DB) UpdateSetupCompleted(userID int64, completed bool) error {
 	return nil
 }
 
+// UpdateMatchByName sets the match_by_name flag for the given user.
+// When true, the sync engine includes activities whose Garmin activityName
+// contains a water-sport keyword even if the typeKey/parentTypeId filter
+// would otherwise reject them.
+func (d *DB) UpdateMatchByName(userID int64, enabled bool) error {
+	val := 0
+	if enabled {
+		val = 1
+	}
+	_, err := d.db.Exec(`UPDATE users SET match_by_name = ? WHERE id = ?`, val, userID)
+	if err != nil {
+		return fmt.Errorf("database: update match_by_name for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // DeleteUser removes the user and all cascaded rows (credentials, activities,
 // sessions, sync_runs).
 func (d *DB) DeleteUser(id int64) error {
@@ -130,7 +151,7 @@ func (d *DB) DeleteUser(id int64) error {
 // both Garmin and EFB credentials marked as valid.
 func (d *DB) GetSyncableUsers() ([]User, error) {
 	rows, err := d.db.Query(`
-		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang
+		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang, u.match_by_name
 		  FROM users u
 		  JOIN garmin_credentials gc ON gc.user_id = u.id AND gc.is_valid = 1
 		  JOIN efb_credentials    ec ON ec.user_id = u.id AND ec.is_valid = 1
@@ -158,10 +179,11 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	var createdAt, updatedAt string
 	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted int
 
+	var matchByName int
 	err := row.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang,
+		&u.PreferredLang, &matchByName,
 	)
 	if err != nil {
 		return nil, err
@@ -174,6 +196,7 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	u.AutoCreateTrips = autoCreateTrips != 0
 	u.EnrichTrips = enrichTrips != 0
 	u.SetupCompleted = setupCompleted != 0
+	u.MatchByName = matchByName != 0
 	return &u, nil
 }
 
@@ -181,12 +204,12 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
-	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted int
+	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted, matchByName int
 
 	err := rows.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang,
+		&u.PreferredLang, &matchByName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan user: %w", err)
@@ -199,6 +222,7 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	u.AutoCreateTrips = autoCreateTrips != 0
 	u.EnrichTrips = enrichTrips != 0
 	u.SetupCompleted = setupCompleted != 0
+	u.MatchByName = matchByName != 0
 	return &u, nil
 }
 

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -205,6 +206,58 @@ func TestHandleSetupConfigure_UncheckedBoxesSetFalse(t *testing.T) {
 	}
 	if !u.SetupCompleted {
 		t.Error("SetupCompleted should be true")
+	}
+}
+
+func TestMatchByName_TogglePersistsAndPropagatesToSync(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "match-by-name@example.com")
+
+	// 1. Default off.
+	u, _ := h.db.GetUserByID(uid)
+	if u.MatchByName {
+		t.Errorf("MatchByName default = true, want false")
+	}
+
+	// 2. Enable via the new settings endpoint.
+	resp := postForm(t, h, "/settings/match-by-name", url.Values{
+		"enabled": {"1"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", resp.StatusCode)
+	}
+	u, _ = h.db.GetUserByID(uid)
+	if !u.MatchByName {
+		t.Errorf("MatchByName after enable = false, want true")
+	}
+
+	// 3. Disable by submitting without the enabled field.
+	resp = postForm(t, h, "/settings/match-by-name", url.Values{})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("disable status = %d, want 303", resp.StatusCode)
+	}
+	u, _ = h.db.GetUserByID(uid)
+	if u.MatchByName {
+		t.Errorf("MatchByName after disable = true, want false")
+	}
+}
+
+func TestMatchByName_PassedToGarminProviderOnSync(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "match-by-name-sync@example.com")
+
+	if err := h.db.UpdateMatchByName(uid, true); err != nil {
+		t.Fatalf("UpdateMatchByName: %v", err)
+	}
+
+	// Trigger a sync via the engine directly; the mock records the
+	// opts arg so we can verify propagation without an HTTP round-trip.
+	_, err := h.server.syncEngine.SyncUser(context.Background(), uid, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	if !h.garmin.LastOpts.MatchByName {
+		t.Errorf("mock provider received MatchByName=false, want true")
 	}
 }
 

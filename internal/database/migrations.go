@@ -131,4 +131,29 @@ ALTER TABLE efb_credentials ADD COLUMN consent_notified_at TEXT;`,
 	// onboarding (setup_completed = 1) made an explicit choice and are
 	// left untouched.
 	`UPDATE users SET auto_create_trips = 1 WHERE setup_completed = 0;`,
+
+	// 0011 – persist pre-filter Garmin diagnostics on every sync_run so the
+	// dashboard can surface a "we saw cycling/running/other but no kayaking"
+	// hint when activities_found=0. type_keys_seen is a JSON array of
+	// strings (sorted, deduplicated by the Python script); raw_count is the
+	// total activity count Garmin returned before the water-sport filter.
+	// name_matched_count records how many activities the opt-in
+	// match_by_name fallback recovered (always 0 when the flag is off);
+	// it lets the dashboard render "we recovered N mis-tagged activities
+	// this run" without re-querying Garmin. All three columns are nullable
+	// so historical rows (and runs that hit Garmin auth failures before
+	// listing anything) are not retroactively misrepresented.
+	`ALTER TABLE sync_runs ADD COLUMN type_keys_seen TEXT;
+ALTER TABLE sync_runs ADD COLUMN raw_count INTEGER;
+ALTER TABLE sync_runs ADD COLUMN name_matched_count INTEGER;`,
+
+	// 0012 – opt-in fallback: include activities tagged "Other" /
+	// parent_type_id 17 (generic fitness) when their activityName contains
+	// a water-sport keyword (Kajak, Kanu, Paddel, Rudern, SUP, kayak,
+	// canoe, paddle, row, stand_up_paddl). Default off because the
+	// keyword match is name-only and would otherwise import a
+	// non-water-sport activity that just happens to mention "paddle" in
+	// its name. Users on watches without a native kayak profile (Garmin
+	// Venu 3 is the canonical case) opt in via the settings page.
+	`ALTER TABLE users ADD COLUMN match_by_name INTEGER NOT NULL DEFAULT 0;`,
 }

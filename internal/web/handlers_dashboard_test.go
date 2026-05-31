@@ -101,6 +101,74 @@ func TestDashboard_ShowsBannerWhenEFBInvalid(t *testing.T) {
 	}
 }
 
+func TestDashboard_ShowsNoActivitiesHintAfterCleanZeroRun(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "axel-like@example.com")
+
+	// Finish onboarding so the getting-started checklist doesn't preempt
+	// the hint banner.
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	// Simulate a clean sync run that found nothing — the silent-failure
+	// scenario from feedback #216 (user 216).
+	runID, err := h.db.CreateSyncRun(uid, "scheduled")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("UpdateSyncRun: %v", err)
+	}
+	if err := h.db.RecordSyncDiagnostics(runID, 12, []string{"cycling", "other", "running"}, 0); err != nil {
+		t.Fatalf("RecordSyncDiagnostics: %v", err)
+	}
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	for _, want := range []string{
+		"No matching activities found", // hint heading EN
+		"cycling, other, running",      // surfaced typeKeys
+		"Kajakfahren",                  // mention of how to fix in EN i18n string
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard body missing %q", want)
+		}
+	}
+}
+
+func TestDashboard_NoActivitiesHintSuppressedDuringSetup(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "setup-still-incomplete@example.com")
+
+	// SetupCompleted defaults to false from CreateUser; with a zero-find
+	// run the hint conditions would otherwise be met, but the
+	// getting-started checklist takes precedence and the hint must
+	// not render.
+	runID, _ := h.db.CreateSyncRun(uid, "scheduled")
+	_ = h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, "")
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	if strings.Contains(body, "No matching activities found") {
+		t.Error("hint banner must be suppressed while ShowGettingStarted is true")
+	}
+}
+
+func TestDashboard_NoActivitiesHintSuppressedWhenSyncErrored(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "errored@example.com")
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, _ := h.db.CreateSyncRun(uid, "scheduled")
+	_ = h.db.UpdateSyncRun(runID, "failed", 0, 0, 0, 0, 0, "garmin: temporarily unavailable")
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	if strings.Contains(body, "No matching activities found") {
+		t.Error("hint banner must be suppressed when last sync errored — the error message itself explains nothing was imported")
+	}
+}
+
 func TestSettings_BadgeShowsNeedsReauthForInvalidCreds(t *testing.T) {
 	h := newTestHarness(t)
 	uid := loginAs(t, h, "settings_inv@example.com")

@@ -2,3 +2,31 @@
 <p><strong>{{ T "email.feedback.category_label" }}</strong> {{ .Category }}</p>
 <p><strong>{{ T "email.feedback.message_label" }}</strong></p>
 <p>{{ .Message }}</p>
+{{ if .Diagnostics }}
+<hr>
+<p><strong>{{ T "email.feedback.diagnostics_heading" }}</strong></p>
+<ul>
+  <li>Garmin:
+    {{- if not .Diagnostics.HasGarminCredentials }} {{ T "email.feedback.diag_no_credentials" }}
+    {{- else if .Diagnostics.GarminInvalid }} {{ T "email.feedback.diag_invalid" }}{{ if .Diagnostics.GarminLastError }} — {{ .Diagnostics.GarminLastError }}{{ end }}
+    {{- else }} {{ T "email.feedback.diag_ok" }}
+    {{- end }}
+  </li>
+  <li>EFB:
+    {{- if not .Diagnostics.HasEFBCredentials }} {{ T "email.feedback.diag_no_credentials" }}
+    {{- else if .Diagnostics.EFBInvalid }} {{ T "email.feedback.diag_invalid" }}{{ if .Diagnostics.EFBLastError }} — {{ .Diagnostics.EFBLastError }}{{ end }}
+    {{- else if .Diagnostics.EFBConsentRequired }} {{ T "email.feedback.diag_consent_required" }}
+    {{- else }} {{ T "email.feedback.diag_ok" }}
+    {{- end }}
+  </li>
+  {{ if .Diagnostics.LastSync }}
+  <li>{{ T "email.feedback.diag_last_sync" }} #{{ .Diagnostics.LastSync.ID }} ({{ .Diagnostics.LastSync.Trigger }}, {{ .Diagnostics.LastSync.StartedAt.Format "2006-01-02 15:04 UTC" }}):
+    <em>{{ .Diagnostics.LastSync.Status }}</em> —
+    {{ Tf "email.feedback.diag_activity_counts" .Diagnostics.LastSync.ActivitiesFound .Diagnostics.LastSync.ActivitiesSynced .Diagnostics.LastSync.ActivitiesSkipped .Diagnostics.LastSync.ActivitiesFailed }}
+    {{ if .Diagnostics.LastSync.ErrorMessage }}<br><code>{{ .Diagnostics.LastSync.ErrorMessage }}</code>{{ end }}
+  </li>
+  {{ else }}
+  <li>{{ T "email.feedback.diag_no_syncs" }}</li>
+  {{ end }}
+</ul>
+{{ end }}

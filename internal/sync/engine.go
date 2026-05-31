@@ -226,7 +226,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips)
+	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -288,7 +288,7 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips bool) (found, synced, skipped, failed, tripsCreated int, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool) (found, synced, skipped, failed, tripsCreated int, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -305,7 +305,9 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	}
 
 	// 3. List activities from Garmin.
-	activities, err := s.garmin.ListActivities(ctx, garminCreds, start, end)
+	activities, diag, err := s.garmin.ListActivities(ctx, garminCreds, start, end, garmin.ListOptions{
+		MatchByName: matchByName,
+	})
 	if err != nil {
 		// On auth failure: mark credentials invalid.
 		if errors.Is(err, garmin.ErrGarminAuth) || errors.Is(err, garmin.ErrGarminMFARequired) {
@@ -317,7 +319,20 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		return 0, 0, 0, 0, 0, fmt.Errorf("sync: list activities: %w", err)
 	}
 
-	log.Info("fetched garmin activities", "count", len(activities))
+	log.Info("fetched garmin activities",
+		"count", len(activities),
+		"raw_count", diag.RawCount,
+		"type_keys_seen", diag.TypeKeysSeen,
+		"name_matched_count", diag.NameMatchedCount,
+	)
+
+	// Persist pre-filter diagnostics on the sync_run so the dashboard can
+	// later render a "we saw cycling/running but no kayaking" hint, and
+	// expose how many name-fallback recoveries happened this run, without
+	// re-running Garmin. Best-effort: a failure here doesn't abort the sync.
+	if recErr := s.db.RecordSyncDiagnostics(runID, diag.RawCount, diag.TypeKeysSeen, diag.NameMatchedCount); recErr != nil {
+		log.Warn("failed to record sync diagnostics", "error", recErr)
+	}
 
 	// Self-heal: Garmin auth currently works (cached refresh token or stored
 	// password). No-op when is_valid is already 1; rescues users stuck after
@@ -738,7 +753,9 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 	if garminID == "" {
 		end := time.Now()
 		start := end.AddDate(0, 0, -user.SyncDays)
-		acts, err := s.garmin.ListActivities(ctx, garminCreds, start, end)
+		acts, _, err := s.garmin.ListActivities(ctx, garminCreds, start, end, garmin.ListOptions{
+			MatchByName: user.MatchByName,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("debug-upload: list activities: %w", err)
 		}
