@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"html"
 	"net/http"
 	"strconv"
@@ -14,15 +15,14 @@ import (
 
 // handleSyncTrigger launches a manual sync in a background goroutine and
 // returns the sync_run ID. Rate-limited to 1 per hour per user.
+//
+// Form validation runs BEFORE AllowSync so a malformed date doesn't burn
+// the user's per-hour token — the rate-limit guard is for actual sync
+// attempts, not for unparseable input.
 func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserFromContext(r.Context())
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-
-	if !s.rateLimiter.AllowSync(userID) {
-		s.syncError(w, r, "flash.sync_rate_limited")
 		return
 	}
 
@@ -49,8 +49,6 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		opts = sync.SyncOptions{Start: startDate, End: endWithFullDay}
 		trigger = "manual_custom"
 
-		// Validate date range synchronously before launching goroutine,
-		// so the user gets immediate feedback and doesn't burn rate limit.
 		if !startDate.Before(endWithFullDay) {
 			s.syncError(w, r, "flash.start_before_end")
 			return
@@ -61,12 +59,26 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Launch the sync in a background goroutine.
+	if !s.rateLimiter.AllowSync(userID) {
+		s.syncError(w, r, "flash.sync_rate_limited")
+		return
+	}
+
+	// Launch the sync in a background goroutine. Tracked in bgWG so
+	// Shutdown can wait for it (and tests can join before tearing down
+	// the in-memory DB).
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.logger.Error("manual sync panicked", "user_id", userID, "panic", fmt.Sprintf("%v", rec))
+			}
+		}()
 		log := s.logger.With("user_id", userID, "trigger", trigger)
 		log.Info("manual sync started")
 
-		runID, err := s.syncEngine.SyncUserWithOptions(context.Background(), userID, trigger, opts)
+		runID, err := s.syncEngine.SyncUserWithOptions(s.bgRootCtx, userID, trigger, opts)
 		if err != nil {
 			log.Error("manual sync failed", "run_id", runID, "error", err)
 		} else {
@@ -141,10 +153,17 @@ func (s *Server) handleEFBRecheckConsent(w http.ResponseWriter, r *http.Request)
 	if clrErr := s.db.ClearEFBConsentRequired(userID); clrErr != nil {
 		s.logger.Error("efb consent recheck: clear flag", "user_id", userID, "error", clrErr)
 	}
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.logger.Error("post-consent sync panicked", "user_id", userID, "panic", fmt.Sprintf("%v", rec))
+			}
+		}()
 		log := s.logger.With("user_id", userID, "trigger", "manual")
 		log.Info("post-consent sync started")
-		runID, syncErr := s.syncEngine.SyncUser(context.Background(), userID, "manual")
+		runID, syncErr := s.syncEngine.SyncUser(s.bgRootCtx, userID, "manual")
 		if syncErr != nil {
 			log.Error("post-consent sync failed", "run_id", runID, "error", syncErr)
 		} else {

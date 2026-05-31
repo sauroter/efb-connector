@@ -461,6 +461,23 @@ func TestRateLimiter_AllowSync_DifferentUsers(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_AllowRecheckConsent(t *testing.T) {
+	rl := NewRateLimiter()
+
+	if !rl.AllowRecheckConsent(1) {
+		t.Error("first recheck should be allowed")
+	}
+	// The recheck-consent limit is 6/hour with burst 1, so the
+	// second immediate call must be denied.
+	if rl.AllowRecheckConsent(1) {
+		t.Error("immediate second recheck should be denied")
+	}
+	// Different users have independent counters.
+	if !rl.AllowRecheckConsent(2) {
+		t.Error("first recheck for user 2 should be allowed")
+	}
+}
+
 // ──────────────────────────────────────────────
 // Email tests (using a mock HTTP server)
 // ──────────────────────────────────────────────

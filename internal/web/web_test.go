@@ -1,12 +1,14 @@
 package web
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"efb-connector/internal/auth"
 	"efb-connector/internal/database"
@@ -58,17 +60,18 @@ func newTestHarness(t *testing.T) *testHarness {
 	syncEngine := syncsvc.NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, logger, syncsvc.WithoutSleep())
 
 	s, err := NewServer(ServerDeps{
-		DB:             db,
-		Auth:           authService,
-		SyncEngine:     syncEngine,
-		Garmin:         gp,
-		EFB:            ep,
-		RateLimiter:    rateLimiter,
-		InternalSecret: "test-secret",
-		BaseURL:        "",
-		Logger:         logger,
-		TemplatesDir:   "../../templates",
-		Version:        "test",
+		DB:                   db,
+		Auth:                 authService,
+		SyncEngine:           syncEngine,
+		Garmin:               gp,
+		EFB:                  ep,
+		RateLimiter:          rateLimiter,
+		InternalSecret:       "test-secret",
+		BaseURL:              "",
+		Logger:               logger,
+		TemplatesDir:         "../../templates",
+		Version:              "test",
+		GarminTokenStoreBase: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -76,6 +79,16 @@ func newTestHarness(t *testing.T) *testHarness {
 
 	ts := httptest.NewTLSServer(s.Routes())
 	t.Cleanup(ts.Close)
+	// Drain manual-sync / consent-recheck goroutines before later
+	// cleanups close the DB. Registered AFTER ts.Close so it runs FIRST
+	// (Cleanup is LIFO): Shutdown → ts.Close → db.Close.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.Shutdown(ctx); err != nil {
+			t.Logf("server shutdown: %v", err)
+		}
+	})
 
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{

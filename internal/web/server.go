@@ -59,6 +59,18 @@ type Server struct {
 	runAllRootCtx    context.Context
 	runAllRootCancel context.CancelFunc
 	runAllWG         stdsync.WaitGroup
+
+	// bgRootCtx / bgWG track manual-sync goroutines spawned from
+	// handleSyncTrigger and handleEFBRecheckConsent so Shutdown can wait
+	// for them — and so tests can join before tearing down the DB.
+	bgRootCtx    context.Context
+	bgRootCancel context.CancelFunc
+	bgWG         stdsync.WaitGroup
+
+	// garminTokenBase is the parent directory for per-user Garmin token
+	// stores. Empty in production (falls back to /data or ~/.config); tests
+	// inject a temp dir via ServerDeps.GarminTokenStoreBase.
+	garminTokenBase string
 }
 
 // runAllState captures the current/last state of a fire-and-forget
@@ -93,6 +105,12 @@ type ServerDeps struct {
 	Resend          *resend.Client
 	ResendSegActive string // env: RESEND_SEGMENT_ACTIVE
 	ResendSegSetup  string // env: RESEND_SEGMENT_NEEDS_SETUP
+
+	// GarminTokenStoreBase overrides the parent directory for per-user
+	// Garmin OAuth token stores. Empty in production (the server falls
+	// back to /data or ~/.config). Tests set this to t.TempDir() so that
+	// account-delete and sync paths never touch the developer's home.
+	GarminTokenStoreBase string
 }
 
 // NewServer creates a Server with the given dependencies and parses all
@@ -106,6 +124,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	metrics.RegisterDBGauges(deps.DB)
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	return &Server{
 		db:               deps.DB,
@@ -126,19 +145,26 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		resendSegSetup:   deps.ResendSegSetup,
 		runAllRootCtx:    rootCtx,
 		runAllRootCancel: rootCancel,
+		bgRootCtx:        bgCtx,
+		bgRootCancel:     bgCancel,
+		garminTokenBase:  deps.GarminTokenStoreBase,
 	}, nil
 }
 
-// Shutdown signals any background run-all goroutine to stop and waits
-// for it to finish, bounded by ctx. The engine's worker loop checks
-// ctx.Err() before each user, so cancellation propagates within seconds.
-// Safe to call multiple times.
+// Shutdown signals every background goroutine to stop and waits for them
+// to finish, bounded by ctx. Covers both the /internal/sync/run-all worker
+// and per-user manual-sync goroutines spawned from handleSyncTrigger /
+// handleEFBRecheckConsent. The engine's worker loop checks ctx.Err() before
+// each user, so cancellation propagates within seconds. Safe to call
+// multiple times.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.runAllRootCancel()
+	s.bgRootCancel()
 
 	done := make(chan struct{})
 	go func() {
 		s.runAllWG.Wait()
+		s.bgWG.Wait()
 		close(done)
 	}()
 
@@ -296,13 +322,18 @@ func setFlash(w http.ResponseWriter, msg string) {
 }
 
 // garminTokenStorePath returns the per-user Garmin token store directory,
-// creating it if it doesn't exist. Uses /data/garmin_tokens/<userID> if /data
-// exists (Fly.io), otherwise ~/.config/efb-connector/garmin_tokens/<userID>.
+// creating it if it doesn't exist. If GarminTokenStoreBase is configured
+// (tests use this), it overrides the platform default. Otherwise uses
+// /data/garmin_tokens/<userID> if /data exists (Fly.io), else
+// ~/.config/efb-connector/garmin_tokens/<userID>.
 func (s *Server) garminTokenStorePath(userID int64) string {
 	var base string
-	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
+	switch {
+	case s.garminTokenBase != "":
+		base = s.garminTokenBase
+	case dataDirExists():
 		base = "/data/garmin_tokens"
-	} else {
+	default:
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config", "efb-connector", "garmin_tokens")
 	}
@@ -311,6 +342,11 @@ func (s *Server) garminTokenStorePath(userID int64) string {
 		s.logger.Error("failed to create garmin token store", "user_id", userID, "error", err)
 	}
 	return dir
+}
+
+func dataDirExists() bool {
+	info, err := os.Stat("/data")
+	return err == nil && info.IsDir()
 }
 
 // parseTemplates loads all templates from the given directory.
