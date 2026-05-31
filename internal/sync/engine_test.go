@@ -42,21 +42,31 @@ func openTestDB(t *testing.T) *database.DB {
 // mockGarminProvider implements garmin.GarminProvider for testing.
 type mockGarminProvider struct {
 	activities    []garmin.Activity
+	diagnostics   garmin.ListDiagnostics
 	listErr       error
 	gpxData       map[string][]byte // activityID → GPX bytes
 	downloadErr   map[string]error  // activityID → error
 	validateErr   error
 	lastListStart time.Time
 	lastListEnd   time.Time
+	lastListOpts  garmin.ListOptions
 }
 
-func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCredentials, start, end time.Time) ([]garmin.Activity, error) {
+func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCredentials, start, end time.Time, opts garmin.ListOptions) ([]garmin.Activity, garmin.ListDiagnostics, error) {
 	m.lastListStart = start
 	m.lastListEnd = end
+	m.lastListOpts = opts
 	if m.listErr != nil {
-		return nil, m.listErr
+		return nil, garmin.ListDiagnostics{}, m.listErr
 	}
-	return m.activities, nil
+	return m.activities, m.diagnostics, nil
+}
+
+func (m *mockGarminProvider) ListActivitiesRaw(_ context.Context, _ garmin.GarminCredentials, _ int) ([]garmin.Activity, garmin.ListDiagnostics, error) {
+	if m.listErr != nil {
+		return nil, garmin.ListDiagnostics{}, m.listErr
+	}
+	return m.activities, m.diagnostics, nil
 }
 
 func (m *mockGarminProvider) DownloadGPX(_ context.Context, _ garmin.GarminCredentials, activityID string) ([]byte, error) {

@@ -13,6 +13,10 @@ type MockGarminProvider struct {
 	// activities are generated.
 	Activities []Activity
 
+	// Diagnostics returned alongside Activities. Zero value is fine —
+	// callers must tolerate empty diagnostics.
+	Diagnostics ListDiagnostics
+
 	// ListErr, if set, is returned by ListActivities.
 	ListErr error
 
@@ -35,6 +39,11 @@ type MockGarminProvider struct {
 
 	// mfaPending tracks users with pending MFA sessions.
 	mfaPending map[int64]bool
+
+	// LastOpts is the ListOptions value passed to the most recent
+	// ListActivities call. Lets tests assert on per-call preferences
+	// (e.g. MatchByName).
+	LastOpts ListOptions
 }
 
 // NewMockGarminProvider returns a MockGarminProvider with sample activities.
@@ -44,14 +53,29 @@ func NewMockGarminProvider() *MockGarminProvider {
 	}
 }
 
-func (m *MockGarminProvider) ListActivities(_ context.Context, _ GarminCredentials, _, _ time.Time) ([]Activity, error) {
+func (m *MockGarminProvider) ListActivities(_ context.Context, _ GarminCredentials, _, _ time.Time, opts ListOptions) ([]Activity, ListDiagnostics, error) {
+	m.LastOpts = opts
 	if m.ListErr != nil {
-		return nil, m.ListErr
+		return nil, ListDiagnostics{}, m.ListErr
 	}
 	if m.Activities != nil {
-		return m.Activities, nil
+		return m.Activities, m.Diagnostics, nil
 	}
-	return defaultActivities(), nil
+	return defaultActivities(), m.Diagnostics, nil
+}
+
+// ListActivitiesRaw returns the same canned activities as ListActivities
+// in mock mode — the filter distinction is enforced by the Python script
+// in production. Tests that need to distinguish should set
+// MockGarminProvider.Activities to a curated raw set.
+func (m *MockGarminProvider) ListActivitiesRaw(_ context.Context, _ GarminCredentials, _ int) ([]Activity, ListDiagnostics, error) {
+	if m.ListErr != nil {
+		return nil, ListDiagnostics{}, m.ListErr
+	}
+	if m.Activities != nil {
+		return m.Activities, m.Diagnostics, nil
+	}
+	return defaultActivities(), m.Diagnostics, nil
 }
 
 func (m *MockGarminProvider) DownloadGPX(_ context.Context, _ GarminCredentials, activityID string) ([]byte, error) {

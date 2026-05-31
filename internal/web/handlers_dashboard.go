@@ -77,6 +77,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	var lastSync map[string]any
 	hasSynced := false
+	// noActivitiesHint is true when the user's most recent sync completed
+	// cleanly but Garmin returned zero water-sport activities — the silent
+	// failure mode that prompted #216's "nothing is imported" report.
+	// Suppressed during setup (hasSynced=false) because that path already
+	// renders the getting-started checklist.
+	var noActivitiesHint bool
 	if len(syncRuns) > 0 {
 		run := syncRuns[0]
 		lastSync = map[string]any{
@@ -90,8 +96,16 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"ActivitiesFailed":  run.ActivitiesFailed,
 			"TripsCreated":      run.TripsCreated,
 			"ErrorMessage":      run.ErrorMessage,
+			"TypeKeysSeen":      run.TypeKeysSeen,
+			"RawCount":          run.RawCount,
 		}
-		hasSynced = run.Status == "success" || run.Status == "completed" || run.Status == "partial"
+		isClean := run.Status == "success" || run.Status == "completed"
+		hasSynced = isClean || run.Status == "partial"
+		noActivitiesHint = isClean &&
+			run.ActivitiesFound == 0 &&
+			run.ActivitiesSynced == 0 &&
+			run.ActivitiesFailed == 0 &&
+			run.ErrorMessage == ""
 	}
 
 	// Compute getting-started state.
@@ -128,6 +142,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Today":              time.Now().Format("2006-01-02"),
 		"ShowGettingStarted": showGettingStarted,
 		"SetupStep":          setupStep,
+		// Suppress the no-activities hint while the user is still in
+		// the getting-started flow; the setup checklist already tells
+		// them why nothing has run yet.
+		"ShowNoActivitiesHint": noActivitiesHint && !showGettingStarted,
 	})
 }
 
@@ -186,6 +204,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"EFBUsername":     efbUsername,
 		"AutoCreateTrips": user.AutoCreateTrips,
 		"EnrichTrips":     user.EnrichTrips,
+		"MatchByName":     user.MatchByName,
 	})
 }
 
@@ -293,6 +312,38 @@ func (s *Server) handleEnrichTripsSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("enrich_trips updated", "user_id", userID, "enabled", enabled)
+
+	if ref := r.Referer(); strings.Contains(ref, "/settings") {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// handleMatchByNameSave saves the match_by_name toggle for the current user.
+// When enabled, the sync engine includes activities whose Garmin name
+// contains a water-sport keyword even if their typeKey is "other" — the
+// Venu-3 / Forerunner-without-kayak-profile workaround.
+func (s *Server) handleMatchByNameSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	enabled := r.FormValue("enabled") == "1"
+
+	if err := s.db.UpdateMatchByName(userID, enabled); err != nil {
+		s.logger.Error("failed to update match_by_name", "user_id", userID, "error", err)
+		setFlash(w, "flash.save_setting_failed")
+	}
+
+	s.logger.Info("match_by_name updated", "user_id", userID, "enabled", enabled)
 
 	if ref := r.Referer(); strings.Contains(ref, "/settings") {
 		http.Redirect(w, r, "/settings", http.StatusSeeOther)

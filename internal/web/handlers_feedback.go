@@ -80,15 +80,26 @@ func (s *Server) handleFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 				lang = i18n.ParseLang(user.PreferredLang)
 			}
 		}
+
+		// Best-effort: attach diagnostic context so operators don't have
+		// to round-trip back to the DB. Failure here doesn't block the
+		// email itself.
+		diag, diagErr := s.db.GetFeedbackDiagnostics(userID)
+		if diagErr != nil {
+			s.logger.Warn("feedback diagnostics lookup failed",
+				"user_id", userID, "error", diagErr)
+		}
+
 		err := s.mailer.Send(
 			s.feedbackEmail,
 			lang,
 			"feedback",
 			map[string]any{
-				"UserEmail": userEmail,
-				"UserID":    userID,
-				"Category":  category,
-				"Message":   message,
+				"UserEmail":   userEmail,
+				"UserID":      userID,
+				"Category":    category,
+				"Message":     message,
+				"Diagnostics": diag,
 			},
 			category,
 		)

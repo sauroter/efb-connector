@@ -5,3 +5,24 @@
 {{ T "email.feedback.message_label" }}
 
 {{ .Message }}
+{{ if .Diagnostics }}
+--
+{{ T "email.feedback.diagnostics_heading" }}
+
+Garmin: {{- if not .Diagnostics.HasGarminCredentials }} {{ T "email.feedback.diag_no_credentials" }}
+{{- else if .Diagnostics.GarminInvalid }} {{ T "email.feedback.diag_invalid" }}{{ if .Diagnostics.GarminLastError }} — {{ .Diagnostics.GarminLastError }}{{ end }}
+{{- else }} {{ T "email.feedback.diag_ok" }}{{ end }}
+
+EFB: {{- if not .Diagnostics.HasEFBCredentials }} {{ T "email.feedback.diag_no_credentials" }}
+{{- else if .Diagnostics.EFBInvalid }} {{ T "email.feedback.diag_invalid" }}{{ if .Diagnostics.EFBLastError }} — {{ .Diagnostics.EFBLastError }}{{ end }}
+{{- else if .Diagnostics.EFBConsentRequired }} {{ T "email.feedback.diag_consent_required" }}
+{{- else }} {{ T "email.feedback.diag_ok" }}{{ end }}
+
+{{ if .Diagnostics.LastSync -}}
+{{ T "email.feedback.diag_last_sync" }} #{{ .Diagnostics.LastSync.ID }} ({{ .Diagnostics.LastSync.Trigger }}, {{ .Diagnostics.LastSync.StartedAt.Format "2006-01-02 15:04 UTC" }}): {{ .Diagnostics.LastSync.Status }} — {{ Tf "email.feedback.diag_activity_counts" .Diagnostics.LastSync.ActivitiesFound .Diagnostics.LastSync.ActivitiesSynced .Diagnostics.LastSync.ActivitiesSkipped .Diagnostics.LastSync.ActivitiesFailed }}
+{{- if .Diagnostics.LastSync.ErrorMessage }}
+  error: {{ .Diagnostics.LastSync.ErrorMessage }}{{ end }}
+{{- else -}}
+{{ T "email.feedback.diag_no_syncs" }}
+{{- end }}
+{{ end -}}

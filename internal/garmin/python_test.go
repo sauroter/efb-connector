@@ -80,7 +80,7 @@ print(json.dumps(activities))
 	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 
-	activities, err := p.ListActivities(ctx, newCreds(), start, end)
+	activities, _, err := p.ListActivities(ctx, newCreds(), start, end, ListOptions{})
 	if err != nil {
 		t.Fatalf("ListActivities returned error: %v", err)
 	}
@@ -148,8 +148,8 @@ print(json.dumps([]))
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	activities, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	activities, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,8 +173,8 @@ sys.exit(1)
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -198,13 +198,117 @@ sys.exit(1)
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if !errors.Is(err, ErrGarminMFARequired) {
 		t.Errorf("expected ErrGarminMFARequired, got: %v", err)
+	}
+}
+
+func TestListActivities_ForwardsMatchByNameFlag(t *testing.T) {
+	dir := t.TempDir()
+	// Mock script that records whether --match-by-name was passed by
+	// returning a distinct activity name based on the flag.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+lp.add_argument("--no-filter", action="store_true")
+lp.add_argument("--match-by-name", action="store_true")
+ns = parser.parse_args()
+print(json.dumps([{
+    "id": 1,
+    "name": "match-by-name=" + str(ns.match_by_name),
+    "type": "kayaking_v2",
+    "parent_type_id": 228,
+    "date": "2026-05-01",
+    "start_time": "2026-05-01 12:00:00",
+    "start_lat": 0, "start_lng": 0, "end_lat": 0, "end_lng": 0,
+    "duration": 0, "distance": 0,
+}]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+
+	// Off: expect "match-by-name=False" in returned name.
+	acts, _, err := p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities (off): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "match-by-name=False" {
+		t.Fatalf("expected one activity with name 'match-by-name=False', got %+v", acts)
+	}
+
+	// On: expect "match-by-name=True".
+	acts, _, err = p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{MatchByName: true})
+	if err != nil {
+		t.Fatalf("ListActivities (on): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "match-by-name=True" {
+		t.Fatalf("expected one activity with name 'match-by-name=True', got %+v", acts)
+	}
+}
+
+func TestListActivities_DiagnosticsParsedFromStderr(t *testing.T) {
+	dir := t.TempDir()
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+parser.parse_args()
+# Emit a diagnostics line on stderr alongside the (filtered) JSON list.
+print('DIAGNOSTICS: {"raw_count": 351, "type_keys_seen": ["cycling","other","running"]}', file=sys.stderr)
+print(json.dumps([]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	_, diag, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities: %v", err)
+	}
+	if diag.RawCount != 351 {
+		t.Errorf("RawCount = %d, want 351", diag.RawCount)
+	}
+	if got, want := strings.Join(diag.TypeKeysSeen, ","), "cycling,other,running"; got != want {
+		t.Errorf("TypeKeysSeen = %v, want %s", diag.TypeKeysSeen, want)
+	}
+}
+
+func TestListActivities_MissingDiagnosticsLineIsTolerated(t *testing.T) {
+	dir := t.TempDir()
+	// Old-style script with no DIAGNOSTICS line at all — Python rollback
+	// shouldn't break Go callers.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+parser.parse_args()
+print(json.dumps([]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	_, diag, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities: %v", err)
+	}
+	if diag.RawCount != 0 || diag.TypeKeysSeen != nil {
+		t.Errorf("expected zero diagnostics, got %+v", diag)
 	}
 }
 
@@ -222,8 +326,8 @@ print("this is not JSON")
 `)
 
 	p := NewPythonGarminProvider(script, nil)
-	_, err := p.ListActivities(context.Background(), newCreds(),
-		time.Now().Add(-24*time.Hour), time.Now())
+	_, _, err := p.ListActivities(context.Background(), newCreds(),
+		time.Now().Add(-24*time.Hour), time.Now(), ListOptions{})
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}

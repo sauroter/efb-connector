@@ -858,6 +858,40 @@ paths:
         "303":
           description: Redirect to /settings or /dashboard
 
+  /settings/match-by-name:
+    post:
+      tags: [Dashboard]
+      summary: Toggle name-based water-sport fallback
+      description: |
+        When enabled, the sync engine includes activities whose Garmin
+        activityName contains a water-sport keyword (Kajak, Kanu, Paddel,
+        Rudern, SUP, kayak, canoe, paddle, row, stand up paddl) even if
+        their typeKey/parentTypeId would not match the strict water-sport
+        filter. Restricted to parent_type_id=17 (generic fitness) so a
+        cycling activity tagged "Paddel-Tennis" cannot slip through.
+
+        Intended for users whose watch lacks a native kayak activity
+        profile (e.g. Garmin Venu 3) and who record under "Other".
+      operationId: postMatchByName
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: string
+                  description: '"1" for enabled, absent for disabled'
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings or /dashboard
+
   /settings/language:
     post:
       tags: [Dashboard]
@@ -1383,6 +1417,76 @@ paths:
                     type: string
                   error:
                     type: string
+
+  /internal/admin/users/{id}/garmin/activities-raw:
+    get:
+      tags: [Internal]
+      summary: List raw Garmin activities for a user (operator only)
+      description: |
+        Lists every activity Garmin reports for the user over the last
+        `days` days, bypassing the water-sport filter applied during
+        regular sync. Used to diagnose "no imports" feedback by inspecting
+        which activity types and parent type IDs the user actually has.
+
+        Returns the unfiltered set plus a diagnostics block containing the
+        raw pre-filter activity count and the deduplicated `typeKey` values
+        Garmin reported. Hits Garmin directly using the user's stored
+        credentials; can be slow (up to 90s) and is subject to Garmin's
+        rate limiting.
+      operationId: getAdminGarminActivitiesRaw
+      security:
+        - internalBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Lookback window in whole days. Defaults to 30, capped at 365.
+      responses:
+        "200":
+          description: Raw activity list + diagnostics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days:
+                    type: integer
+                  activities:
+                    type: array
+                    items:
+                      type: object
+                  diagnostics:
+                    type: object
+                    properties:
+                      RawCount:
+                        type: integer
+                      TypeKeysSeen:
+                        type: array
+                        items:
+                          type: string
+        "400":
+          description: Invalid user id or days parameter
+        "401":
+          description: Unauthorized, or Garmin auth failure for the stored credentials
+        "404":
+          description: Garmin credentials not configured for this user
+        "409":
+          description: Garmin requires MFA — cannot proceed without an interactive code
+        "503":
+          description: Garmin temporarily unavailable or rate-limiting
+        "500":
+          description: Other internal error
 
   /internal/admin/feedback:
     get:

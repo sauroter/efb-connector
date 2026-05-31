@@ -182,6 +182,23 @@
         {{end}}
       {{end}}
 
+      {{if .ShowNoActivitiesHint}}
+      <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
+        <header><strong>{{call .T "dashboard.no_activities_hint.heading"}}</strong></header>
+        <p>{{call .T "dashboard.no_activities_hint.body"}}</p>
+        {{$typeKeys := index .LastSync "TypeKeysSeen"}}
+        {{if $typeKeys}}
+        <p>
+          <small>
+            {{call .T "dashboard.no_activities_hint.types_seen_label"}}
+            <code>{{range $i, $t := $typeKeys}}{{if $i}}, {{end}}{{$t}}{{end}}</code>
+          </small>
+        </p>
+        {{end}}
+        <p><small>{{call .T "dashboard.no_activities_hint.howto"}}</small></p>
+      </article>
+      {{end}}
+
       {{if and .GarminConnected .EFBConnected}}
       <form method="POST" action="/sync/trigger"
             hx-post="/sync/trigger"

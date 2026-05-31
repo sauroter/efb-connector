@@ -58,6 +58,14 @@ def get_credentials_from_stdin():
 # making it resilient to typeKey renames like kayaking → kayaking_v2.
 WATER_SPORTS_PARENT_TYPE_ID = 228
 
+# Generic-fitness parent ID. Used as the gating filter for the opt-in
+# name-fallback: we only accept name-matched activities if Garmin filed
+# them here, never if they were tagged with a specific non-water-sport
+# parent (cycling=17 too? Actually parent 17 covers nearly everything
+# generic — see comment in name_matches_water_sport). The Venu-3
+# "Sonstiges/Other" activity is the canonical case (type_id 4, parent 17).
+GENERIC_FITNESS_PARENT_TYPE_ID = 17
+
 # Legacy typeKeys filed under other parent IDs that we also want to capture.
 LEGACY_WATER_SPORT_TYPES = {
     "kayaking",
@@ -68,6 +76,19 @@ LEGACY_WATER_SPORT_TYPES = {
     "whitewater_rafting_kayaking",
 }
 
+# Case-insensitive substring keywords used by the opt-in name-fallback.
+# Conservative on purpose — "paddel"/"paddle" are word fragments that
+# would also match e.g. "Stand-Up-Paddling-Workshop" (good) but not
+# "Schaufelradpaddler" (would, false-positive but rare). Acceptable
+# trade-off for an opt-in flag.
+WATER_SPORT_NAME_KEYWORDS = (
+    "kajak", "kayak",
+    "kanu", "canoe",
+    "paddel", "paddl",
+    "rudern", "rowing",
+    "sup ", " sup", " sup-", "stand-up", "stand up",
+)
+
 
 def is_water_sport(activity):
     """Check if an activity is a water sport via parentTypeId or legacy typeKey."""
@@ -76,6 +97,19 @@ def is_water_sport(activity):
         return True
     type_key = activity.get("activityType", {}).get("typeKey", "")
     return type_key in LEGACY_WATER_SPORT_TYPES
+
+
+def name_matches_water_sport(activity):
+    """Return True if the activity's name contains a water-sport keyword
+    AND it sits under the generic fitness parent (id 17). The parent guard
+    prevents us from grabbing a "Paddel-Tennis" cycling activity by name."""
+    parent_id = activity.get("activityType", {}).get("parentTypeId")
+    if parent_id != GENERIC_FITNESS_PARENT_TYPE_ID:
+        return False
+    name = (activity.get("activityName") or "").lower()
+    if not name:
+        return False
+    return any(kw in name for kw in WATER_SPORT_NAME_KEYWORDS)
 
 
 def load_config():
@@ -171,8 +205,24 @@ def connect_garmin(config):
         sys.exit(1)
 
 
-def list_activities(client, days=30):
-    """List water sport activities from the last N days."""
+def list_activities(client, days=30, include_all=False, match_by_name=False):
+    """List activities from the last N days.
+
+    By default, returns only water-sport activities (passes `is_water_sport`).
+    When include_all=True, returns every activity Garmin reports, useful
+    for the operator-only `/internal/admin/users/{id}/garmin/activities-raw`
+    endpoint that diagnoses "no imports" reports.
+
+    When match_by_name=True (per-user opt-in via users.match_by_name),
+    activities that fail `is_water_sport` are accepted if their name
+    matches `name_matches_water_sport` (keyword-in-name AND parent_type_id
+    == 17). include_all takes precedence over match_by_name.
+
+    Emits a single-line `DIAGNOSTICS: {...}` envelope on stderr describing
+    the raw pre-filter activity count and the set of typeKey values seen.
+    The Go caller in internal/garmin/python.go scans for this marker; it is
+    best-effort, so a missing/malformed line must not break the sync.
+    """
     start_date = datetime.now() - timedelta(days=days)
 
     activities = client.get_activities_by_date(
@@ -180,16 +230,23 @@ def list_activities(client, days=30):
         datetime.now().strftime("%Y-%m-%d")
     )
 
-    water_activities = []
+    raw_type_keys = set()
+    name_matched_count = 0
+    out = []
     for activity in activities:
-        if not is_water_sport(activity):
-            continue
-        activity_type = activity.get("activityType", {}).get("typeKey", "")
-        water_activities.append({
+        atype = activity.get("activityType", {}) or {}
+        if t := atype.get("typeKey"):
+            raw_type_keys.add(t)
+        if not include_all:
+            if not is_water_sport(activity):
+                if not (match_by_name and name_matches_water_sport(activity)):
+                    continue
+                name_matched_count += 1
+        out.append({
             "id": activity["activityId"],
             "name": activity.get("activityName", "Unnamed"),
-            "type": activity_type,
-            "parent_type_id": activity.get("activityType", {}).get("parentTypeId"),
+            "type": atype.get("typeKey", ""),
+            "parent_type_id": atype.get("parentTypeId"),
             "date": activity.get("startTimeLocal", "")[:10],
             "start_time": activity.get("startTimeLocal", ""),
             "start_lat": activity.get("startLatitude", 0),
@@ -200,7 +257,16 @@ def list_activities(client, days=30):
             "distance": activity.get("distance", 0),
         })
 
-    return water_activities
+    print(
+        "DIAGNOSTICS: " + json.dumps({
+            "raw_count": len(activities),
+            "type_keys_seen": sorted(raw_type_keys),
+            "name_matched_count": name_matched_count,
+        }),
+        file=sys.stderr,
+    )
+
+    return out
 
 
 def fetch_gpx(client, activity_id, output_dir="."):
@@ -355,6 +421,15 @@ def main():
     list_parser = subparsers.add_parser("list", help="List water sport activities")
     list_parser.add_argument("--days", type=int, default=30, help="Number of days to look back (default: 30)")
     list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    list_parser.add_argument(
+        "--no-filter", action="store_true",
+        help="Return every activity (operator diagnostic mode, bypasses water-sport filter)",
+    )
+    list_parser.add_argument(
+        "--match-by-name", action="store_true",
+        help="Include activities whose name matches a water-sport keyword "
+             "(opt-in fallback for watches that record kayak as Sonstiges/Other)",
+    )
 
     # Fetch command
     fetch_parser = subparsers.add_parser("fetch", help="Fetch GPX for a specific activity")
@@ -392,7 +467,11 @@ def main():
     client = connect_garmin(config)
 
     if args.command == "list":
-        activities = list_activities(client, args.days)
+        activities = list_activities(
+            client, args.days,
+            include_all=args.no_filter,
+            match_by_name=args.match_by_name,
+        )
 
         if args.json:
             print(json.dumps(activities))

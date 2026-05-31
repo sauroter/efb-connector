@@ -120,37 +120,50 @@ type listActivityJSON struct {
 //
 // The days argument is derived from the difference between end and start,
 // rounded up to the nearest whole day.  A minimum of 1 day is always used.
+//
+// The Python script emits a single-line `DIAGNOSTICS: {...}` envelope on
+// stderr describing what Garmin returned *before* the water-sport filter
+// was applied (raw count + de-duplicated typeKeys). We extract it for
+// logging; failure to find or parse it is non-fatal.
 func (p *PythonGarminProvider) ListActivities(
 	ctx context.Context,
 	creds GarminCredentials,
 	start, end time.Time,
-) ([]Activity, error) {
+	opts ListOptions,
+) ([]Activity, ListDiagnostics, error) {
 	days := daysSpan(start, end)
 
-	stdout, stderr, err := p.run(ctx, creds,
+	args := []string{
 		"list",
 		"--days", strconv.Itoa(days),
 		"--json",
-	)
-	if err != nil {
-		return nil, classifyError(ctx, err, stderr)
 	}
+	if opts.MatchByName {
+		args = append(args, "--match-by-name")
+	}
+
+	stdout, stderr, err := p.run(ctx, creds, args...)
+	if err != nil {
+		return nil, ListDiagnostics{}, classifyError(ctx, err, stderr)
+	}
+
+	diag := parseListDiagnostics(stderr)
 
 	var raw []listActivityJSON
 	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
-		return nil, fmt.Errorf("garmin: failed to parse list output: %w\nstdout: %s", err, stdout)
+		return nil, diag, fmt.Errorf("garmin: failed to parse list output: %w\nstdout: %s", err, stdout)
 	}
 
 	activities := make([]Activity, 0, len(raw))
 	for _, r := range raw {
 		id, err := toStringID(r.ID)
 		if err != nil {
-			return nil, fmt.Errorf("garmin: unexpected activity id type: %w", err)
+			return nil, diag, fmt.Errorf("garmin: unexpected activity id type: %w", err)
 		}
 
 		date, err := time.Parse("2006-01-02", r.Date)
 		if err != nil {
-			return nil, fmt.Errorf("garmin: failed to parse activity date %q: %w", r.Date, err)
+			return nil, diag, fmt.Errorf("garmin: failed to parse activity date %q: %w", r.Date, err)
 		}
 
 		startTime := date // fallback to date-only
@@ -184,7 +197,93 @@ func (p *PythonGarminProvider) ListActivities(
 		}
 	}
 
-	return filtered, nil
+	return filtered, diag, nil
+}
+
+// ListActivitiesRaw runs `python <script> list --days <N> --no-filter --json`,
+// returning every activity Garmin reports (no water-sport filter). Used
+// by the operator-only /internal/admin/users/{id}/garmin/activities-raw
+// endpoint; not used by the sync engine.
+func (p *PythonGarminProvider) ListActivitiesRaw(
+	ctx context.Context,
+	creds GarminCredentials,
+	days int,
+) ([]Activity, ListDiagnostics, error) {
+	if days < 1 {
+		days = 1
+	}
+
+	stdout, stderr, err := p.run(ctx, creds,
+		"list",
+		"--days", strconv.Itoa(days),
+		"--no-filter",
+		"--json",
+	)
+	if err != nil {
+		return nil, ListDiagnostics{}, classifyError(ctx, err, stderr)
+	}
+
+	diag := parseListDiagnostics(stderr)
+
+	var raw []listActivityJSON
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		return nil, diag, fmt.Errorf("garmin: failed to parse raw list output: %w\nstdout: %s", err, stdout)
+	}
+
+	activities := make([]Activity, 0, len(raw))
+	for _, r := range raw {
+		id, err := toStringID(r.ID)
+		if err != nil {
+			return nil, diag, fmt.Errorf("garmin: unexpected activity id type: %w", err)
+		}
+
+		date, _ := time.Parse("2006-01-02", r.Date)
+		startTime := date
+		if r.StartTime != "" {
+			if st, err := time.Parse("2006-01-02 15:04:05", r.StartTime); err == nil {
+				startTime = st
+			}
+		}
+
+		activities = append(activities, Activity{
+			ProviderID:   id,
+			Name:         r.Name,
+			Type:         r.Type,
+			Date:         date,
+			StartTime:    startTime,
+			StartLat:     r.StartLat,
+			StartLng:     r.StartLng,
+			EndLat:       r.EndLat,
+			EndLng:       r.EndLng,
+			DurationSecs: r.Duration,
+			DistanceM:    r.Distance,
+		})
+	}
+	return activities, diag, nil
+}
+
+// parseListDiagnostics scans stderr for a `DIAGNOSTICS: <json>` line emitted
+// by garmin_fetch.py and returns its contents. Returns the zero value
+// silently if the marker is missing or malformed — diagnostics are
+// best-effort and must not break the sync.
+func parseListDiagnostics(stderr string) ListDiagnostics {
+	const marker = "DIAGNOSTICS: "
+	for _, line := range strings.Split(stderr, "\n") {
+		idx := strings.Index(line, marker)
+		if idx < 0 {
+			continue
+		}
+		payload := strings.TrimSpace(line[idx+len(marker):])
+		var out struct {
+			RawCount     int      `json:"raw_count"`
+			TypeKeysSeen []string `json:"type_keys_seen"`
+		}
+		if err := json.Unmarshal([]byte(payload), &out); err != nil {
+			return ListDiagnostics{}
+		}
+		return ListDiagnostics{RawCount: out.RawCount, TypeKeysSeen: out.TypeKeysSeen}
+	}
+	return ListDiagnostics{}
 }
 
 // DownloadGPX runs `python <script> fetch <activityID> --output <tempdir>`,

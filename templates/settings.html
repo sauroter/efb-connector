@@ -90,6 +90,18 @@
         </div>
       </div>
       {{end}}
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <strong>{{call .T "settings.match_by_name"}}</strong>
+          <small>{{call .T "settings.match_by_name_desc"}}</small>
+        </div>
+        <div class="settings-row-action">
+          <form method="post" action="/settings/match-by-name" style="margin: 0;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <input type="checkbox" name="enabled" value="1" role="switch" {{if .MatchByName}}checked{{end}} onchange="this.form.submit()" style="margin: 0;">
+          </form>
+        </div>
+      </div>
     </article>
 
     <div class="settings-group-label">{{call .T "settings.general"}}</div>

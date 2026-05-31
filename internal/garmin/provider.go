@@ -41,6 +41,34 @@ type GarminCredentials struct {
 	TokenStorePath string
 }
 
+// ListOptions are per-call preferences for ListActivities. Zero value
+// reproduces the strict-filter behaviour (water-sport typeKey / parent
+// id 228 only).
+type ListOptions struct {
+	// MatchByName, when true, also accepts activities whose Garmin
+	// activityName contains a water-sport keyword AND that sit under
+	// the generic-fitness parent (parent_type_id=17). Off by default;
+	// driven by users.match_by_name.
+	MatchByName bool
+}
+
+// ListDiagnostics carries observational data from a ListActivities call
+// that is useful for logging and operator-facing dashboards but is not
+// part of the (filtered) activity result. Implementations may return a
+// zero value if they cannot produce diagnostics — callers must tolerate
+// that.
+type ListDiagnostics struct {
+	// RawCount is the total number of activities returned by Garmin
+	// before any water-sport filtering, regardless of type.
+	RawCount int
+
+	// TypeKeysSeen is the de-duplicated set of `typeKey` strings
+	// observed before filtering, in alphabetical order. Used to
+	// surface "we saw cycling/running/other but no kayaking" hints to
+	// the user when a sync produces zero matching activities.
+	TypeKeysSeen []string
+}
+
 // Activity represents a single water-sport activity retrieved from Garmin
 // Connect.
 type Activity struct {
@@ -84,8 +112,19 @@ type Activity struct {
 // Implementations must be safe for concurrent use by multiple goroutines.
 type GarminProvider interface {
 	// ListActivities returns all water-sport activities for the given account
-	// that fall within the half-open interval [start, end).
-	ListActivities(ctx context.Context, creds GarminCredentials, start, end time.Time) ([]Activity, error)
+	// that fall within the half-open interval [start, end), plus diagnostic
+	// counts (raw pre-filter total, typeKeys seen) that are useful for
+	// logging when nothing matched. opts controls per-call filter
+	// preferences (e.g. name-based fallback). Zero ListOptions preserves
+	// the strict water-sport filter.
+	ListActivities(ctx context.Context, creds GarminCredentials, start, end time.Time, opts ListOptions) ([]Activity, ListDiagnostics, error)
+
+	// ListActivitiesRaw returns *every* activity Garmin reports for the
+	// account, with no water-sport filtering applied. It is intended for
+	// operator-only diagnostic use (e.g. answering "what activity types
+	// does this user have?" when a feedback ticket reports no imports).
+	// Implementations should not call this on the sync hot path.
+	ListActivitiesRaw(ctx context.Context, creds GarminCredentials, days int) ([]Activity, ListDiagnostics, error)
 
 	// DownloadGPX returns the raw GPX bytes for the activity identified by
 	// activityID (the value of Activity.ProviderID).

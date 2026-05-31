@@ -92,6 +92,17 @@ var En = map[string]string{
 	"dashboard.tracks_no_trips.body":    "Your last sync uploaded the Garmin tracks to EFB successfully, but no logbook entries (Fahrten) were created. The \"automatic trip creation\" option is disabled in your settings.",
 	"dashboard.tracks_no_trips.fix":     "Enable automatic trip creation",
 
+	// ── "No matching activities" hint banner ──
+	// Shown when the last sync ran cleanly but Garmin returned zero
+	// water-sport activities. The most common cause is the user recording
+	// kayaking under "Other" / "Cardio" on watches without a native kayak
+	// profile (e.g. Garmin Venu 3). types_seen_label is followed by a
+	// <code> listing of the typeKeys we actually saw.
+	"dashboard.no_activities_hint.heading":          "No matching activities found",
+	"dashboard.no_activities_hint.body":             "Your last sync finished cleanly, but Garmin Connect didn't return any kayaking, canoeing, SUP or rowing activities in your selected window. We only import activities tagged as one of these water sports in Garmin.",
+	"dashboard.no_activities_hint.types_seen_label": "Activity types we did see this run:",
+	"dashboard.no_activities_hint.howto":            "If you recorded a kayak trip but it's tagged as \"Other\" or \"Cardio\" in Garmin Connect, open the activity, tap the pencil icon, and change the activity type to Kajakfahren. The next sync will pick it up automatically.",
+
 	// ── Getting started ──
 	"setup.heading":            "Getting Started",
 	"setup.intro":              "Set up your account in four steps:",
@@ -138,24 +149,26 @@ var En = map[string]string{
 	"common.needs_reauth":   "Re-enter login",
 
 	// ── Settings ──
-	"settings.title":            "Settings — EFB Connector",
-	"settings.heading":          "Settings",
-	"settings.subtitle":         "Manage your connections and preferences.",
-	"settings.connections":      "Connections",
-	"settings.garmin":           "Garmin Connect",
-	"settings.efb":              "Kanu-EFB",
-	"settings.sync_prefs":       "Sync preferences",
-	"settings.auto_create":      "Auto-create trip entries",
-	"settings.auto_create_desc": "Create logbook entries (Fahrten) from synced tracks",
-	"settings.enrich":           "Enrich trip entries",
-	"settings.enrich_desc":      "Add river section, grade, and gauge data from Rivermap",
-	"settings.general":          "General",
-	"settings.language":         "Language",
-	"settings.language_desc":    "Choose your preferred language",
-	"settings.account":          "Account",
-	"settings.delete_account":   "Delete account",
-	"settings.delete_desc":      "Permanently remove your account and all data",
-	"settings.delete_confirm":   "Are you sure? This will permanently delete your account and all data. This cannot be undone.",
+	"settings.title":              "Settings — EFB Connector",
+	"settings.heading":            "Settings",
+	"settings.subtitle":           "Manage your connections and preferences.",
+	"settings.connections":        "Connections",
+	"settings.garmin":             "Garmin Connect",
+	"settings.efb":                "Kanu-EFB",
+	"settings.sync_prefs":         "Sync preferences",
+	"settings.auto_create":        "Auto-create trip entries",
+	"settings.auto_create_desc":   "Create logbook entries (Fahrten) from synced tracks",
+	"settings.enrich":             "Enrich trip entries",
+	"settings.enrich_desc":        "Add river section, grade, and gauge data from Rivermap",
+	"settings.match_by_name":      "Match \"Other\" activities by name",
+	"settings.match_by_name_desc": "Also include activities tagged \"Other\"/\"Cardio\" in Garmin if their name mentions Kajak/Kanu/SUP/Paddel/Rudern. Useful if your watch (e.g. Venu 3) doesn't have a native kayak activity profile.",
+	"settings.general":            "General",
+	"settings.language":           "Language",
+	"settings.language_desc":      "Choose your preferred language",
+	"settings.account":            "Account",
+	"settings.delete_account":     "Delete account",
+	"settings.delete_desc":        "Permanently remove your account and all data",
+	"settings.delete_confirm":     "Are you sure? This will permanently delete your account and all data. This cannot be undone.",
 
 	// ── Garmin settings ──
 	"garmin.title":             "Garmin Settings — EFB Connector",
@@ -297,4 +310,15 @@ var En = map[string]string{
 	"email.feedback.user_id_label":  "user #%d",
 	"email.feedback.category_label": "Category:",
 	"email.feedback.message_label":  "Message:",
+
+	// Diagnostics block auto-appended to feedback emails. `diag_activity_counts`
+	// is a format string: found=%d synced=%d skipped=%d failed=%d.
+	"email.feedback.diagnostics_heading":   "Diagnostics",
+	"email.feedback.diag_ok":               "ok",
+	"email.feedback.diag_invalid":          "credentials invalid",
+	"email.feedback.diag_no_credentials":   "not configured",
+	"email.feedback.diag_consent_required": "consent gate active",
+	"email.feedback.diag_last_sync":        "Last sync run",
+	"email.feedback.diag_no_syncs":         "No sync runs yet.",
+	"email.feedback.diag_activity_counts":  "found=%d synced=%d skipped=%d failed=%d",
 }
