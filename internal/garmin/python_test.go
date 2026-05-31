@@ -257,6 +257,37 @@ print(json.dumps([{
 	}
 }
 
+func TestParseListDiagnostics_RequiresLineStart(t *testing.T) {
+	// A Python traceback line that happens to contain the substring
+	// "DIAGNOSTICS: " mid-line must not be parsed as a real diagnostics
+	// envelope. The marker has to be the first non-whitespace token.
+	stderr := `Some debug output
+Traceback (most recent call last):
+  File "x.py", line 42, in <module>
+    raise ValueError("printing DIAGNOSTICS: {fake} for context")
+DIAGNOSTICS: {"raw_count": 5, "type_keys_seen": ["cycling"], "name_matched_count": 1}
+`
+
+	diag := parseListDiagnostics(stderr)
+	if diag.RawCount != 5 {
+		t.Errorf("RawCount = %d, want 5 (parser took the real line, not the traceback)", diag.RawCount)
+	}
+	if diag.NameMatchedCount != 1 {
+		t.Errorf("NameMatchedCount = %d, want 1", diag.NameMatchedCount)
+	}
+}
+
+func TestParseListDiagnostics_IgnoresInlineMarker(t *testing.T) {
+	// No real DIAGNOSTICS line at all — only an inline mention inside
+	// a traceback. Must return zero value, not fish out the inline JSON.
+	stderr := `raise ValueError("fake DIAGNOSTICS: {\"raw_count\": 999}")`
+
+	diag := parseListDiagnostics(stderr)
+	if diag.RawCount != 0 || diag.TypeKeysSeen != nil {
+		t.Errorf("expected zero diagnostics, got %+v", diag)
+	}
+}
+
 func TestListActivities_DiagnosticsParsedFromStderr(t *testing.T) {
 	dir := t.TempDir()
 	script := writeMockScript(t, dir, `
@@ -268,7 +299,7 @@ lp.add_argument("--days", type=int, default=30)
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 # Emit a diagnostics line on stderr alongside the (filtered) JSON list.
-print('DIAGNOSTICS: {"raw_count": 351, "type_keys_seen": ["cycling","other","running"]}', file=sys.stderr)
+print('DIAGNOSTICS: {"raw_count": 351, "type_keys_seen": ["cycling","other","running"], "name_matched_count": 2}', file=sys.stderr)
 print(json.dumps([]))
 `)
 
@@ -283,6 +314,9 @@ print(json.dumps([]))
 	}
 	if got, want := strings.Join(diag.TypeKeysSeen, ","), "cycling,other,running"; got != want {
 		t.Errorf("TypeKeysSeen = %v, want %s", diag.TypeKeysSeen, want)
+	}
+	if diag.NameMatchedCount != 2 {
+		t.Errorf("NameMatchedCount = %d, want 2", diag.NameMatchedCount)
 	}
 }
 

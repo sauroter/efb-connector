@@ -21,6 +21,7 @@ Credentials may also be supplied via stdin as a single JSON line:
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -76,17 +77,27 @@ LEGACY_WATER_SPORT_TYPES = {
     "whitewater_rafting_kayaking",
 }
 
-# Case-insensitive substring keywords used by the opt-in name-fallback.
-# Conservative on purpose — "paddel"/"paddle" are word fragments that
-# would also match e.g. "Stand-Up-Paddling-Workshop" (good) but not
-# "Schaufelradpaddler" (would, false-positive but rare). Acceptable
-# trade-off for an opt-in flag.
-WATER_SPORT_NAME_KEYWORDS = (
-    "kajak", "kayak",
-    "kanu", "canoe",
-    "paddel", "paddl",
-    "rudern", "rowing",
-    "sup ", " sup", " sup-", "stand-up", "stand up",
+# Case-insensitive whole-word patterns used by the opt-in name-fallback.
+# Word boundaries (\b) prevent false positives on substrings like
+# "support" or "supper" while still matching "SUP-Session" or "Münster
+# Kajak" anchored anywhere in the name. SUP needs a trailing \b too
+# because "support" / "supper" start with "sup" at a word boundary;
+# the other keywords work as prefixes (kajak → kajakfahren, paddl →
+# paddling/paddler). The hyphen-or-space alternation in
+# "stand[- ]?up[- ]?paddl" handles both German and English casings.
+#
+# Compiled once at module import — re.search is cheap, but doing it per
+# activity inside a hot loop is still wasteful if we're listing 365 days
+# of activities.
+WATER_SPORT_NAME_PATTERN = re.compile(
+    r"\b("
+    r"kajak|kayak|"
+    r"kanu|canoe|"
+    r"paddel|paddl|"
+    r"rudern|rowing|"
+    r"sup\b|stand[- ]?up[- ]?paddl"
+    r")",
+    re.IGNORECASE,
 )
 
 
@@ -101,15 +112,16 @@ def is_water_sport(activity):
 
 def name_matches_water_sport(activity):
     """Return True if the activity's name contains a water-sport keyword
-    AND it sits under the generic fitness parent (id 17). The parent guard
+    (matched at word boundaries — "support" / "supper" don't match) AND
+    it sits under the generic fitness parent (id 17). The parent guard
     prevents us from grabbing a "Paddel-Tennis" cycling activity by name."""
     parent_id = activity.get("activityType", {}).get("parentTypeId")
     if parent_id != GENERIC_FITNESS_PARENT_TYPE_ID:
         return False
-    name = (activity.get("activityName") or "").lower()
+    name = activity.get("activityName") or ""
     if not name:
         return False
-    return any(kw in name for kw in WATER_SPORT_NAME_KEYWORDS)
+    return WATER_SPORT_NAME_PATTERN.search(name) is not None
 
 
 def load_config():

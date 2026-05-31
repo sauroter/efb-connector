@@ -67,6 +67,15 @@ type ListDiagnostics struct {
 	// surface "we saw cycling/running/other but no kayaking" hints to
 	// the user when a sync produces zero matching activities.
 	TypeKeysSeen []string
+
+	// NameMatchedCount is the number of activities that were accepted
+	// *only* via the opt-in name-based fallback (ListOptions.MatchByName)
+	// — i.e. they failed the strict water-sport filter but their name
+	// contained a keyword and they sat under parent_type_id=17. Useful
+	// for telling users "your last sync recovered 2 mis-tagged activities;
+	// you should retag them in Garmin Connect for cleaner data".
+	// Always 0 when MatchByName was off.
+	NameMatchedCount int
 }
 
 // Activity represents a single water-sport activity retrieved from Garmin

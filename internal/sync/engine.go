@@ -323,6 +323,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		"count", len(activities),
 		"raw_count", diag.RawCount,
 		"type_keys_seen", diag.TypeKeysSeen,
+		"name_matched_count", diag.NameMatchedCount,
 	)
 
 	// Persist pre-filter diagnostics on the sync_run so the dashboard can

@@ -266,22 +266,31 @@ func (p *PythonGarminProvider) ListActivitiesRaw(
 // by garmin_fetch.py and returns its contents. Returns the zero value
 // silently if the marker is missing or malformed — diagnostics are
 // best-effort and must not break the sync.
+//
+// Requires the marker at the start of a (TrimSpaced) line, not anywhere
+// in it — guards against a Python traceback that happens to include the
+// substring "DIAGNOSTICS: " in its body being misparsed.
 func parseListDiagnostics(stderr string) ListDiagnostics {
 	const marker = "DIAGNOSTICS: "
 	for _, line := range strings.Split(stderr, "\n") {
-		idx := strings.Index(line, marker)
-		if idx < 0 {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, marker) {
 			continue
 		}
-		payload := strings.TrimSpace(line[idx+len(marker):])
+		payload := strings.TrimSpace(line[len(marker):])
 		var out struct {
-			RawCount     int      `json:"raw_count"`
-			TypeKeysSeen []string `json:"type_keys_seen"`
+			RawCount         int      `json:"raw_count"`
+			TypeKeysSeen     []string `json:"type_keys_seen"`
+			NameMatchedCount int      `json:"name_matched_count"`
 		}
 		if err := json.Unmarshal([]byte(payload), &out); err != nil {
 			return ListDiagnostics{}
 		}
-		return ListDiagnostics{RawCount: out.RawCount, TypeKeysSeen: out.TypeKeysSeen}
+		return ListDiagnostics{
+			RawCount:         out.RawCount,
+			TypeKeysSeen:     out.TypeKeysSeen,
+			NameMatchedCount: out.NameMatchedCount,
+		}
 	}
 	return ListDiagnostics{}
 }
