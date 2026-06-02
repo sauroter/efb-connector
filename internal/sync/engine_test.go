@@ -79,7 +79,10 @@ func (m *mockGarminProvider) DownloadGPX(_ context.Context, _ garmin.GarminCrede
 	if data, ok := m.gpxData[activityID]; ok {
 		return data, nil
 	}
-	return []byte(`<?xml version="1.0"?><gpx></gpx>`), nil
+	// Default GPX must contain at least one <trkpt> so the engine's
+	// empty-track guard (introduced for the EFB "XML-Fehler" fix)
+	// doesn't reclassify mock activities as no_track_points.
+	return []byte(`<?xml version="1.0"?><gpx><trk><trkseg><trkpt lat="0" lon="0"/></trkseg></trk></gpx>`), nil
 }
 
 func (m *mockGarminProvider) ValidateCredentials(_ context.Context, _ garmin.GarminCredentials) error {
@@ -1991,6 +1994,92 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	}
 	if res.Upload.BodySizeBytes != len(body) {
 		t.Errorf("BodySizeBytes = %d, want %d (full size)", res.Upload.BodySizeBytes, len(body))
+	}
+}
+
+func TestSyncUser_SkipsEmptyTrackGPX(t *testing.T) {
+	const stubGPX = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Garmin Connect" version="1.1"
+  xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>2026-01-21T13:12:16.000Z</time></metadata>
+  <trk><name>Kajakfahren</name><type>kayaking_v2</type><trkseg/></trk>
+</gpx>`
+
+	db := openTestDB(t)
+	user := setupUser(t, db)
+
+	// Mock EFB that fails the test if /interpretation/usersmap POST is hit
+	// — the engine must short-circuit before uploading an empty GPX.
+	var uploadAttempts atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "mock-session", Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			uploadAttempts.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Datenbank gespeichert"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	acts := makeActivities(2)
+	gp := &mockGarminProvider{
+		activities: acts,
+		gpxData: map[string][]byte{
+			acts[0].ProviderID: []byte(stubGPX), // empty track → must skip
+			// acts[1] falls through to the default non-empty GPX in the mock
+		},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	run, err := db.GetSyncRun(runID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("synced = %d, want 1 (only the non-empty activity)", run.ActivitiesSynced)
+	}
+	if run.ActivitiesSkipped != 1 {
+		t.Errorf("skipped = %d, want 1 (the empty-track activity)", run.ActivitiesSkipped)
+	}
+	if run.ActivitiesFailed != 0 {
+		t.Errorf("failed = %d, want 0 (no upload was attempted for the empty track)", run.ActivitiesFailed)
+	}
+	if got := uploadAttempts.Load(); got != 1 {
+		t.Errorf("EFB upload attempts = %d, want 1 (the empty-track activity must NOT be uploaded)", got)
+	}
+
+	status, err := db.GetActivityStatus(user.ID, acts[0].ProviderID)
+	if err != nil {
+		t.Fatalf("GetActivityStatus: %v", err)
+	}
+	if status != "no_track_points" {
+		t.Errorf("empty-track activity status = %q, want %q", status, "no_track_points")
+	}
+
+	// Second sync must remain idempotent: status stays no_track_points,
+	// no further uploads, counted as skipped.
+	beforeUploads := uploadAttempts.Load()
+	runID2, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("second SyncUser: %v", err)
+	}
+	run2, _ := db.GetSyncRun(runID2)
+	if run2.ActivitiesSkipped != 2 {
+		t.Errorf("second run skipped = %d, want 2 (empty-track + already-synced)", run2.ActivitiesSkipped)
+	}
+	if got := uploadAttempts.Load(); got != beforeUploads {
+		t.Errorf("second sync attempted %d new uploads, want 0", got-beforeUploads)
 	}
 }
 

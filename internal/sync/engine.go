@@ -376,6 +376,11 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			// Exhausted retries -- skip.
 			skipped++
 			continue
+		case "no_track_points":
+			// Garmin returned a GPX with no trkpt elements (activity
+			// recorded without GPS); nothing to upload. Don't retry.
+			skipped++
+			continue
 		case "failed":
 			// Eligible for retry only if in the failedSet (retry_count < 3).
 			if !failedSet[act.ProviderID] {
@@ -492,6 +497,21 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				s.checkAndMarkPermanentFailure(userID, act.garminID, log)
 			}
 			failed++
+			continue
+		}
+
+		// 7b. Skip activities Garmin returned without any GPS points.
+		// EFB's parser rejects empty tracks with a misleading
+		// "XML-Fehler" alert; classifying them here turns the silent
+		// rejection into a clean skip and stops the 3-retry storm.
+		if !garmin.HasTrackPoints(gpxData) {
+			log.Info("garmin returned GPX with no track points; skipping upload",
+				"gpx_size", len(gpxData),
+			)
+			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "no_track_points", "Garmin returned a GPX with no track points (activity recorded without GPS)"); recErr != nil {
+				log.Error("failed to record activity", "error", recErr)
+			}
+			skipped++
 			continue
 		}
 
