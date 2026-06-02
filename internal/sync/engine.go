@@ -4,6 +4,7 @@ package sync
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -689,10 +690,18 @@ func (s *SyncEngine) RecheckEFBConsent(ctx context.Context, userID int64) (bool,
 // DebugUploadResult is the dry-run output of [SyncEngine.DebugUploadOnce]:
 // the captured upload attempt for an admin to inspect without mutating any
 // DB state.
+//
+// GPXContentBase64 is populated only when DebugUploadOnce is called with
+// includeGPX=true. It is always base64-encoded so the bytes survive JSON
+// transit even when EFB's rejection turns out to be an encoding issue.
+// GPXTruncated reports whether the captured bytes were clipped to fit
+// MaxDebugGPXBytes; GPXSizeBytes always reports the full Garmin-side size.
 type DebugUploadResult struct {
 	UserID           int64               `json:"user_id"`
 	GarminActivityID string              `json:"garmin_activity_id"`
 	GPXSizeBytes     int                 `json:"gpx_size_bytes"`
+	GPXContentBase64 string              `json:"gpx_content_base64,omitempty"`
+	GPXTruncated     bool                `json:"gpx_truncated,omitempty"`
 	Upload           DebugUploadResponse `json:"upload"`
 }
 
@@ -715,6 +724,11 @@ type DebugUploadResponse struct {
 // the JSON payload stays bounded even if EFB hands back a huge page.
 const MaxDebugBodyBytes = 64 * 1024
 
+// MaxDebugGPXBytes caps the GPX content returned by DebugUploadOnce when
+// includeGPX is true. Typical Garmin kayak GPX files are well under this,
+// so truncation should be rare.
+const MaxDebugGPXBytes = 1 << 20 // 1 MiB
+
 // DebugUploadOnce performs a one-shot upload attempt for an admin debug
 // session. It logs in with the user's stored EFB credentials, downloads
 // the requested Garmin activity, performs the upload, and returns the
@@ -725,7 +739,11 @@ const MaxDebugBodyBytes = 64 * 1024
 // SyncDays window is used. Returns an error when login or GPX download
 // fails; HTTP-level outcomes (any status, including silent rejection)
 // are returned as a non-nil result with err == nil.
-func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID string) (*DebugUploadResult, error) {
+//
+// When includeGPX is true the returned result also carries the downloaded
+// GPX bytes (base64-encoded, capped at MaxDebugGPXBytes) so an operator
+// can inspect what Garmin emitted side-by-side with EFB's rejection.
+func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID string, includeGPX bool) (*DebugUploadResult, error) {
 	user, err := s.db.GetUserByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("debug-upload: get user: %w", err)
@@ -796,10 +814,23 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 	truncated := len(raw.Body) > MaxDebugBodyBytes
 	body := efb.TruncateUTF8(raw.Body, MaxDebugBodyBytes)
 
+	var gpxB64 string
+	var gpxTruncated bool
+	if includeGPX {
+		clipped := gpxData
+		if len(clipped) > MaxDebugGPXBytes {
+			clipped = clipped[:MaxDebugGPXBytes]
+			gpxTruncated = true
+		}
+		gpxB64 = base64.StdEncoding.EncodeToString(clipped)
+	}
+
 	return &DebugUploadResult{
 		UserID:           userID,
 		GarminActivityID: garminID,
 		GPXSizeBytes:     len(gpxData),
+		GPXContentBase64: gpxB64,
+		GPXTruncated:     gpxTruncated,
 		Upload: DebugUploadResponse{
 			RequestURL:            raw.RequestURL,
 			StatusCode:            raw.StatusCode,

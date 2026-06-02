@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1932,9 +1933,12 @@ func TestDebugUploadOnce_DryRunDoesNotMutate(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1")
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if res.GPXContentBase64 != "" {
+		t.Errorf("includeGPX=false must omit GPXContentBase64, got %d bytes", len(res.GPXContentBase64))
 	}
 	if res.UserID != user.ID || res.GarminActivityID != "act-1" {
 		t.Errorf("result identity wrong: %+v", res)
@@ -1975,7 +1979,7 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1")
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
 	}
@@ -1987,6 +1991,73 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	}
 	if res.Upload.BodySizeBytes != len(body) {
 		t.Errorf("BodySizeBytes = %d, want %d (full size)", res.Upload.BodySizeBytes, len(body))
+	}
+}
+
+func TestDebugUploadOnce_IncludeGPX(t *testing.T) {
+	const gpxBody = `<?xml version="1.0" encoding="UTF-8"?>` +
+		`<gpx version="1.1"><trk><name>kayak</name></trk></gpx>`
+	body := `<html><title>eFB</title><body>silent rejection page</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerSilentRejection(t, body)
+
+	gp := &mockGarminProvider{
+		activities: makeActivities(1),
+		gpxData:    map[string][]byte{"act-1": []byte(gpxBody)},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if res.GPXSizeBytes != len(gpxBody) {
+		t.Errorf("GPXSizeBytes = %d, want %d", res.GPXSizeBytes, len(gpxBody))
+	}
+	decoded, err := base64.StdEncoding.DecodeString(res.GPXContentBase64)
+	if err != nil {
+		t.Fatalf("decode GPXContentBase64: %v", err)
+	}
+	if string(decoded) != gpxBody {
+		t.Errorf("decoded GPX mismatch:\n got  %q\n want %q", decoded, gpxBody)
+	}
+	if res.GPXTruncated {
+		t.Error("GPXTruncated must be false for a small GPX")
+	}
+}
+
+func TestDebugUploadOnce_IncludeGPXTruncation(t *testing.T) {
+	gpxBody := []byte(strings.Repeat("x", MaxDebugGPXBytes+128))
+	body := `<html><title>eFB</title><body>ok</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerSilentRejection(t, body)
+
+	gp := &mockGarminProvider{
+		activities: makeActivities(1),
+		gpxData:    map[string][]byte{"act-1": gpxBody},
+	}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if res.GPXSizeBytes != len(gpxBody) {
+		t.Errorf("GPXSizeBytes = %d, want %d (full size)", res.GPXSizeBytes, len(gpxBody))
+	}
+	if !res.GPXTruncated {
+		t.Error("GPXTruncated must be true when GPX exceeds the cap")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(res.GPXContentBase64)
+	if err != nil {
+		t.Fatalf("decode GPXContentBase64: %v", err)
+	}
+	if len(decoded) != MaxDebugGPXBytes {
+		t.Errorf("decoded GPX size = %d, want %d", len(decoded), MaxDebugGPXBytes)
 	}
 }
 
