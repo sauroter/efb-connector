@@ -233,6 +233,11 @@ components:
         Output of POST /internal/admin/users/{id}/debug-upload — a one-shot
         dry-run EFB upload attempt that returns the raw response without
         mutating any database state.
+
+        When the request is made with `?include_gpx=1`, the captured GPX
+        bytes from Garmin are returned as base64 in `gpx_content_base64`
+        (capped at 1 MiB, with `gpx_truncated` reporting whether the cap
+        was hit).
       type: object
       properties:
         user_id:
@@ -242,6 +247,17 @@ components:
           type: string
         gpx_size_bytes:
           type: integer
+        gpx_content_base64:
+          type: string
+          description: |
+            Base64-encoded GPX bytes downloaded from Garmin. Only present
+            when the request was made with `?include_gpx=1`. Capped at
+            1 MiB after decode.
+        gpx_truncated:
+          type: boolean
+          description: |
+            True if `gpx_content_base64` was clipped to the 1 MiB cap.
+            `gpx_size_bytes` still reports the full pre-cap size.
         upload:
           $ref: "#/components/schemas/DebugUploadResponse"
       required: [user_id, garmin_activity_id, gpx_size_bytes, upload]
@@ -1385,6 +1401,16 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: include_gpx
+          in: query
+          required: false
+          description: |
+            When set to `1`, the captured GPX bytes from Garmin are
+            included on the response as base64 in `gpx_content_base64`.
+            Off by default to keep the payload bounded.
+          schema:
+            type: string
+            enum: ["1"]
       requestBody:
         required: false
         content:

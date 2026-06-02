@@ -242,13 +242,19 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	s.logger.Info("admin: debug upload", "user_id", userID, "garmin_activity_id", req.GarminActivityID)
+	includeGPX := r.URL.Query().Get("include_gpx") == "1"
+
+	s.logger.Info("admin: debug upload",
+		"user_id", userID,
+		"garmin_activity_id", req.GarminActivityID,
+		"include_gpx", includeGPX,
+	)
 
 	// Allow up to 90 s — login + Garmin download + EFB upload can be slow.
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	result, err := s.syncEngine.DebugUploadOnce(ctx, userID, req.GarminActivityID)
+	result, err := s.syncEngine.DebugUploadOnce(ctx, userID, req.GarminActivityID, includeGPX)
 	if err != nil {
 		s.logger.Error("admin: debug upload failed", "user_id", userID, "error", err)
 		w.Header().Set("Content-Type", "application/json")
