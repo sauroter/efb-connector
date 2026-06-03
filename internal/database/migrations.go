@@ -156,4 +156,16 @@ ALTER TABLE sync_runs ADD COLUMN name_matched_count INTEGER;`,
 	// its name. Users on watches without a native kayak profile (Garmin
 	// Venu 3 is the canonical case) opt in via the settings page.
 	`ALTER TABLE users ADD COLUMN match_by_name INTEGER NOT NULL DEFAULT 0;`,
+
+	// 0013 – per-user activity-type exclusion. excluded_activity_types is a
+	// JSON-encoded array of stable category keys (kayak, canoe, paddle,
+	// sup, rowing, whitewater) the user does NOT want synced to EFB.
+	// Default '[]' preserves today's behaviour (all water sports sync).
+	// Driven by the Wanderfahrerabzeichen use case: paddlers who also
+	// row need to exclude rowing so it doesn't pollute their paddle-km.
+	// excluded_count on sync_runs persists the per-run drop counter so
+	// the dashboard / admin sync-history can surface "X activities
+	// excluded by your filter" without re-running Garmin.
+	`ALTER TABLE users ADD COLUMN excluded_activity_types TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE sync_runs ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0;`,
 }

@@ -233,6 +233,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /settings/auto-create-trips", protect(s.handleAutoCreateTripsSave))
 	mux.Handle("POST /settings/enrich-trips", protect(s.handleEnrichTripsSave))
 	mux.Handle("POST /settings/match-by-name", protect(s.handleMatchByNameSave))
+	mux.Handle("POST /settings/activity-types", protect(s.handleExcludedActivityTypesSave))
 	mux.Handle("POST /settings/language", protect(s.handleLanguageSave))
 	mux.Handle("POST /setup/configure", protect(s.handleSetupConfigure))
 	mux.Handle("POST /account/delete", protect(s.handleAccountDelete))

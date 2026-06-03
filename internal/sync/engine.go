@@ -227,7 +227,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName)
+	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.ExcludedActivityTypes)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -289,7 +289,7 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool) (found, synced, skipped, failed, tripsCreated int, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, excludedCategories []string) (found, synced, skipped, failed, tripsCreated int, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -320,18 +320,43 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		return 0, 0, 0, 0, 0, fmt.Errorf("sync: list activities: %w", err)
 	}
 
+	// Apply the per-user activity-type exclusion (users.excluded_activity_types).
+	// Activities whose typeKey maps to an excluded category are dropped here,
+	// after Python's water-sport filter. Unknown typeKeys fall through
+	// untouched — see garmin.CategoryForTypeKey for the conservative default.
+	excludedCount := 0
+	if len(excludedCategories) > 0 {
+		excludedSet := make(map[string]struct{}, len(excludedCategories))
+		for _, c := range excludedCategories {
+			excludedSet[c] = struct{}{}
+		}
+		kept := activities[:0]
+		for _, act := range activities {
+			cat, known := garmin.CategoryForTypeKey(act.Type)
+			if known {
+				if _, drop := excludedSet[cat]; drop {
+					excludedCount++
+					continue
+				}
+			}
+			kept = append(kept, act)
+		}
+		activities = kept
+	}
+
 	log.Info("fetched garmin activities",
 		"count", len(activities),
 		"raw_count", diag.RawCount,
 		"type_keys_seen", diag.TypeKeysSeen,
 		"name_matched_count", diag.NameMatchedCount,
+		"excluded_count", excludedCount,
 	)
 
 	// Persist pre-filter diagnostics on the sync_run so the dashboard can
 	// later render a "we saw cycling/running but no kayaking" hint, and
 	// expose how many name-fallback recoveries happened this run, without
 	// re-running Garmin. Best-effort: a failure here doesn't abort the sync.
-	if recErr := s.db.RecordSyncDiagnostics(runID, diag.RawCount, diag.TypeKeysSeen, diag.NameMatchedCount); recErr != nil {
+	if recErr := s.db.RecordSyncDiagnostics(runID, diag.RawCount, diag.TypeKeysSeen, diag.NameMatchedCount, excludedCount); recErr != nil {
 		log.Warn("failed to record sync diagnostics", "error", recErr)
 	}
 

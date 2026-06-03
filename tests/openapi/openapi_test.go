@@ -37,6 +37,7 @@ var registeredRoutes = []string{
 	"POST /settings/auto-create-trips",
 	"POST /settings/enrich-trips",
 	"POST /settings/match-by-name",
+	"POST /settings/activity-types",
 	"POST /settings/language",
 	"POST /setup/configure",
 	"POST /account/delete",

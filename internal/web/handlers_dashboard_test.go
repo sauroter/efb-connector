@@ -120,7 +120,7 @@ func TestDashboard_ShowsNoActivitiesHintAfterCleanZeroRun(t *testing.T) {
 	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
 		t.Fatalf("UpdateSyncRun: %v", err)
 	}
-	if err := h.db.RecordSyncDiagnostics(runID, 12, []string{"cycling", "other", "running"}, 0); err != nil {
+	if err := h.db.RecordSyncDiagnostics(runID, 12, []string{"cycling", "other", "running"}, 0, 0); err != nil {
 		t.Fatalf("RecordSyncDiagnostics: %v", err)
 	}
 
