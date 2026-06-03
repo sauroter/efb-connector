@@ -102,6 +102,26 @@
           </form>
         </div>
       </div>
+      <div class="settings-row" style="flex-direction: column; align-items: stretch;">
+        <div class="settings-row-info" style="margin-bottom: 0.5rem;">
+          <strong>{{call .T "settings.activity_types"}}</strong>
+          <small>{{call .T "settings.activity_types_desc"}}</small>
+        </div>
+        <form method="post" action="/settings/activity-types" style="margin: 0;">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-bottom: 0.75rem;">
+            {{range .ActivityTypeFilters}}
+            <label style="display: inline-flex; align-items: center; gap: 0.4rem; margin: 0;">
+              <input type="checkbox" name="category" value="{{.Key}}" {{if .Checked}}checked{{end}} style="margin: 0;">
+              {{call $.T (printf "activity_type.%s" .Key)}}
+            </label>
+            {{end}}
+          </div>
+          <button type="submit" class="outline secondary" style="margin: 0; padding: 0.3em 0.8em; font-size: 0.85em;">
+            {{call .T "settings.activity_types_save"}}
+          </button>
+        </form>
+      </div>
     </article>
 
     <div class="settings-group-label">{{call .T "settings.general"}}</div>

@@ -908,6 +908,44 @@ paths:
         "303":
           description: Redirect to /settings or /dashboard
 
+  /settings/activity-types:
+    post:
+      tags: [Dashboard]
+      summary: Save per-user activity-type filter
+      description: |
+        Per-user filter for which water-sport categories the sync engine
+        uploads to EFB. The form posts one `category` field per CHECKED
+        box (= category the user wants synced); the server inverts that
+        against the known category list (kayak, canoe, paddle, sup, rowing,
+        whitewater) to derive the excluded set persisted on
+        users.excluded_activity_types.
+
+        Unknown category values are ignored. Posting no `category` fields
+        excludes every known category — the user still has to disable
+        sync_enabled to stop syncing entirely.
+      operationId: postActivityTypes
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                category:
+                  type: array
+                  items:
+                    type: string
+                    enum: [kayak, canoe, paddle, sup, rowing, whitewater]
+                  description: Repeated for each CHECKED category. Absent values are treated as excluded.
+                csrf_token:
+                  type: string
+              required: [csrf_token]
+      responses:
+        "303":
+          description: Redirect to /settings
+
   /settings/language:
     post:
       tags: [Dashboard]
