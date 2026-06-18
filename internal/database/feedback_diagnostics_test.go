@@ -14,7 +14,7 @@ func TestRecordSyncDiagnostics_RoundTrip(t *testing.T) {
 	}
 
 	keys := []string{"cycling", "other", "running"}
-	if err := db.RecordSyncDiagnostics(runID, 351, keys, 2); err != nil {
+	if err := db.RecordSyncDiagnostics(runID, 351, keys, 2, 1); err != nil {
 		t.Fatalf("RecordSyncDiagnostics: %v", err)
 	}
 
@@ -31,6 +31,9 @@ func TestRecordSyncDiagnostics_RoundTrip(t *testing.T) {
 	if r.NameMatchedCount != 2 {
 		t.Errorf("NameMatchedCount = %d, want 2", r.NameMatchedCount)
 	}
+	if r.ExcludedCount != 1 {
+		t.Errorf("ExcludedCount = %d, want 1", r.ExcludedCount)
+	}
 }
 
 func TestRecordSyncDiagnostics_NilTypeKeysWritesNull(t *testing.T) {
@@ -42,7 +45,7 @@ func TestRecordSyncDiagnostics_NilTypeKeysWritesNull(t *testing.T) {
 	u, _ := db.CreateUser("diag-nil@example.com")
 	runID, _ := db.CreateSyncRun(u.ID, "scheduled")
 
-	if err := db.RecordSyncDiagnostics(runID, 0, nil, 0); err != nil {
+	if err := db.RecordSyncDiagnostics(runID, 0, nil, 0, 0); err != nil {
 		t.Fatalf("RecordSyncDiagnostics: %v", err)
 	}
 	r, _ := db.GetSyncRun(runID)
@@ -51,6 +54,9 @@ func TestRecordSyncDiagnostics_NilTypeKeysWritesNull(t *testing.T) {
 	}
 	if r.NameMatchedCount != 0 {
 		t.Errorf("NameMatchedCount = %d, want 0", r.NameMatchedCount)
+	}
+	if r.ExcludedCount != 0 {
+		t.Errorf("ExcludedCount = %d, want 0", r.ExcludedCount)
 	}
 }
 

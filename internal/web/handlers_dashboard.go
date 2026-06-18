@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/garmin"
 )
 
 // handleDashboard renders the main dashboard showing connection status, last
@@ -193,19 +194,33 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		efbInvalid = !valid
 	}
 
+	excludedSet := make(map[string]bool, len(user.ExcludedActivityTypes))
+	for _, c := range user.ExcludedActivityTypes {
+		excludedSet[c] = true
+	}
+	type activityTypeFilter struct {
+		Key     string
+		Checked bool
+	}
+	filters := make([]activityTypeFilter, 0, len(garmin.KnownCategories))
+	for _, cat := range garmin.KnownCategories {
+		filters = append(filters, activityTypeFilter{Key: cat, Checked: !excludedSet[cat]})
+	}
+
 	s.render(w, r, "settings.html", map[string]any{
-		"Flash":           flash(w, r),
-		"CSRFToken":       s.auth.CSRFToken(r),
-		"User":            user,
-		"GarminConnected": garminConnected,
-		"GarminInvalid":   garminInvalid,
-		"GarminEmail":     garminEmail,
-		"EFBConnected":    efbConnected,
-		"EFBInvalid":      efbInvalid,
-		"EFBUsername":     efbUsername,
-		"AutoCreateTrips": user.AutoCreateTrips,
-		"EnrichTrips":     user.EnrichTrips,
-		"MatchByName":     user.MatchByName,
+		"Flash":               flash(w, r),
+		"CSRFToken":           s.auth.CSRFToken(r),
+		"User":                user,
+		"GarminConnected":     garminConnected,
+		"GarminInvalid":       garminInvalid,
+		"GarminEmail":         garminEmail,
+		"EFBConnected":        efbConnected,
+		"EFBInvalid":          efbInvalid,
+		"EFBUsername":         efbUsername,
+		"AutoCreateTrips":     user.AutoCreateTrips,
+		"EnrichTrips":         user.EnrichTrips,
+		"MatchByName":         user.MatchByName,
+		"ActivityTypeFilters": filters,
 	})
 }
 
@@ -351,6 +366,50 @@ func (s *Server) handleMatchByNameSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// handleExcludedActivityTypesSave saves the per-user activity-type
+// exclusion list (users.excluded_activity_types, migration 0013). The form
+// posts one `category` field per CHECKED box (= category the user wants
+// synced); we invert that to derive the excluded set so the on-the-wire
+// representation matches the user's mental model and "all unchecked"
+// degrades naturally into "exclude everything".
+func (s *Server) handleExcludedActivityTypesSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	keptSet := make(map[string]bool)
+	for _, v := range r.Form["category"] {
+		if !garmin.IsKnownCategory(v) {
+			s.logger.Warn("ignoring unknown activity-type category", "user_id", userID, "value", v)
+			continue
+		}
+		keptSet[v] = true
+	}
+
+	excluded := make([]string, 0)
+	for _, cat := range garmin.KnownCategories {
+		if !keptSet[cat] {
+			excluded = append(excluded, cat)
+		}
+	}
+
+	if err := s.db.UpdateExcludedActivityTypes(userID, excluded); err != nil {
+		s.logger.Error("failed to update excluded_activity_types", "user_id", userID, "error", err)
+		setFlash(w, "flash.save_setting_failed")
+	}
+
+	s.logger.Info("excluded_activity_types updated", "user_id", userID, "excluded", excluded)
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 // handleAccountDelete deletes the user and all associated data, then redirects
