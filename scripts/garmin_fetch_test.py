@@ -13,7 +13,9 @@ or simply:
     make test-python
 """
 
+import tempfile
 import unittest
+from unittest import mock
 
 from scripts import garmin_fetch as gf
 
@@ -177,6 +179,63 @@ class ListActivitiesFilteringTest(unittest.TestCase):
             include_all=True,
         )
         self.assertEqual([a["id"] for a in out], [1, 2, 3])
+
+
+class _FakeAuthError(Exception):
+    """Stand-in for garminconnect.GarminConnectAuthenticationError."""
+
+
+class ConnectGarminProfileToleranceTest(unittest.TestCase):
+    """connect_garmin must not let non-essential post-auth metadata fetches
+    (social profile, user settings) abort the run. Token auth has already
+    succeeded by the time those fire, and efb-connector uses none of that
+    metadata to list activities. Genuine auth failures must still abort."""
+
+    def _run_connect(self, login_side_effect):
+        """Drive connect_garmin with a fake client whose login() raises
+        login_side_effect (an exception instance) or succeeds (None).
+        Returns (result_or_None, fake_client)."""
+        fake_client = mock.Mock(name="GarminClient")
+        fake_client.login.side_effect = login_side_effect
+        fake_garmin = mock.Mock(return_value=fake_client)
+        with tempfile.TemporaryDirectory() as tokenstore:
+            with mock.patch.object(
+                gf, "_import_garmin", return_value=(fake_garmin, _FakeAuthError)
+            ), mock.patch.object(
+                gf,
+                "get_credentials_from_stdin",
+                return_value=("e@example.com", "pw", tokenstore),
+            ):
+                return gf.connect_garmin({}), fake_client
+
+    def test_tolerates_social_profile_failure(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Failed to retrieve social profile")
+        )
+        self.assertIs(result, client)
+
+    def test_tolerates_invalid_profile_data(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Invalid profile data found")
+        )
+        self.assertIs(result, client)
+
+    def test_tolerates_user_settings_failure(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Failed to retrieve user settings")
+        )
+        self.assertIs(result, client)
+
+    def test_reraises_genuine_auth_failure(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run_connect(
+                _FakeAuthError("Authentication failed (401 Unauthorized)")
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_successful_login_returns_client(self):
+        result, client = self._run_connect(None)
+        self.assertIs(result, client)
 
 
 if __name__ == "__main__":
