@@ -13,7 +13,12 @@ or simply:
     make test-python
 """
 
+import contextlib
+import io
+import json
+import tempfile
 import unittest
+from unittest import mock
 
 from scripts import garmin_fetch as gf
 
@@ -177,6 +182,115 @@ class ListActivitiesFilteringTest(unittest.TestCase):
             include_all=True,
         )
         self.assertEqual([a["id"] for a in out], [1, 2, 3])
+
+
+class _FakeAuthError(Exception):
+    """Stand-in for garminconnect.GarminConnectAuthenticationError."""
+
+
+class ConnectGarminProfileToleranceTest(unittest.TestCase):
+    """connect_garmin must not let non-essential post-auth metadata fetches
+    (social profile, user settings) abort the run. Token auth has already
+    succeeded by the time those fire, and efb-connector uses none of that
+    metadata to list activities. Genuine auth failures must still abort."""
+
+    def _run_connect(self, login_side_effect):
+        """Drive connect_garmin with a fake client whose login() raises
+        login_side_effect (an exception instance) or succeeds (None).
+        Returns (result_or_None, fake_client)."""
+        fake_client = mock.Mock(name="GarminClient")
+        fake_client.login.side_effect = login_side_effect
+        fake_garmin = mock.Mock(return_value=fake_client)
+        with tempfile.TemporaryDirectory() as tokenstore:
+            with mock.patch.object(
+                gf, "_import_garmin", return_value=(fake_garmin, _FakeAuthError)
+            ), mock.patch.object(
+                gf,
+                "get_credentials_from_stdin",
+                return_value=("e@example.com", "pw", tokenstore),
+            ):
+                return gf.connect_garmin({}), fake_client
+
+    def test_tolerates_social_profile_failure(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Failed to retrieve social profile")
+        )
+        self.assertIs(result, client)
+
+    def test_tolerates_invalid_profile_data(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Invalid profile data found")
+        )
+        self.assertIs(result, client)
+
+    def test_tolerates_user_settings_failure(self):
+        result, client = self._run_connect(
+            _FakeAuthError("Failed to retrieve user settings")
+        )
+        self.assertIs(result, client)
+
+    def test_reraises_genuine_auth_failure(self):
+        with self.assertRaises(SystemExit) as cm:
+            self._run_connect(
+                _FakeAuthError("Authentication failed (401 Unauthorized)")
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_non_auth_exception_propagates_despite_tolerated_message(self):
+        # Tolerance is gated on the exception *type* (auth_error_cls), not the
+        # message. A rate-limit error is a sibling class, not an auth error, so
+        # even a message that would otherwise match must still abort. This locks
+        # in that GarminConnectTooManyRequestsError can never be swallowed.
+        class _FakeRateLimitError(Exception):
+            pass
+
+        with self.assertRaises(SystemExit) as cm:
+            self._run_connect(_FakeRateLimitError("social profile (429)"))
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_successful_login_returns_client(self):
+        result, client = self._run_connect(None)
+        self.assertIs(result, client)
+
+
+class ValidateCredentialsProfileToleranceTest(unittest.TestCase):
+    """validate_credentials must agree with what sync needs: a non-essential
+    profile/settings fetch failure is still a valid credential (matching the
+    MFA validation path, which never raises for these)."""
+
+    def _run_validate(self, login_side_effect):
+        """Drive validate_credentials with a fake client. Returns
+        (exit_code, parsed_stdout_json)."""
+        fake_client = mock.Mock(name="GarminClient")
+        fake_client.login.side_effect = login_side_effect
+        fake_garmin = mock.Mock(return_value=fake_client)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tokenstore:
+            with mock.patch.object(
+                gf, "_import_garmin", return_value=(fake_garmin, _FakeAuthError)
+            ), mock.patch.object(
+                gf,
+                "get_credentials_from_stdin",
+                return_value=("e@example.com", "pw", tokenstore),
+            ), contextlib.redirect_stdout(out):
+                with self.assertRaises(SystemExit) as cm:
+                    gf.validate_credentials({})
+        code = cm.exception.code
+        payload = json.loads(out.getvalue()) if out.getvalue().strip() else {}
+        return code, payload
+
+    def test_social_profile_failure_is_valid(self):
+        code, payload = self._run_validate(
+            _FakeAuthError("Failed to retrieve social profile")
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(payload.get("status"), "ok")
+
+    def test_genuine_auth_failure_is_invalid(self):
+        code, _ = self._run_validate(
+            _FakeAuthError("Authentication failed (401 Unauthorized)")
+        )
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

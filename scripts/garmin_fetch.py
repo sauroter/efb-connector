@@ -216,6 +216,48 @@ def get_tokenstore_path():
     return str(Path.home() / ".config" / "efb-connector" / "garmin_tokens")
 
 
+def _is_optional_profile_error(exc):
+    """True if exc is a non-fatal post-authentication metadata failure.
+
+    After token auth succeeds, garminconnect's login() fetches the social
+    profile (display name) and user settings (unit system) — neither of which
+    efb-connector uses for listing or uploading activities. For some accounts
+    those endpoints fail persistently, and they are occasionally flaky for
+    everyone; the library turns that into a fatal GarminConnectAuthenticationError
+    that would otherwise block every sync. The MFA validation path
+    (return_on_mfa=True) already returns before these fetches run, so tolerating
+    them here keeps every code path consistent.
+
+    Genuine auth failures (401/MFA/rate-limit) carry different messages and are
+    not matched, so they still propagate.
+    """
+    msg = str(exc).lower()
+    return any(
+        marker in msg
+        for marker in (
+            "social profile",
+            "invalid profile data",
+            "user settings",
+        )
+    )
+
+
+def _login_tolerating_profile(client, tokenstore, auth_error_cls):
+    """Run client.login(tokenstore=...), tolerating non-fatal post-auth
+    metadata failures (see _is_optional_profile_error). Token authentication
+    has already completed when those fire, so the client remains usable."""
+    try:
+        client.login(tokenstore=tokenstore)
+    except auth_error_cls as e:
+        if not _is_optional_profile_error(e):
+            raise
+        print(
+            f"Warning: {e}; continuing (token auth succeeded, "
+            "profile/settings metadata is unused)",
+            file=sys.stderr,
+        )
+
+
 def connect_garmin(config):
     """Connect to Garmin and return client."""
     email, password, tokenstore = get_credentials_from_stdin()
@@ -224,11 +266,11 @@ def connect_garmin(config):
     if not tokenstore:
         tokenstore = get_tokenstore_path()
 
-    Garmin, _ = _import_garmin()
+    Garmin, GarminConnectAuthenticationError = _import_garmin()
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
-        client.login(tokenstore=tokenstore)
+        _login_tolerating_profile(client, tokenstore, GarminConnectAuthenticationError)
         return client
     except Exception as e:
         print(f"Error connecting to Garmin: {e}", file=sys.stderr)
@@ -337,7 +379,7 @@ def validate_credentials(config):
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password)
-        client.login(tokenstore=tokenstore)
+        _login_tolerating_profile(client, tokenstore, GarminConnectAuthenticationError)
         print(json.dumps({"status": "ok"}))
         sys.exit(0)
     except GarminConnectAuthenticationError as e:
