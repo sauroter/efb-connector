@@ -13,6 +13,9 @@ or simply:
     make test-python
 """
 
+import contextlib
+import io
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -233,9 +236,61 @@ class ConnectGarminProfileToleranceTest(unittest.TestCase):
             )
         self.assertEqual(cm.exception.code, 1)
 
+    def test_non_auth_exception_propagates_despite_tolerated_message(self):
+        # Tolerance is gated on the exception *type* (auth_error_cls), not the
+        # message. A rate-limit error is a sibling class, not an auth error, so
+        # even a message that would otherwise match must still abort. This locks
+        # in that GarminConnectTooManyRequestsError can never be swallowed.
+        class _FakeRateLimitError(Exception):
+            pass
+
+        with self.assertRaises(SystemExit) as cm:
+            self._run_connect(_FakeRateLimitError("social profile (429)"))
+        self.assertEqual(cm.exception.code, 1)
+
     def test_successful_login_returns_client(self):
         result, client = self._run_connect(None)
         self.assertIs(result, client)
+
+
+class ValidateCredentialsProfileToleranceTest(unittest.TestCase):
+    """validate_credentials must agree with what sync needs: a non-essential
+    profile/settings fetch failure is still a valid credential (matching the
+    MFA validation path, which never raises for these)."""
+
+    def _run_validate(self, login_side_effect):
+        """Drive validate_credentials with a fake client. Returns
+        (exit_code, parsed_stdout_json)."""
+        fake_client = mock.Mock(name="GarminClient")
+        fake_client.login.side_effect = login_side_effect
+        fake_garmin = mock.Mock(return_value=fake_client)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tokenstore:
+            with mock.patch.object(
+                gf, "_import_garmin", return_value=(fake_garmin, _FakeAuthError)
+            ), mock.patch.object(
+                gf,
+                "get_credentials_from_stdin",
+                return_value=("e@example.com", "pw", tokenstore),
+            ), contextlib.redirect_stdout(out):
+                with self.assertRaises(SystemExit) as cm:
+                    gf.validate_credentials({})
+        code = cm.exception.code
+        payload = json.loads(out.getvalue()) if out.getvalue().strip() else {}
+        return code, payload
+
+    def test_social_profile_failure_is_valid(self):
+        code, payload = self._run_validate(
+            _FakeAuthError("Failed to retrieve social profile")
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(payload.get("status"), "ok")
+
+    def test_genuine_auth_failure_is_invalid(self):
+        code, _ = self._run_validate(
+            _FakeAuthError("Authentication failed (401 Unauthorized)")
+        )
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":
