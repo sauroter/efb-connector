@@ -1019,6 +1019,15 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 	return s.SyncUsers(ctx, users, workers, onProgress)
 }
 
+// performedEFBLogin reports whether a finished user sync reached the EFB
+// upload phase (and thus logged into the portal). doSync sets
+// found = len(toSync) + skipped and only calls efbClient.Login when
+// len(toSync) > 0, so found > skipped iff a login was attempted. The
+// inter-user pacing exists solely to throttle EFB logins under the portal's
+// per-IP rate limit, so users that did no upload work (the common nightly
+// case: nothing new since yesterday) don't need to be paced.
+func performedEFBLogin(r UserSyncResult) bool { return r.Found > r.Skipped }
+
 // pacingDelay returns the wait time between users in SyncUsers: interUserPacing
 // plus up to 20% random jitter, so the bulk run doesn't drive EFB's per-IP
 // counter on a perfectly regular clock. Returns 0 when interUserPacing is 0
@@ -1142,12 +1151,20 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				results <- indexedResult{result: result}
 
 				// Pace inter-user EFB logins to stay under the
-				// portal's per-IP rate limit. Skipped if the run is
-				// being cancelled.
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(s.pacingDelay()):
+				// portal's per-IP rate limit — but only after a user
+				// that actually logged in. Users with nothing new to
+				// upload (the common nightly case) return from doSync
+				// before any EFB login, so pacing them is pure dead
+				// time and makes the bulk run scale with total users
+				// rather than active ones. Skipped if the run is being
+				// cancelled; the top-of-loop ctx check stops a
+				// cancelled run promptly even when we don't pace.
+				if performedEFBLogin(result) {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(s.pacingDelay()):
+					}
 				}
 			}
 		}()

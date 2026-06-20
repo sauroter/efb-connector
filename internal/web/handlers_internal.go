@@ -14,12 +14,15 @@ import (
 )
 
 // runAllTimeout caps how long a single fire-and-forget run-all execution
-// may take server-side. Sized for the ~30s/user pacing in SyncUsers: with
-// ~113 syncable users plus per-user EFB+Garmin work a clean run is ~70-80
-// min, and a single absorbed rate-limit hit adds another 30 min. 120 min
-// covers the absorbed-backoff path end-to-end so we don't lose the tail
-// of a recoverable run; matches the GitHub Action poll deadline.
-const runAllTimeout = 120 * time.Minute
+// may take server-side. SyncUsers now only applies the ~30s inter-user
+// pacing after users that actually logged into EFB, so a clean run scales
+// with active users (those with new activities) rather than the full
+// syncable set — typically well under an hour. The headroom here is a
+// safety margin: it covers a heavy night (many active users) plus a single
+// absorbed 30-min rate-limit backoff, and absorbs a transient mid-run Fly
+// machine suspend without losing the tail of a recoverable run. Matches the
+// GitHub Action poll deadline.
+const runAllTimeout = 180 * time.Minute
 
 // requireInternalAuth checks the Authorization: Bearer <INTERNAL_SECRET> header.
 // Returns true if authorized, false (and writes 401) if not.

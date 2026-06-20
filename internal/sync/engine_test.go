@@ -857,6 +857,81 @@ func TestSyncEngine_pacingDelay(t *testing.T) {
 	}
 }
 
+// performedEFBLogin gates the inter-user pacing: only users that actually
+// reached the EFB upload phase (found > skipped) need throttling. A user with
+// no new activities (found == skipped == 0, or all already-synced) never logs
+// in, so it must not be paced.
+func TestPerformedEFBLogin(t *testing.T) {
+	cases := []struct {
+		name  string
+		found int
+		skip  int
+		want  bool
+	}{
+		{"no activities at all", 0, 0, false},
+		{"all already synced/skipped", 3, 3, false},
+		{"some new uploads", 3, 1, true},
+		{"single new upload", 1, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := performedEFBLogin(UserSyncResult{Found: tc.found, Skipped: tc.skip})
+			if got != tc.want {
+				t.Errorf("performedEFBLogin(found=%d, skipped=%d) = %v; want %v",
+					tc.found, tc.skip, got, tc.want)
+			}
+		})
+	}
+}
+
+// SyncUsers must NOT apply the inter-user pacing to users with no new
+// activities (they never log into EFB). With a real 30s pacing configured but
+// a short context, a run of no-activity users completes fully and quickly;
+// before the fix the unconditional pacing would block on the first user until
+// the context deadline, leaving most users unprocessed.
+func TestSyncUsers_SkipsPacingForNoActivityUsers(t *testing.T) {
+	db := openTestDB(t)
+
+	var users []database.User
+	for i := 1; i <= 4; i++ {
+		u, err := db.CreateUser(fmt.Sprintf("noact-user-%d@example.com", i))
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := db.SaveGarminCredentials(u.ID, fmt.Sprintf("g%d@example.com", i), "gp"); err != nil {
+			t.Fatalf("SaveGarminCredentials: %v", err)
+		}
+		if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+			t.Fatalf("SaveEFBCredentials: %v", err)
+		}
+		users = append(users, *u)
+	}
+
+	srv := newMockEFBServer(t)
+
+	// Zero activities → each user returns from doSync before any EFB login.
+	gp := &mockGarminProvider{activities: nil}
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger(), WithInterUserPacing(30*time.Second))
+
+	// Generous relative to four instant no-op syncs, but a tiny fraction of
+	// even a single 30s pace — so the test fails fast if pacing is applied.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := engine.SyncUsers(ctx, users, 1, nil); err != nil {
+		t.Fatalf("SyncUsers returned error (pacing likely applied, hit deadline): %v", err)
+	}
+
+	for i, u := range users {
+		hist, _ := db.GetSyncHistory(u.ID, 1)
+		if len(hist) == 0 {
+			t.Fatalf("user %d (idx %d) has no sync_run — not processed before deadline", u.ID, i)
+		}
+	}
+}
+
 // Stuck is_valid=0 from a past transient failure must self-heal once auth succeeds again.
 func TestSyncUser_RevalidatesStuckCredentialsOnSuccess(t *testing.T) {
 	db := openTestDB(t)
