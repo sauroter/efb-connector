@@ -31,12 +31,21 @@ jobs:
           # for the Fly machine (idle_timeout = 300s) and as a watchdog: if
           # the goroutine restarts (e.g. server crashed mid-run), we'll see
           # started_at change and surface that as a failure.
-          DEADLINE=$(( $(date +%s) + 7200 ))   # 120 min cap, matches server timeout
+          DEADLINE=$(( $(date +%s) + 10800 ))   # 180 min cap, matches server runAllTimeout
           STATUS=""
           STARTED_AT_FIRST=""
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
             sleep 30
-            STATUS=$(curl -fsS -H "$AUTH" "$BASE/internal/sync/run-all/status")
+            # --max-time caps each poll so a suspended/unreachable machine
+            # fails the poll fast and we re-loop, instead of one curl hanging
+            # silently for minutes (which once masked a ~16 min mid-run Fly
+            # suspend). || true keeps set -e from aborting the whole job on a
+            # transient blip; an empty STATUS just retries on the next tick.
+            STATUS=$(curl -fsS --max-time 60 -H "$AUTH" "$BASE/internal/sync/run-all/status" || true)
+            if [ -z "$STATUS" ]; then
+              echo "status poll failed or timed out; retrying"
+              continue
+            fi
             echo "$STATUS"
 
             STARTED_AT=$(echo "$STATUS" | jq -r '.started_at // empty')

@@ -857,6 +857,101 @@ func TestSyncEngine_pacingDelay(t *testing.T) {
 	}
 }
 
+// syncUserReportingLogin must report loggedIn=true whenever the EFB login
+// endpoint was hit — including the case where every queued activity is then
+// skipped as no_track_points (a post-login skip that makes found==skipped).
+// This is the signal the bulk runner uses to gate inter-user pacing; a
+// false-negative here would skip pacing right after a real login and risk the
+// per-IP rate limit. A user with no new activities never logs in → false.
+func TestSyncUserReportingLogin_LoginSignal(t *testing.T) {
+	// GPX with no <trkpt> — HasTrackPoints returns false, so the upload loop
+	// classifies it as no_track_points and increments skipped after login.
+	pointlessGPX := []byte(`<?xml version="1.0"?><gpx></gpx>`)
+
+	cases := []struct {
+		name       string
+		activities []garmin.Activity
+		gpx        map[string][]byte
+		wantLogin  bool
+	}{
+		{"no activities -> no login", nil, nil, false},
+		{"activities with track points -> login", makeActivities(1), nil, true},
+		{
+			"all activities no track points -> login still happened",
+			makeActivities(1),
+			map[string][]byte{"act-1": pointlessGPX},
+			true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			user := setupUser(t, db)
+			srv := newMockEFBServer(t)
+			gp := &mockGarminProvider{activities: tc.activities, gpxData: tc.gpx}
+			engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+			_, loggedIn, err := engine.syncUserReportingLogin(
+				context.Background(), user.ID, "scheduled", SyncOptions{})
+			if err != nil {
+				t.Fatalf("syncUserReportingLogin: %v", err)
+			}
+			if loggedIn != tc.wantLogin {
+				t.Errorf("loggedIn = %v; want %v", loggedIn, tc.wantLogin)
+			}
+		})
+	}
+}
+
+// SyncUsers must NOT apply the inter-user pacing to users with no new
+// activities (they never log into EFB). With a real 30s pacing configured but
+// a short context, a run of no-activity users completes fully and quickly;
+// before the fix the unconditional pacing would block on the first user until
+// the context deadline, leaving most users unprocessed.
+func TestSyncUsers_SkipsPacingForNoActivityUsers(t *testing.T) {
+	db := openTestDB(t)
+
+	var users []database.User
+	for i := 1; i <= 4; i++ {
+		u, err := db.CreateUser(fmt.Sprintf("noact-user-%d@example.com", i))
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := db.SaveGarminCredentials(u.ID, fmt.Sprintf("g%d@example.com", i), "gp"); err != nil {
+			t.Fatalf("SaveGarminCredentials: %v", err)
+		}
+		if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+			t.Fatalf("SaveEFBCredentials: %v", err)
+		}
+		users = append(users, *u)
+	}
+
+	srv := newMockEFBServer(t)
+
+	// Zero activities → each user returns from doSync before any EFB login.
+	gp := &mockGarminProvider{activities: nil}
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger(), WithInterUserPacing(30*time.Second))
+
+	// Generous relative to four instant no-op syncs, but a tiny fraction of
+	// even a single 30s pace — so the test fails fast if pacing is applied.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := engine.SyncUsers(ctx, users, 1, nil); err != nil {
+		t.Fatalf("SyncUsers returned error (pacing likely applied, hit deadline): %v", err)
+	}
+
+	for i, u := range users {
+		hist, _ := db.GetSyncHistory(u.ID, 1)
+		if len(hist) == 0 {
+			t.Fatalf("user %d (idx %d) has no sync_run — not processed before deadline", u.ID, i)
+		}
+	}
+}
+
 // Stuck is_valid=0 from a past transient failure must self-heal once auth succeeds again.
 func TestSyncUser_RevalidatesStuckCredentialsOnSuccess(t *testing.T) {
 	db := openTestDB(t)
