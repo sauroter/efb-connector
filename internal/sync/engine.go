@@ -199,35 +199,44 @@ func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string)
 // date range it is validated and used; otherwise the user's SyncDays default
 // is applied. Returns the sync_run ID.
 func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trigger string, opts SyncOptions) (int64, error) {
+	runID, _, err := s.syncUserReportingLogin(ctx, userID, trigger, opts)
+	return runID, err
+}
+
+// syncUserReportingLogin is the implementation behind SyncUserWithOptions. It
+// additionally reports whether the EFB login endpoint was hit, which the bulk
+// runner (SyncUsers) needs to decide whether inter-user pacing applies. Public
+// callers go through SyncUserWithOptions and don't see this signal.
+func (s *SyncEngine) syncUserReportingLogin(ctx context.Context, userID int64, trigger string, opts SyncOptions) (int64, bool, error) {
 	log := s.logger.With("user_id", userID, "trigger", trigger)
 
 	// Load the user once, used for both time window resolution and feature flags.
 	user, err := s.db.GetUserByID(userID)
 	if err != nil {
-		return 0, fmt.Errorf("sync: get user: %w", err)
+		return 0, false, fmt.Errorf("sync: get user: %w", err)
 	}
 	if user == nil {
-		return 0, fmt.Errorf("sync: user %d not found", userID)
+		return 0, false, fmt.Errorf("sync: user %d not found", userID)
 	}
 
 	// Resolve time window.
 	start, end, err := s.resolveTimeWindowFromUser(user, opts)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	log.Info("sync time window", "start", start.Format("2006-01-02"), "end", end.Format("2006-01-02"))
 
 	// 1. Create sync_run record.
 	runID, err := s.db.CreateSyncRun(userID, trigger)
 	if err != nil {
-		return 0, fmt.Errorf("sync: create sync run: %w", err)
+		return 0, false, fmt.Errorf("sync: create sync run: %w", err)
 	}
 	log = log.With("run_id", runID)
 	log.Info("sync run started")
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.ExcludedActivityTypes)
+	found, synced, skipped, failed, tripsCreated, loggedIn, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.ExcludedActivityTypes)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -261,7 +270,7 @@ func (s *SyncEngine) SyncUserWithOptions(ctx context.Context, userID int64, trig
 
 	metrics.ObserveSyncRun(trigger, status, time.Since(syncStart).Seconds(), found, synced, skipped, failed, tripsCreated)
 
-	return runID, syncErr
+	return runID, loggedIn, syncErr
 }
 
 // resolveTimeWindowFromUser returns the start/end for a sync run given an
@@ -289,11 +298,18 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 }
 
 // doSync performs the actual sync work and returns counters.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, excludedCategories []string) (found, synced, skipped, failed, tripsCreated int, err error) {
+// The loggedIn return reports whether the EFB login endpoint was hit (login
+// attempted, regardless of outcome). The bulk runner uses it to decide whether
+// the inter-user pacing is needed: it throttles EFB logins, so a user that did
+// no upload work — and thus never logged in — must not be paced. This is a
+// distinct signal rather than something inferred from the counters, because the
+// post-login no-track-points skip makes found==skipped possible even when a
+// login did happen.
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, excludedCategories []string) (found, synced, skipped, failed, tripsCreated int, loggedIn bool, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
-		return 0, 0, 0, 0, 0, fmt.Errorf("sync: get garmin credentials: %w", err)
+		return 0, 0, 0, 0, 0, false, fmt.Errorf("sync: get garmin credentials: %w", err)
 	}
 	tokenDir := filepath.Join(s.tokenStoreBase, fmt.Sprintf("%d", userID))
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
@@ -317,7 +333,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				log.Error("failed to invalidate garmin credentials", "error", invErr)
 			}
 		}
-		return 0, 0, 0, 0, 0, fmt.Errorf("sync: list activities: %w", err)
+		return 0, 0, 0, 0, 0, false, fmt.Errorf("sync: list activities: %w", err)
 	}
 
 	// Apply the per-user activity-type exclusion (users.excluded_activity_types).
@@ -452,20 +468,23 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	if len(toSync) == 0 {
 		log.Info("no new activities to sync")
-		return found, 0, skipped, 0, 0, nil
+		return found, 0, skipped, 0, 0, false, nil
 	}
 
 	// 7b. Decrypt EFB credentials.
 	efbUser, efbPass, err := s.db.GetEFBCredentials(userID)
 	if err != nil {
-		return found, 0, skipped, 0, 0, fmt.Errorf("sync: get efb credentials: %w", err)
+		return found, 0, skipped, 0, 0, false, fmt.Errorf("sync: get efb credentials: %w", err)
 	}
 
 	// Create a fresh EFB session for this user to avoid cookie-jar
 	// collisions when multiple workers sync concurrently.
 	efbClient := s.newEFBSession()
 
-	// 7c. Login to EFB (once per sync run).
+	// 7c. Login to EFB (once per sync run). From here on the login endpoint
+	// has been hit, so every return below reports loggedIn=true — the bulk
+	// runner must pace this user regardless of how the rest of the run turns
+	// out (success, failure, or every activity skipped as no_track_points).
 	if err := efbClient.Login(ctx, efbUser, efbPass); err != nil {
 		// EFB rate-limited our IP — transient, do NOT invalidate the
 		// user's credentials (they are almost certainly fine; we just
@@ -480,7 +499,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				}
 				failed++
 			}
-			return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login rate-limited: %w", err)
+			return found, 0, skipped, failed, 0, true, fmt.Errorf("sync: efb login rate-limited: %w", err)
 		}
 
 		log.Warn("efb login failed, invalidating credentials", "error", err)
@@ -494,7 +513,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			}
 			failed++
 		}
-		return found, 0, skipped, failed, 0, fmt.Errorf("sync: efb login: %w", err)
+		return found, 0, skipped, failed, 0, true, fmt.Errorf("sync: efb login: %w", err)
 	}
 	log.Info("efb login successful")
 
@@ -584,7 +603,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 						log.Error("failed to invalidate efb credentials", "error", invErr)
 					}
 				}
-				return found, synced, skipped, failed, tripsCreated, fmt.Errorf("sync: EFB %s, aborting: %w", cat, uploadErr)
+				return found, synced, skipped, failed, tripsCreated, true, fmt.Errorf("sync: EFB %s, aborting: %w", cat, uploadErr)
 			}
 			continue
 		}
@@ -631,7 +650,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 	}
 
-	return found, synced, skipped, failed, tripsCreated, nil
+	return found, synced, skipped, failed, tripsCreated, true, nil
 }
 
 // handleConsentRequired flags the user as needing the EFB v2026.1
@@ -1019,15 +1038,6 @@ func (s *SyncEngine) SyncAllUsersProgress(ctx context.Context, workers int, onPr
 	return s.SyncUsers(ctx, users, workers, onProgress)
 }
 
-// performedEFBLogin reports whether a finished user sync reached the EFB
-// upload phase (and thus logged into the portal). doSync sets
-// found = len(toSync) + skipped and only calls efbClient.Login when
-// len(toSync) > 0, so found > skipped iff a login was attempted. The
-// inter-user pacing exists solely to throttle EFB logins under the portal's
-// per-IP rate limit, so users that did no upload work (the common nightly
-// case: nothing new since yesterday) don't need to be paced.
-func performedEFBLogin(r UserSyncResult) bool { return r.Found > r.Skipped }
-
 // pacingDelay returns the wait time between users in SyncUsers: interUserPacing
 // plus up to 20% random jitter, so the bulk run doesn't drive EFB's per-IP
 // counter on a perfectly regular clock. Returns 0 when interUserPacing is 0
@@ -1096,7 +1106,7 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				log := s.logger.With("user_id", user.ID, "email", user.Email)
 				log.Info("syncing user")
 
-				runID, syncErr := s.SyncUser(ctx, user.ID, "scheduled")
+				runID, loggedIn, syncErr := s.syncUserReportingLogin(ctx, user.ID, "scheduled", SyncOptions{})
 
 				result := UserSyncResult{
 					UserID: user.ID,
@@ -1156,10 +1166,13 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				// upload (the common nightly case) return from doSync
 				// before any EFB login, so pacing them is pure dead
 				// time and makes the bulk run scale with total users
-				// rather than active ones. Skipped if the run is being
-				// cancelled; the top-of-loop ctx check stops a
-				// cancelled run promptly even when we don't pace.
-				if performedEFBLogin(result) {
+				// rather than active ones. loggedIn is reported by
+				// doSync (not inferred from counters, which the
+				// post-login no-track-points skip can make ambiguous).
+				// Skipped if the run is being cancelled; the top-of-loop
+				// ctx check stops a cancelled run promptly even when we
+				// don't pace.
+				if loggedIn {
 					select {
 					case <-ctx.Done():
 						return

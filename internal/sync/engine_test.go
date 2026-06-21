@@ -857,28 +857,48 @@ func TestSyncEngine_pacingDelay(t *testing.T) {
 	}
 }
 
-// performedEFBLogin gates the inter-user pacing: only users that actually
-// reached the EFB upload phase (found > skipped) need throttling. A user with
-// no new activities (found == skipped == 0, or all already-synced) never logs
-// in, so it must not be paced.
-func TestPerformedEFBLogin(t *testing.T) {
+// syncUserReportingLogin must report loggedIn=true whenever the EFB login
+// endpoint was hit — including the case where every queued activity is then
+// skipped as no_track_points (a post-login skip that makes found==skipped).
+// This is the signal the bulk runner uses to gate inter-user pacing; a
+// false-negative here would skip pacing right after a real login and risk the
+// per-IP rate limit. A user with no new activities never logs in → false.
+func TestSyncUserReportingLogin_LoginSignal(t *testing.T) {
+	// GPX with no <trkpt> — HasTrackPoints returns false, so the upload loop
+	// classifies it as no_track_points and increments skipped after login.
+	pointlessGPX := []byte(`<?xml version="1.0"?><gpx></gpx>`)
+
 	cases := []struct {
-		name  string
-		found int
-		skip  int
-		want  bool
+		name       string
+		activities []garmin.Activity
+		gpx        map[string][]byte
+		wantLogin  bool
 	}{
-		{"no activities at all", 0, 0, false},
-		{"all already synced/skipped", 3, 3, false},
-		{"some new uploads", 3, 1, true},
-		{"single new upload", 1, 0, true},
+		{"no activities -> no login", nil, nil, false},
+		{"activities with track points -> login", makeActivities(1), nil, true},
+		{
+			"all activities no track points -> login still happened",
+			makeActivities(1),
+			map[string][]byte{"act-1": pointlessGPX},
+			true,
+		},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := performedEFBLogin(UserSyncResult{Found: tc.found, Skipped: tc.skip})
-			if got != tc.want {
-				t.Errorf("performedEFBLogin(found=%d, skipped=%d) = %v; want %v",
-					tc.found, tc.skip, got, tc.want)
+			db := openTestDB(t)
+			user := setupUser(t, db)
+			srv := newMockEFBServer(t)
+			gp := &mockGarminProvider{activities: tc.activities, gpxData: tc.gpx}
+			engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+			_, loggedIn, err := engine.syncUserReportingLogin(
+				context.Background(), user.ID, "scheduled", SyncOptions{})
+			if err != nil {
+				t.Fatalf("syncUserReportingLogin: %v", err)
+			}
+			if loggedIn != tc.wantLogin {
+				t.Errorf("loggedIn = %v; want %v", loggedIn, tc.wantLogin)
 			}
 		})
 	}
