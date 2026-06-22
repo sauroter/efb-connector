@@ -641,6 +641,105 @@ func TestCreateTripFromTrack_Success(t *testing.T) {
 	}
 }
 
+// newTripServerWithSaveResponse is like newTripServer but lets a test control
+// the status and body returned by the /trips/create save POST, so we can
+// exercise the trip-save diagnostic against realistic EFB responses.
+func newTripServerWithSaveResponse(t *testing.T, saveStatus int, saveBody string) *httptest.Server {
+	t.Helper()
+	const sessionCookie = "mock-session"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(tripFormHTML())) //nolint:errcheck
+	})
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(saveStatus)
+			w.Write([]byte(saveBody)) //nolint:errcheck
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(tripFormHTML())) //nolint:errcheck
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestCreateTripFromTrackVerbose_SuccessPopulatesDiagnostic(t *testing.T) {
+	srv := newTripServer(t, nil) // save body: "Trip saved successfully"
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if diag == nil {
+		t.Fatal("expected a diagnostic, got nil")
+	}
+	if diag.StatusCode != 200 {
+		t.Errorf("status_code: want 200, got %d", diag.StatusCode)
+	}
+	if diag.ContainsFehlerOrError {
+		t.Error("clean success body must not flag ContainsFehlerOrError")
+	}
+	if !strings.Contains(diag.BodyExcerpt, "Trip saved") {
+		t.Errorf("body excerpt should carry the response, got %q", diag.BodyExcerpt)
+	}
+}
+
+// TestCreateTripFromTrackVerbose_AlertSuccessIsNotFailure is the regression
+// guard for the v74 bug: a success page using a Bootstrap alert-success banner
+// must be classified as success (err == nil), while the diagnostic records the
+// markers so we can build correct detection later.
+func TestCreateTripFromTrackVerbose_AlertSuccessIsNotFailure(t *testing.T) {
+	body := `<html><body><div class="alert alert-success">Fahrt erfolgreich gespeichert</div></body></html>`
+	srv := newTripServerWithSaveResponse(t, http.StatusOK, body)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
+	if err != nil {
+		t.Fatalf("alert-success page must classify as success, got error: %v", err)
+	}
+	if !diag.ContainsAlertSuccess {
+		t.Error("expected ContainsAlertSuccess=true")
+	}
+	if !strings.Contains(diag.AlertClass, "alert-success") {
+		t.Errorf("expected AlertClass to capture alert-success, got %q", diag.AlertClass)
+	}
+	if !diag.ContainsGespeichert {
+		t.Error("expected ContainsGespeichert=true")
+	}
+}
+
+func TestCreateTripFromTrackVerbose_FehlerIsFailure(t *testing.T) {
+	body := `<html><body><div class="alert alert-danger">Fehler beim Speichern</div></body></html>`
+	srv := newTripServerWithSaveResponse(t, http.StatusOK, body)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
+	if err == nil {
+		t.Fatal("expected error for a body containing 'Fehler'")
+	}
+	if diag == nil || !diag.ContainsFehlerOrError || !diag.ContainsAlertDanger {
+		t.Errorf("expected diagnostic flags set, got %+v", diag)
+	}
+}
+
 func TestCreateTripFromTrack_TimesFilledCorrectly(t *testing.T) {
 	var capturedBody string
 

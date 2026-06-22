@@ -635,7 +635,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				if enrichTrips && s.rivermap != nil {
 					enrichment = s.buildEnrichment(ctx, act, log)
 				}
-				if tripErr := efbClient.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment); tripErr != nil {
+				if tripErr := s.createTripLoggingDiag(ctx, efbClient, trackID, act, enrichment, log); tripErr != nil {
 					log.Warn("failed to create trip from track", "error", tripErr)
 				} else {
 					log.Info("trip created from track", "track_id", trackID)
@@ -914,6 +914,48 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 // *efb.EFBClient satisfies it; mocks in tests can choose to as well.
 type rawUploader interface {
 	UploadRaw(ctx context.Context, gpxData []byte, filename string) (*efb.RawUploadResult, error)
+}
+
+// verboseTripCreator is the optional interface an [efb.EFBProvider]
+// implements when it can return a diagnostic of the trip-save response.
+// The production *efb.EFBClient satisfies it; the mock does not (it falls
+// back to CreateTripFromTrack).
+type verboseTripCreator interface {
+	CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *efb.TripEnrichment) (*efb.TripSaveDiagnostic, error)
+}
+
+// createTripLoggingDiag creates a trip from an uploaded track. When the EFB
+// provider supports it, it captures and logs a diagnostic of the raw EFB
+// trip-save response on BOTH success and failure, so we can learn EFB's real
+// markers from the logs. The success/failure decision is identical to
+// CreateTripFromTrack — this only adds observability.
+func (s *SyncEngine) createTripLoggingDiag(ctx context.Context, efbClient efb.EFBProvider, trackID string, act activityToSync, enrichment *efb.TripEnrichment, log *slog.Logger) error {
+	vc, ok := efbClient.(verboseTripCreator)
+	if !ok {
+		return efbClient.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment)
+	}
+	diag, err := vc.CreateTripFromTrackVerbose(ctx, trackID, act.startTime, act.durationSecs, enrichment)
+	if diag != nil {
+		log.Info("trip save diagnostic",
+			"garmin_activity_id", act.garminID,
+			"track_id", trackID,
+			"classified_success", err == nil,
+			"status_code", diag.StatusCode,
+			"final_url", diag.FinalURL,
+			"body_size", diag.BodySize,
+			"page_title", diag.PageTitle,
+			"alert_class", diag.AlertClass,
+			"summary", diag.Summary,
+			"has_begdate", diag.ContainsBegdate,
+			"has_speichern", diag.ContainsSpeichern,
+			"has_fehler_or_error", diag.ContainsFehlerOrError,
+			"has_gespeichert", diag.ContainsGespeichert,
+			"has_alert_success", diag.ContainsAlertSuccess,
+			"has_alert_danger", diag.ContainsAlertDanger,
+			"body_excerpt", diag.BodyExcerpt,
+		)
+	}
+	return err
 }
 
 // checkAndMarkPermanentFailure increments the retry count check and marks an
