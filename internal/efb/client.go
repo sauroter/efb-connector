@@ -156,6 +156,70 @@ type RawUploadResult struct {
 	IsLoginPage           bool
 }
 
+// MaxTripDiagBodyBytes caps the raw body excerpt captured on a
+// [TripSaveDiagnostic]. 4 KB is enough to see EFB's confirmation/alert
+// area without bloating logs (one line per trip creation).
+const MaxTripDiagBodyBytes = 4 * 1024
+
+// alertClassRe captures the class attribute of the first alert-style div in
+// an EFB response (e.g. "alert alert-success"), used for diagnostics so we
+// can tell a success banner from an error one.
+var alertClassRe = regexp.MustCompile(`class=['"]([^'"]*alert[^'"]*)['"]`)
+
+// TripSaveDiagnostic captures, without interpreting, what EFB returned to the
+// trip-save POST. It is populated on both success and failure so an operator
+// can learn EFB's real success/failure markers from the logs before any
+// detection logic is built on top of them. Returned by
+// [EFBClient.CreateTripFromTrackVerbose].
+type TripSaveDiagnostic struct {
+	StatusCode            int
+	FinalURL              string
+	BodySize              int
+	PageTitle             string // first <title> contents
+	Summary               string // summariseResponse(body): title + hint + alert text
+	AlertClass            string // class of the first alert-style div, if any
+	ContainsBegdate       bool   // create-form field re-rendered?
+	ContainsSpeichern     bool   // create-form submit re-rendered?
+	ContainsFehlerOrError bool   // the legacy failure signal
+	ContainsGespeichert   bool   // likely a "saved" confirmation
+	ContainsAlertSuccess  bool   // Bootstrap success banner
+	ContainsAlertDanger   bool   // Bootstrap error banner
+	BodyExcerpt           string // capped at MaxTripDiagBodyBytes
+}
+
+// newTripSaveDiagnostic builds a [TripSaveDiagnostic] from the raw trip-save
+// response. Pure capture — it makes no success/failure decision.
+func newTripSaveDiagnostic(resp *http.Response, body []byte) *TripSaveDiagnostic {
+	s := string(body)
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	title := ""
+	if m := titleRe.FindStringSubmatch(s); m != nil {
+		title = strings.TrimSpace(m[1])
+	}
+	alertClass := ""
+	if m := alertClassRe.FindStringSubmatch(s); m != nil {
+		alertClass = m[1]
+	}
+	return &TripSaveDiagnostic{
+		StatusCode:            resp.StatusCode,
+		FinalURL:              finalURL,
+		BodySize:              len(body),
+		PageTitle:             title,
+		Summary:               summariseResponse(body),
+		AlertClass:            alertClass,
+		ContainsBegdate:       strings.Contains(s, "begdate"),
+		ContainsSpeichern:     strings.Contains(s, "speichern"),
+		ContainsFehlerOrError: strings.Contains(s, "Fehler") || strings.Contains(s, "error"),
+		ContainsGespeichert:   strings.Contains(s, "gespeichert"),
+		ContainsAlertSuccess:  strings.Contains(s, "alert-success"),
+		ContainsAlertDanger:   strings.Contains(s, "alert-danger"),
+		BodyExcerpt:           TruncateUTF8(body, MaxTripDiagBodyBytes),
+	}
+}
+
 // UploadRejectedError is returned by [EFBClient.Upload] when the server
 // answered with HTTP 200 but the response did not contain the success
 // marker and is not the login page (i.e. a silent rejection). It carries
@@ -482,8 +546,23 @@ func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
 }
 
 // CreateTripFromTrack navigates to the trip creation form for the given EFB
-// track ID, fills in start/end times, and submits the form.
+// track ID, fills in start/end times, and submits the form. It is a thin
+// wrapper over [EFBClient.CreateTripFromTrackVerbose] that discards the
+// diagnostic; the success/failure classification is identical.
 func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
+	_, err := c.CreateTripFromTrackVerbose(ctx, trackID, startTime, durationSecs, enrichment)
+	return err
+}
+
+// CreateTripFromTrackVerbose performs the same trip creation as
+// [EFBClient.CreateTripFromTrack] but additionally returns a
+// [TripSaveDiagnostic] describing EFB's raw trip-save response. The
+// success/failure decision is unchanged (status != 200, or body contains
+// "Fehler"/"error", is a failure). The diagnostic is purely observational and
+// is populated whenever the trip-save POST returned a body (i.e. on both the
+// success path and the 200-but-rejected path). Earlier failures (track click,
+// form not found) return a nil diagnostic with the error.
+func (c *EFBClient) CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
 	// Step 1: POST to /interpretation/usersmap to simulate clicking the
 	// "Fahrt neu anlegen" image button, which redirects to /trips/create.
 	clickFieldName := fmt.Sprintf("track_id:%s", trackID)
@@ -494,7 +573,7 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.uploadURL,
 		strings.NewReader(formData.Encode()))
 	if err != nil {
-		return fmt.Errorf("efb: failed to build track click request: %w", err)
+		return nil, fmt.Errorf("efb: failed to build track click request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", c.baseURL)
@@ -502,22 +581,22 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("efb: track click request failed: %w", err)
+		return nil, fmt.Errorf("efb: track click request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("efb: failed to read trip form response: %w", err)
+		return nil, fmt.Errorf("efb: failed to read trip form response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("efb: trip form returned status %d: %s",
+		return nil, fmt.Errorf("efb: trip form returned status %d: %s",
 			resp.StatusCode, truncateBody(body))
 	}
 
 	if !strings.Contains(string(body), "begdate") {
-		return fmt.Errorf("efb: trip creation form not found after track click (status %d)", resp.StatusCode)
+		return nil, fmt.Errorf("efb: trip creation form not found after track click (status %d)", resp.StatusCode)
 	}
 
 	// Step 2: Parse the form HTML to extract all field values.
@@ -544,7 +623,7 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, tripCreateURL,
 		strings.NewReader(formValues.Encode()))
 	if err != nil {
-		return fmt.Errorf("efb: failed to build trip save request: %w", err)
+		return nil, fmt.Errorf("efb: failed to build trip save request: %w", err)
 	}
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("Origin", c.baseURL)
@@ -552,28 +631,34 @@ func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, sta
 
 	resp2, err := c.httpClient.Do(req2)
 	if err != nil {
-		return fmt.Errorf("efb: trip save request failed: %w", err)
+		return nil, fmt.Errorf("efb: trip save request failed: %w", err)
 	}
 	defer resp2.Body.Close()
 
 	body2, err := io.ReadAll(resp2.Body)
 	if err != nil {
-		return fmt.Errorf("efb: failed to read trip save response: %w", err)
+		return nil, fmt.Errorf("efb: failed to read trip save response: %w", err)
 	}
+
+	// Capture the raw save response for observability. This does NOT influence
+	// the success/failure decision below — it is logged so we can learn EFB's
+	// real success vs. failure markers before building detection on them.
+	diag := newTripSaveDiagnostic(resp2, body2)
 
 	// Accept 200 OK or redirect (3xx followed to a success page).
 	if resp2.StatusCode != http.StatusOK {
-		return fmt.Errorf("efb: trip save failed with status %d: %s",
+		return diag, fmt.Errorf("efb: trip save failed with status %d: %s",
 			resp2.StatusCode, truncateBody(body2))
 	}
 
-	// Verify the response does not contain error indicators.
+	// Verify the response does not contain error indicators. (Unchanged legacy
+	// classification — intentionally conservative until we have captured data.)
 	respText := string(body2)
 	if strings.Contains(respText, "Fehler") || strings.Contains(respText, "error") {
-		return fmt.Errorf("efb: trip creation may have failed (response contains error indicator)")
+		return diag, fmt.Errorf("efb: trip creation may have failed (response contains error indicator)")
 	}
 
-	return nil
+	return diag, nil
 }
 
 // parseFormFields extracts all <input>, <select>, and <textarea> name/value
