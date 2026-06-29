@@ -24,6 +24,14 @@ import (
 // GitHub Action poll deadline.
 const runAllTimeout = 180 * time.Minute
 
+// runAllSkipWindow is how far back runSyncAll looks for users it already
+// completed in the current nightly cycle. When the run is re-kicked after a
+// mid-run server restart, those users are skipped so the re-run converges
+// quickly instead of re-listing Garmin for everyone again. It comfortably
+// covers a single night's re-kicks (bounded by runAllTimeout) without reaching
+// back to the previous day's run ~24h earlier.
+const runAllSkipWindow = "-6 hours"
+
 // requireInternalAuth checks the Authorization: Bearer <INTERNAL_SECRET> header.
 // Returns true if authorized, false (and writes 401) if not.
 func (s *Server) requireInternalAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -118,6 +126,27 @@ func (s *Server) runSyncAll() {
 		s.logger.Error("sync-all failed", "error", err)
 		return
 	}
+
+	// Skip users already completed in this nightly cycle so a run re-kicked
+	// after a mid-run restart converges instead of re-processing everyone.
+	// Best-effort: on error we fall back to the full set rather than skipping
+	// work. See runAllSkipWindow.
+	if done, derr := s.db.UsersCompletedScheduledRunSince(runAllSkipWindow); derr != nil {
+		s.logger.Warn("sync-all: could not load already-completed users; processing full set", "error", derr)
+	} else if len(done) > 0 {
+		remaining := users[:0]
+		for _, u := range users {
+			if !done[u.ID] {
+				remaining = append(remaining, u)
+			}
+		}
+		if skipped := len(users) - len(remaining); skipped > 0 {
+			s.logger.Info("sync-all: skipping users already completed this cycle",
+				"skipped", skipped, "remaining", len(remaining))
+		}
+		users = remaining
+	}
+
 	s.runAllMu.Lock()
 	s.runAllState.TotalUsers = len(users)
 	s.runAllMu.Unlock()

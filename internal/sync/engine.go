@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	stdsync "sync"
 	"sync/atomic"
@@ -1148,53 +1149,70 @@ func (s *SyncEngine) SyncUsers(ctx context.Context, users []database.User, worke
 				log := s.logger.With("user_id", user.ID, "email", user.Email)
 				log.Info("syncing user")
 
-				runID, loggedIn, syncErr := s.syncUserReportingLogin(ctx, user.ID, "scheduled", SyncOptions{})
+				// Process one user inside a recover boundary. A panic deep in
+				// doSync (e.g. an unexpected nil in a Garmin/EFB/Rivermap
+				// response) would otherwise propagate out of this worker
+				// goroutine and crash the whole process — taking down the
+				// nightly run and silently abandoning every remaining user.
+				// Containing it here marks just that user failed and lets the
+				// run continue.
+				result, loggedIn := func() (result UserSyncResult, loggedIn bool) {
+					result = UserSyncResult{UserID: user.ID, Email: user.Email}
+					defer func() {
+						if rec := recover(); rec != nil {
+							log.Error("sync panicked for user; marking failed and continuing",
+								"panic", rec, "stack", string(debug.Stack()))
+							result.Status = "failed"
+							result.Error = fmt.Sprintf("panic: %v", rec)
+							loggedIn = false
+						}
+					}()
 
-				result := UserSyncResult{
-					UserID: user.ID,
-					Email:  user.Email,
-				}
+					runID, lgd, syncErr := s.syncUserReportingLogin(ctx, user.ID, "scheduled", SyncOptions{})
+					loggedIn = lgd
 
-				if syncErr != nil {
-					log.Error("sync failed for user", "error", syncErr, "run_id", runID)
-					result.Status = "failed"
-					result.Error = syncErr.Error()
-					var rl *efb.LoginRateLimitedError
-					if errors.As(syncErr, &rl) {
-						if rateLimitBackoffUsed.CompareAndSwap(false, true) {
-							log.Warn("EFB rate-limit detected; sleeping once before resuming",
-								"backoff", s.rateLimitBackoff)
-							// Fall through on ctx cancellation rather than
-							// returning, so the rate-limited user's result
-							// still reaches the bulk-loop counters. The
-							// inter-user pacing select below will exit on
-							// the same ctx.Done channel.
-							select {
-							case <-ctx.Done():
-							case <-time.After(s.rateLimitBackoff):
+					if syncErr != nil {
+						log.Error("sync failed for user", "error", syncErr, "run_id", runID)
+						result.Status = "failed"
+						result.Error = syncErr.Error()
+						var rl *efb.LoginRateLimitedError
+						if errors.As(syncErr, &rl) {
+							if rateLimitBackoffUsed.CompareAndSwap(false, true) {
+								log.Warn("EFB rate-limit detected; sleeping once before resuming",
+									"backoff", s.rateLimitBackoff)
+								// Fall through on ctx cancellation rather than
+								// returning, so the rate-limited user's result
+								// still reaches the bulk-loop counters. The
+								// inter-user pacing select below will exit on
+								// the same ctx.Done channel.
+								select {
+								case <-ctx.Done():
+								case <-time.After(s.rateLimitBackoff):
+								}
+							} else {
+								log.Warn("EFB rate-limit re-hit after backoff; cancelling remaining users")
+								cancel()
 							}
-						} else {
-							log.Warn("EFB rate-limit re-hit after backoff; cancelling remaining users")
-							cancel()
 						}
 					}
-				}
 
-				// Read the sync run from DB to get accurate counters.
-				if runID > 0 {
-					if run, err := s.db.GetSyncRun(runID); err == nil && run != nil {
-						result.Found = run.ActivitiesFound
-						result.Synced = run.ActivitiesSynced
-						result.Skipped = run.ActivitiesSkipped
-						result.Failed = run.ActivitiesFailed
-						result.Trips = run.TripsCreated
-						// Only use DB status when SyncUser succeeded —
-						// otherwise keep the "failed" status set above.
-						if syncErr == nil {
-							result.Status = run.Status
+					// Read the sync run from DB to get accurate counters.
+					if runID > 0 {
+						if run, err := s.db.GetSyncRun(runID); err == nil && run != nil {
+							result.Found = run.ActivitiesFound
+							result.Synced = run.ActivitiesSynced
+							result.Skipped = run.ActivitiesSkipped
+							result.Failed = run.ActivitiesFailed
+							result.Trips = run.TripsCreated
+							// Only use DB status when SyncUser succeeded —
+							// otherwise keep the "failed" status set above.
+							if syncErr == nil {
+								result.Status = run.Status
+							}
 						}
 					}
-				}
+					return result, loggedIn
+				}()
 
 				if onProgress != nil {
 					onProgress(result)

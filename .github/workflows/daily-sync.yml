@@ -16,31 +16,49 @@ jobs:
           BASE="${{ secrets.BASE_URL }}"
           AUTH="Authorization: Bearer ${{ secrets.INTERNAL_SECRET }}"
 
-          # Kick off the fire-and-forget run. 202 = started, 409 = already running.
-          KICKOFF_HTTP=$(curl -sS -o /tmp/kickoff.json -w '%{http_code}' \
-            -X POST -H "$AUTH" "$BASE/internal/sync/run-all")
-          echo "kickoff HTTP $KICKOFF_HTTP"
-          cat /tmp/kickoff.json
-          echo
-          if [ "$KICKOFF_HTTP" != "202" ] && [ "$KICKOFF_HTTP" != "409" ]; then
-            echo "::error::Unexpected kickoff status $KICKOFF_HTTP"
-            exit 1
-          fi
+          DEADLINE=$(( $(date +%s) + 10800 ))   # 180 min overall cap, matches server runAllTimeout
+          MAX_KICKS=10                           # re-kicks allowed after a mid-run server restart
+          KICKS=0
 
-          # Poll status every 30s. The poll cadence doubles as a keep-alive
-          # for the Fly machine (idle_timeout = 300s) and as a watchdog: if
-          # the goroutine restarts (e.g. server crashed mid-run), we'll see
-          # started_at change and surface that as a failure.
-          DEADLINE=$(( $(date +%s) + 10800 ))   # 180 min cap, matches server runAllTimeout
-          STATUS=""
-          STARTED_AT_FIRST=""
+          # kick starts a run. 202 = started, 409 = already running. Any other
+          # status is fatal.
+          kick() {
+            local http
+            http=$(curl -sS -o /tmp/kickoff.json -w '%{http_code}' \
+              -X POST -H "$AUTH" "$BASE/internal/sync/run-all" || echo "000")
+            echo "kickoff HTTP $http"
+            cat /tmp/kickoff.json 2>/dev/null || true
+            echo
+            if [ "$http" != "202" ] && [ "$http" != "409" ]; then
+              echo "::error::Unexpected kickoff status $http"
+              exit 1
+            fi
+            KICKS=$((KICKS + 1))
+          }
+
+          kick
+
+          # Poll status every 30s. The poll cadence doubles as a keep-alive for
+          # the Fly machine (idle_timeout = 300s).
+          #
+          # Completion contract: a genuinely finished run sets finished_at
+          # (always written when the run goroutine returns) and reports
+          # synced + failed >= total_users. The run state is held in process
+          # memory only, so if the server restarts mid-run the goroutine dies
+          # and the state resets to {in_progress:false, total_users:0,
+          # synced:0} with NO finished_at. finished_at is therefore the
+          # discriminator: present = the run actually completed (even an empty
+          # run that skipped everyone already done this cycle); absent = the
+          # process was killed mid-run. We must NOT read the zeroed state as
+          # "0 of 0 = success" (which silently abandoned the unprocessed tail
+          # of users). Instead we treat it as a transient failure and re-kick —
+          # users already completed this cycle are skipped, so re-runs converge.
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
             sleep 30
-            # --max-time caps each poll so a suspended/unreachable machine
-            # fails the poll fast and we re-loop, instead of one curl hanging
-            # silently for minutes (which once masked a ~16 min mid-run Fly
-            # suspend). || true keeps set -e from aborting the whole job on a
-            # transient blip; an empty STATUS just retries on the next tick.
+
+            # --max-time caps each poll so a suspended/unreachable machine fails
+            # fast and we re-loop, instead of one curl hanging silently. || true
+            # keeps set -e from aborting on a transient blip.
             STATUS=$(curl -fsS --max-time 60 -H "$AUTH" "$BASE/internal/sync/run-all/status" || true)
             if [ -z "$STATUS" ]; then
               echo "status poll failed or timed out; retrying"
@@ -48,37 +66,37 @@ jobs:
             fi
             echo "$STATUS"
 
-            STARTED_AT=$(echo "$STATUS" | jq -r '.started_at // empty')
-            if [ -z "$STARTED_AT_FIRST" ] && [ -n "$STARTED_AT" ]; then
-              STARTED_AT_FIRST="$STARTED_AT"
+            IN_PROG=$(echo "$STATUS" | jq -r '.in_progress')
+            if [ "$IN_PROG" = "true" ]; then
+              continue
             fi
-            if [ -n "$STARTED_AT_FIRST" ] && [ -n "$STARTED_AT" ] && [ "$STARTED_AT" != "$STARTED_AT_FIRST" ]; then
-              echo "::error::Run started_at changed mid-poll ($STARTED_AT_FIRST -> $STARTED_AT) — server likely restarted"
+
+            # Run is no longer in progress — decide whether it actually finished.
+            ERR=$(echo "$STATUS" | jq -r '.error // empty')
+            if [ -n "$ERR" ]; then
+              echo "::error::Sync failed: $ERR"
               exit 1
             fi
 
-            IN_PROG=$(echo "$STATUS" | jq -r '.in_progress')
-            if [ "$IN_PROG" = "false" ]; then
-              break
+            FINISHED_AT=$(echo "$STATUS" | jq -r '.finished_at // empty')
+            TOTAL=$(echo "$STATUS" | jq -r '.total_users')
+            DONE=$(echo "$STATUS" | jq -r '.synced + .failed')
+
+            if [ -n "$FINISHED_AT" ] && [ "$DONE" -ge "$TOTAL" ]; then
+              echo "Sync complete: $DONE of $TOTAL users processed."
+              exit 0
             fi
+
+            # Incomplete or reset state: finished_at is empty, so the server
+            # very likely restarted mid-run. Re-kick if we still have budget,
+            # otherwise fail loudly.
+            echo "::warning::Run not complete (finished_at='${FINISHED_AT}' done=${DONE} total=${TOTAL}) — likely mid-run server restart; re-kicking (attempt ${KICKS}/${MAX_KICKS})"
+            if [ "$KICKS" -ge "$MAX_KICKS" ]; then
+              echo "::error::Run did not complete after ${KICKS} attempts (last seen ${DONE} of ${TOTAL})"
+              exit 1
+            fi
+            kick
           done
 
-          if [ -z "$STATUS" ]; then
-            echo "::error::Status was never read"
-            exit 1
-          fi
-
-          ERR=$(echo "$STATUS" | jq -r '.error // empty')
-          if [ -n "$ERR" ]; then
-            echo "::error::Sync failed: $ERR"
-            exit 1
-          fi
-
-          TOTAL=$(echo "$STATUS" | jq -r '.total_users')
-          DONE=$(echo "$STATUS" | jq -r '.synced + .failed')
-          if [ "$DONE" -lt "$TOTAL" ]; then
-            echo "::error::Only $DONE of $TOTAL syncable users were processed"
-            exit 1
-          fi
-
-          echo "Sync complete: $DONE of $TOTAL users processed."
+          echo "::error::Deadline reached before observing a complete run"
+          exit 1

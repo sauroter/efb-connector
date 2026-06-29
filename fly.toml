@@ -24,3 +24,12 @@ primary_region = "fra"
 [env]
   PORT = "8080"
   DB_PATH = "/data/efb-connector.db"
+
+# The nightly run-all spawns a python3 garminconnect subprocess per user on top
+# of the Go server. The 256 MB default was OOM-killing the machine mid-run
+# (fresh-process restart zeroed the in-memory run state, silently abandoning the
+# unprocessed users). 512 MB gives that peak (Go + one python3) comfortable
+# headroom. Scale-to-zero (min_machines_running=0) is intentionally kept.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

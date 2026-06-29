@@ -284,3 +284,74 @@ func TestCountUsersSyncedSince(t *testing.T) {
 		t.Errorf("30m count = %d, want 0", n)
 	}
 }
+
+// insertSyncRunAt inserts a sync_run with a SQLite datetime expression for
+// started_at (e.g. "datetime('now','-1 hour')"), parameterizing the trusted
+// trigger/status values.
+func insertSyncRunAt(t *testing.T, db *DB, userID int64, startedExpr, trigger, status string) {
+	t.Helper()
+	_, err := db.db.Exec(
+		`INSERT INTO sync_runs (user_id, trigger, started_at, status) VALUES (?, ?, `+startedExpr+`, ?)`,
+		userID, trigger, status,
+	)
+	if err != nil {
+		t.Fatalf("insert sync_run: %v", err)
+	}
+}
+
+func TestCountUsersReachedByScheduledRunSince(t *testing.T) {
+	db := openTestDB(t)
+
+	u1, _ := db.CreateUser("reach1@example.com") // scheduled run within 24h -> reached
+	u2, _ := db.CreateUser("reach2@example.com") // scheduled run 2 days ago -> not within 24h
+	u3, _ := db.CreateUser("reach3@example.com") // only a manual run -> not counted
+
+	// A row exists regardless of outcome: "reached" means the nightly run
+	// picked the user up, so a failed scheduled run still counts.
+	insertSyncRunAt(t, db, u1.ID, "datetime('now','-1 hour')", "scheduled", "completed")
+	insertSyncRunAt(t, db, u1.ID, "datetime('now','-30 minutes')", "scheduled", "failed")
+	insertSyncRunAt(t, db, u2.ID, "datetime('now','-2 days')", "scheduled", "completed")
+	insertSyncRunAt(t, db, u3.ID, "datetime('now','-1 hour')", "manual", "completed")
+
+	n, err := db.CountUsersReachedByScheduledRunSince("-24 hours")
+	if err != nil {
+		t.Fatalf("CountUsersReachedByScheduledRunSince: %v", err)
+	}
+	if n != 1 { // only u1 (distinct)
+		t.Errorf("reached(24h) = %d, want 1", n)
+	}
+}
+
+func TestUsersCompletedScheduledRunSince(t *testing.T) {
+	db := openTestDB(t)
+
+	u1, _ := db.CreateUser("done1@example.com") // completed scheduled 30m ago  -> in set
+	u2, _ := db.CreateUser("done2@example.com") // failed scheduled 30m ago     -> NOT (retry)
+	u3, _ := db.CreateUser("done3@example.com") // completed scheduled 8h ago   -> outside 6h window
+	u4, _ := db.CreateUser("done4@example.com") // completed manual 30m ago     -> NOT (manual)
+
+	insertSyncRunAt(t, db, u1.ID, "datetime('now','-30 minutes')", "scheduled", "completed")
+	insertSyncRunAt(t, db, u2.ID, "datetime('now','-30 minutes')", "scheduled", "failed")
+	insertSyncRunAt(t, db, u3.ID, "datetime('now','-8 hours')", "scheduled", "completed")
+	insertSyncRunAt(t, db, u4.ID, "datetime('now','-30 minutes')", "manual", "completed")
+
+	done, err := db.UsersCompletedScheduledRunSince("-6 hours")
+	if err != nil {
+		t.Fatalf("UsersCompletedScheduledRunSince: %v", err)
+	}
+	if !done[u1.ID] {
+		t.Errorf("u1 (completed scheduled, recent) should be in the done set")
+	}
+	if done[u2.ID] {
+		t.Errorf("u2 (failed) should NOT be in the done set — it must be retried")
+	}
+	if done[u3.ID] {
+		t.Errorf("u3 (completed 8h ago) should be outside the 6h window")
+	}
+	if done[u4.ID] {
+		t.Errorf("u4 (manual) should NOT be in the done set")
+	}
+	if len(done) != 1 {
+		t.Errorf("len(done) = %d, want 1", len(done))
+	}
+}
