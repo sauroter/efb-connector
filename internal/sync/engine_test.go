@@ -45,6 +45,7 @@ type mockGarminProvider struct {
 	activities    []garmin.Activity
 	diagnostics   garmin.ListDiagnostics
 	listErr       error
+	listPanic     bool              // when true, ListActivities panics (tests the worker recover boundary)
 	gpxData       map[string][]byte // activityID → GPX bytes
 	downloadErr   map[string]error  // activityID → error
 	validateErr   error
@@ -57,6 +58,9 @@ func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCr
 	m.lastListStart = start
 	m.lastListEnd = end
 	m.lastListOpts = opts
+	if m.listPanic {
+		panic("mock garmin: simulated panic in ListActivities")
+	}
 	if m.listErr != nil {
 		return nil, garmin.ListDiagnostics{}, m.listErr
 	}
@@ -948,6 +952,56 @@ func TestSyncUsers_SkipsPacingForNoActivityUsers(t *testing.T) {
 		hist, _ := db.GetSyncHistory(u.ID, 1)
 		if len(hist) == 0 {
 			t.Fatalf("user %d (idx %d) has no sync_run — not processed before deadline", u.ID, i)
+		}
+	}
+}
+
+// A panic while syncing one user must be contained to that user: the worker
+// must not crash the process (which would take down the whole nightly run and
+// silently abandon every remaining user). The user is marked failed and the
+// run continues.
+func TestSyncUsers_RecoversFromPerUserPanic(t *testing.T) {
+	db := openTestDB(t)
+
+	var users []database.User
+	for i := 1; i <= 2; i++ {
+		u, err := db.CreateUser(fmt.Sprintf("panic-user-%d@example.com", i))
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := db.SaveGarminCredentials(u.ID, fmt.Sprintf("g%d@example.com", i), "gp"); err != nil {
+			t.Fatalf("SaveGarminCredentials: %v", err)
+		}
+		if err := db.SaveEFBCredentials(u.ID, "efbuser", "efbpass"); err != nil {
+			t.Fatalf("SaveEFBCredentials: %v", err)
+		}
+		users = append(users, *u)
+	}
+
+	srv := newMockEFBServer(t)
+	gp := &mockGarminProvider{listPanic: true}
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider {
+		return efb.NewEFBClient(srv.URL)
+	}, discardLogger())
+
+	var results []UserSyncResult
+	onProgress := func(r UserSyncResult) { results = append(results, r) } // single worker → sequential, no race
+
+	// If the recover boundary is missing, the worker goroutine's panic crashes
+	// the whole test binary here. Reaching the assertions proves containment.
+	if err := engine.SyncUsers(context.Background(), users, 1, onProgress); err != nil {
+		t.Fatalf("SyncUsers returned error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("got %d progress results, want 2 (both users processed despite panics)", len(results))
+	}
+	for _, r := range results {
+		if r.Status != "failed" {
+			t.Errorf("user %d status = %q, want failed (panic should mark the user failed)", r.UserID, r.Status)
+		}
+		if r.Error == "" {
+			t.Errorf("user %d error is empty, want a panic message", r.UserID)
 		}
 	}
 }
