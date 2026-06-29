@@ -198,6 +198,37 @@ func (d *DB) GetSyncableUsers() ([]User, error) {
 	return users, rows.Err()
 }
 
+// UsersCompletedScheduledRunSince returns the set of user IDs that already have
+// a *completed* scheduled sync_run started within the window. The bulk runner
+// uses it to skip users already handled in the current nightly cycle when a run
+// is re-kicked after a mid-run server restart, so the re-run converges quickly
+// instead of re-listing Garmin for every user again. Only "completed" runs are
+// skipped — "failed"/"partial" runs are left in so their activities get
+// retried. window is an SQLite modifier, e.g. "-6 hours".
+func (d *DB) UsersCompletedScheduledRunSince(window string) (map[int64]bool, error) {
+	rows, err := d.db.Query(`
+		SELECT DISTINCT user_id
+		  FROM sync_runs
+		 WHERE trigger = 'scheduled'
+		   AND status = 'completed'
+		   AND started_at > datetime('now', ?)
+	`, window)
+	if err != nil {
+		return nil, fmt.Errorf("database: users completed scheduled run since %q: %w", window, err)
+	}
+	defer rows.Close()
+
+	done := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("database: scan completed scheduled user id: %w", err)
+		}
+		done[id] = true
+	}
+	return done, rows.Err()
+}
+
 // scanUser scans a *sql.Row into a User.
 func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	var u User

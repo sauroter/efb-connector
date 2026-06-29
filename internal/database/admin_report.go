@@ -84,6 +84,29 @@ func (d *DB) CountUsersSyncedSince(window string) (int, error) {
 	return n, nil
 }
 
+// CountUsersReachedByScheduledRunSince returns the number of distinct users the
+// nightly bulk run actually reached within the window — i.e. users with a
+// "scheduled" sync_run started in that window, regardless of outcome (the row
+// is created the moment a user is picked up). This is a durable, DB-backed
+// signal of how far the last nightly run got: it survives the server restart
+// that wipes the in-memory run-all state, so an abandoned night (only a
+// fraction of syncable users reached) is visible here even though the
+// in-memory counters reset to zero. Compare against users_syncable to alert on
+// an incomplete nightly run. window is an SQLite modifier, e.g. "-24 hours".
+func (d *DB) CountUsersReachedByScheduledRunSince(window string) (int, error) {
+	var n int
+	err := d.db.QueryRow(`
+		SELECT COUNT(DISTINCT user_id)
+		  FROM sync_runs
+		 WHERE trigger = 'scheduled'
+		   AND started_at > datetime('now', ?)
+	`, window).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("database: count users reached by scheduled run since %q: %w", window, err)
+	}
+	return n, nil
+}
+
 // GetFunnelCounts returns user counts at each onboarding step.
 func (d *DB) GetFunnelCounts() (*FunnelCounts, error) {
 	var fc FunnelCounts

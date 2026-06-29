@@ -139,6 +139,23 @@ func RegisterDBGauges(db *database.DB) {
 		}
 		return float64(n)
 	}))
+
+	// Distinct users the nightly bulk run actually reached in the last 24h.
+	// Durable (DB-backed), so it survives the mid-run server restart that
+	// zeroes the in-memory run-all state. Alert when this falls well below
+	// users_syncable: that means the nightly run was abandoned partway and
+	// most users were silently skipped.
+	_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name:        "nightly_run_users_reached",
+		Help:        "Distinct users reached by the scheduled nightly run in the last window.",
+		ConstLabels: prometheus.Labels{"window": "24h"},
+	}, func() float64 {
+		n, err := db.CountUsersReachedByScheduledRunSince("-24 hours")
+		if err != nil {
+			return 0
+		}
+		return float64(n)
+	}))
 }
 
 // NormalizePath reduces HTTP paths to route patterns to avoid high-cardinality labels.

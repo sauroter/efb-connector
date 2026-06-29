@@ -208,6 +208,65 @@ func TestInternalSyncAll_DetachesFromRequestContext(t *testing.T) {
 	}
 }
 
+// TestInternalSyncAll_SkipsUsersAlreadyCompletedThisCycle verifies the
+// restart-resilience fix: when run-all is re-kicked after a mid-run restart,
+// users that already have a completed scheduled run in the current cycle are
+// excluded from the working set, so the re-run converges instead of
+// re-processing everyone.
+func TestInternalSyncAll_SkipsUsersAlreadyCompletedThisCycle(t *testing.T) {
+	h := newTestHarness(t)
+
+	mkSyncable := func(email string) int64 {
+		u, err := h.db.CreateUser(email)
+		if err != nil {
+			t.Fatalf("create user %s: %v", email, err)
+		}
+		if err := h.db.SaveGarminCredentials(u.ID, email+"-g", "p"); err != nil {
+			t.Fatalf("garmin creds %s: %v", email, err)
+		}
+		if err := h.db.SaveEFBCredentials(u.ID, email+"-e", "p"); err != nil {
+			t.Fatalf("efb creds %s: %v", email, err)
+		}
+		return u.ID
+	}
+
+	done := mkSyncable("alreadydone@example.com")
+	_ = mkSyncable("fresh@example.com")
+
+	// Mark `done` as already completed by a scheduled run in this cycle.
+	runID, err := h.db.CreateSyncRun(done, "scheduled")
+	if err != nil {
+		t.Fatalf("create sync run: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("update sync run: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForRunAllCompletion(t, h, 3*time.Second) {
+		t.Fatalf("run-all never reported in_progress=false")
+	}
+
+	h.server.runAllMu.Lock()
+	total := h.server.runAllState.TotalUsers
+	finished := h.server.runAllState.FinishedAt
+	h.server.runAllMu.Unlock()
+
+	if total != 1 {
+		t.Errorf("TotalUsers = %d, want 1 (the already-completed user must be skipped)", total)
+	}
+	if finished == nil {
+		t.Errorf("FinishedAt is nil; a completed run must set it (the workflow uses it to tell a real finish from a restart-reset)")
+	}
+}
+
 func TestInternalSyncAllStatus_RejectsMissingAuth(t *testing.T) {
 	h := newTestHarness(t)
 
