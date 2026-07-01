@@ -123,6 +123,12 @@ jobs:
         env:
           TOKEN: ${{ secrets.FLY_METRICS_TOKEN || secrets.FLY_API_TOKEN }}
         run: |
+          # GitHub runs run-steps with `bash -eo pipefail`, so `-e` is on by
+          # default. Turn it OFF here: a failing Prometheus curl (401, timeout,
+          # transient 5xx) must NOT abort the step — that would fail the workflow
+          # with no ::error:: and email a false alarm, inverting the "never cry
+          # wolf" contract below. Real alerts are raised explicitly via `exit 1`.
+          set +e
           set -uo pipefail
 
           if [ -z "${TOKEN:-}" ]; then
