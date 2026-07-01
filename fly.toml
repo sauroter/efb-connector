@@ -25,11 +25,18 @@ primary_region = "fra"
   PORT = "8080"
   DB_PATH = "/data/efb-connector.db"
 
-# The nightly run-all spawns a python3 garminconnect subprocess per user on top
-# of the Go server. The 256 MB default was OOM-killing the machine mid-run
-# (fresh-process restart zeroed the in-memory run state, silently abandoning the
-# unprocessed users). 512 MB gives that peak (Go + one python3) comfortable
-# headroom. Scale-to-zero (min_machines_running=0) is intentionally kept.
+# Memory is sized for the python3 garminconnect subprocess, NOT the Go server.
+# Root cause confirmed 2026-06-30 from Fly Prometheus history (see the
+# nightly-sync-oom-debug memory note): the Go process stays flat at ~25-54 MB
+# RSS all week, but a single `python3 garmin_fetch.py` GPX download buffers the
+# whole file in RAM and has spiked to ~413 MB of (unreclaimable, swap=0)
+# anonymous memory for high-data users. That is invisible to
+# process_resident_memory_bytes (Go-only) and shows up as fly_instance_memory_inactive.
+# 256 MB (usable ~207 MB) cannot hold that peak -> confirmed OOM kill on 06-25.
+# 512 MB (usable ~459 MB) holds it but with only ~46 MB headroom, so it is
+# correct-but-marginal: the daily-sync workflow alerts if headroom runs low or
+# an OOM recurs. Reverting to 256 MB would require bounding the python child's
+# RAM (RLIMIT_DATA / streaming the GPX) first. Scale-to-zero is intentional.
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"

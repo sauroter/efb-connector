@@ -100,3 +100,82 @@ jobs:
 
           echo "::error::Deadline reached before observing a complete run"
           exit 1
+
+  # Memory headroom alert. The OOM that forced the 256->512 MB bump is a python3
+  # GPX-download anonymous-memory spike (peaked ~413 MB on the 459 MB-usable VM;
+  # see the nightly-sync-oom-debug note + fly.toml comment). The Go process never
+  # shows it (process_resident_memory_bytes is Go-only) — it lives at the cgroup
+  # level as fly_instance_memory_inactive. This job reads Fly Prometheus after the
+  # run and goes red (GitHub emails on failure) if an OOM recurred or headroom got
+  # critically low, so a creeping regression is caught before it abandons users.
+  #
+  # Auth: Fly's Prometheus needs an ORG-read token sent with the `FlyV1` scheme
+  # (NOT `Bearer`). Set repo secret FLY_METRICS_TOKEN to `fly tokens create
+  # readonly -o personal` output; it falls back to FLY_API_TOKEN. If the query
+  # can't authenticate or returns no data, the job WARNS and passes — monitoring
+  # gaps must never cry wolf or block the sync.
+  headroom-alert:
+    runs-on: ubuntu-latest
+    needs: sync
+    if: always()
+    steps:
+      - name: Check memory headroom over the run window
+        env:
+          TOKEN: ${{ secrets.FLY_METRICS_TOKEN || secrets.FLY_API_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::warning::No Fly token available for Prometheus; skipping headroom check"
+            exit 0
+          fi
+          # Accept tokens stored with or without the leading "FlyV1 " scheme.
+          TOKEN="${TOKEN#FlyV1 }"
+
+          PB="https://api.fly.io/prometheus/personal/api/v1/query"
+          APP='app="efb-connector"'
+          # [4h] covers the full possible run (180 min cap + re-kicks) plus margin.
+          q() {
+            curl -fsS --max-time 30 -G "$PB" \
+              -H "Authorization: FlyV1 $TOKEN" \
+              --data-urlencode "query=$1" 2>/dev/null
+          }
+          scalar() {
+            # Echo the single scalar value of an instant query, or empty on any
+            # error / no-data so the caller can treat it as "unknown".
+            echo "$1" | jq -r 'if .status=="success" and (.data.result|length)>0
+                                then .data.result[0].value[1] else empty end' 2>/dev/null
+          }
+
+          OOM_RAW=$(q "max_over_time(fly_instance_exit_oom{$APP}[4h])")
+          AVAIL_RAW=$(q "min_over_time(fly_instance_memory_mem_available{$APP}[4h])")
+          ANON_RAW=$(q "max_over_time(fly_instance_memory_inactive{$APP}[4h])")
+
+          OOM=$(scalar "$OOM_RAW")
+          AVAIL=$(scalar "$AVAIL_RAW")
+          ANON=$(scalar "$ANON_RAW")
+
+          if [ -z "$AVAIL" ] && [ -z "$OOM" ]; then
+            echo "::warning::Could not read Fly Prometheus (auth/scope or no data) — headroom unverified. Ensure FLY_METRICS_TOKEN is an org readonly token."
+            exit 0
+          fi
+
+          AVAIL_MB=$(awk -v b="${AVAIL:-0}" 'BEGIN{printf "%d", b/1048576}')
+          ANON_MB=$(awk  -v b="${ANON:-0}"  'BEGIN{printf "%d", b/1048576}')
+          echo "Run window: min mem_available=${AVAIL_MB} MiB, peak inactive-anon=${ANON_MB} MiB, exit_oom=${OOM:-0}"
+
+          # Hard alert: an actual OOM kill, or availability dipped below 32 MiB
+          # (the machine was about to die).
+          if [ "${OOM:-0}" != "0" ] && [ -n "${OOM:-}" ]; then
+            echo "::error::OOM kill detected during the run (fly_instance_exit_oom=${OOM}). The python GPX spike exceeded the VM. Bound the subprocess RAM or raise memory."
+            exit 1
+          fi
+          if [ -n "$AVAIL" ] && [ "$AVAIL_MB" -lt 32 ]; then
+            echo "::error::Memory headroom critical: min available ${AVAIL_MB} MiB (<32). An OOM is imminent — bound the python GPX download or raise the VM."
+            exit 1
+          fi
+          # Soft warning: headroom thinning toward the known ~413 MiB python peak.
+          if [ -n "$AVAIL" ] && [ "$AVAIL_MB" -lt 80 ]; then
+            echo "::warning::Memory headroom low: min available ${AVAIL_MB} MiB (peak python anon ${ANON_MB} MiB). Approaching the OOM threshold; consider bounding the GPX download."
+          fi
+          echo "Headroom OK."
