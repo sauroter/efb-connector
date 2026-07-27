@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/garmin"
 )
 
 // csrfTokenFor returns the CSRF token bound to the currently-logged-in
@@ -258,6 +260,87 @@ func TestMatchByName_PassedToGarminProviderOnSync(t *testing.T) {
 	}
 	if !h.garmin.LastOpts.MatchByName {
 		t.Errorf("mock provider received MatchByName=false, want true")
+	}
+}
+
+func TestActivityTypes_NewUserStartsWithPaddleSportsOnly(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "activity-types-default@example.com")
+
+	defaults := garmin.DefaultSelectedCategories()
+	u, _ := h.db.GetUserByID(uid)
+	if !slices.Equal(u.SelectedActivityTypes, defaults) {
+		t.Errorf("SelectedActivityTypes = %v, want %v", u.SelectedActivityTypes, defaults)
+	}
+
+	// Every category renders a box; only the defaults render it ticked. Both
+	// halves matter — an off-by-default category still has to be reachable.
+	resp, err := h.client.Get(h.srv.URL + "/settings")
+	if err != nil {
+		t.Fatalf("GET /settings: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	for _, cat := range garmin.KnownCategories {
+		if !strings.Contains(string(body), `value="`+cat+`"`) {
+			t.Errorf("settings page missing a box for %q", cat)
+			continue
+		}
+		checked := strings.Contains(string(body), `value="`+cat+`" checked`)
+		want := slices.Contains(defaults, cat)
+		if checked != want {
+			t.Errorf("%q checked = %v, want %v", cat, checked, want)
+		}
+	}
+}
+
+func TestActivityTypes_SavePersistsCheckedBoxesOnly(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "activity-types-save@example.com")
+
+	// Stefan's fix: keep the paddle sports, drop sailing.
+	form := url.Values{}
+	for _, cat := range garmin.KnownCategories {
+		if cat != garmin.CategorySailing {
+			form.Add("category", cat)
+		}
+	}
+	resp := postForm(t, h, "/settings/activity-types", form)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", resp.StatusCode)
+	}
+
+	u, _ := h.db.GetUserByID(uid)
+	if slices.Contains(u.SelectedActivityTypes, garmin.CategorySailing) {
+		t.Errorf("sailing still selected after unticking it: %v", u.SelectedActivityTypes)
+	}
+	if !slices.Contains(u.SelectedActivityTypes, garmin.CategoryKayak) {
+		t.Errorf("kayak should still be selected: %v", u.SelectedActivityTypes)
+	}
+	if len(u.SelectedActivityTypes) != len(garmin.KnownCategories)-1 {
+		t.Errorf("selected %d categories, want %d", len(u.SelectedActivityTypes), len(garmin.KnownCategories)-1)
+	}
+}
+
+func TestActivityTypes_SaveRejectsUnknownAndAcceptsEmpty(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "activity-types-edge@example.com")
+
+	// An unknown key posted by a hand-crafted form is dropped, not stored.
+	postForm(t, h, "/settings/activity-types", url.Values{
+		"category": {garmin.CategoryKayak, "bogus"},
+	})
+	u, _ := h.db.GetUserByID(uid)
+	if !slices.Equal(u.SelectedActivityTypes, []string{garmin.CategoryKayak}) {
+		t.Errorf("SelectedActivityTypes = %v, want [kayak]", u.SelectedActivityTypes)
+	}
+
+	// Unticking everything is a legitimate (if unusual) choice: sync nothing.
+	postForm(t, h, "/settings/activity-types", url.Values{})
+	u, _ = h.db.GetUserByID(uid)
+	if len(u.SelectedActivityTypes) != 0 {
+		t.Errorf("SelectedActivityTypes = %v, want empty", u.SelectedActivityTypes)
 	}
 }
 

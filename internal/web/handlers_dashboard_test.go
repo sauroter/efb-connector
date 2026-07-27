@@ -136,6 +136,50 @@ func TestDashboard_ShowsNoActivitiesHintAfterCleanZeroRun(t *testing.T) {
 	}
 }
 
+// A run that found nothing because the user's selection dropped everything
+// must NOT get the "re-tag your activity in Garmin" advice — their activity
+// type is already correct, and the fix is a checkbox on /settings. Telling a
+// sailor to change their activity type is worse than saying nothing.
+func TestDashboard_FilteredOutHintReplacesNoActivitiesHint(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "sailor@example.com")
+
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, err := h.db.CreateSyncRun(uid, "scheduled")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("UpdateSyncRun: %v", err)
+	}
+	// Two sailing activities passed Garmin's filter and were dropped here.
+	if err := h.db.RecordSyncDiagnostics(runID, 4, []string{"hiking", "sailing_v2"}, 0, 2); err != nil {
+		t.Fatalf("RecordSyncDiagnostics: %v", err)
+	}
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	for _, want := range []string{
+		"Activities filtered out by your selection",
+		"hiking, sailing_v2",
+		"Choose activity types",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard body missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"No matching activities found",
+		"Kajakfahren",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("dashboard must not show the re-tag advice %q when the filter dropped the activities", unwanted)
+		}
+	}
+}
+
 func TestDashboard_NoActivitiesHintSuppressedDuringSetup(t *testing.T) {
 	h := newTestHarness(t)
 	uid := loginAs(t, h, "setup-still-incomplete@example.com")

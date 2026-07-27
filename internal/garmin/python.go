@@ -104,7 +104,7 @@ type listActivityJSON struct {
 	ID           interface{} `json:"id"` // Garmin returns a number; use interface{} for robustness
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
-	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; not mapped to Activity (filtering is in Python)
+	ParentTypeID *int        `json:"parent_type_id"` // Garmin's stable parent category ID; mapped onto Activity.ParentTypeID for per-category filtering in the sync engine
 	Date         string      `json:"date"`           // "YYYY-MM-DD"
 	StartTime    string      `json:"start_time"`     // "YYYY-MM-DD HH:MM:SS"
 	StartLat     float64     `json:"start_lat"`
@@ -113,6 +113,16 @@ type listActivityJSON struct {
 	EndLng       float64     `json:"end_lng"`
 	Duration     float64     `json:"duration"` // seconds
 	Distance     float64     `json:"distance"` // metres
+}
+
+// parentTypeID dereferences the optional parent id, yielding 0 when Garmin
+// omitted it. Zero is safe: it matches no category, so such an activity falls
+// through to the caller's conservative keep-it default.
+func (r listActivityJSON) parentTypeID() int {
+	if r.ParentTypeID == nil {
+		return 0
+	}
+	return *r.ParentTypeID
 }
 
 // ListActivities runs `python <script> list --days <N> --json`, writes the
@@ -177,6 +187,7 @@ func (p *PythonGarminProvider) ListActivities(
 			ProviderID:   id,
 			Name:         r.Name,
 			Type:         r.Type,
+			ParentTypeID: r.parentTypeID(),
 			Date:         date,
 			StartTime:    startTime,
 			StartLat:     r.StartLat,
@@ -249,6 +260,7 @@ func (p *PythonGarminProvider) ListActivitiesRaw(
 			ProviderID:   id,
 			Name:         r.Name,
 			Type:         r.Type,
+			ParentTypeID: r.parentTypeID(),
 			Date:         date,
 			StartTime:    startTime,
 			StartLat:     r.StartLat,

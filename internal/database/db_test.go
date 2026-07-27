@@ -1,7 +1,9 @@
 package database
 
 import (
+	"database/sql"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,148 @@ func TestOpen_MigrationsIdempotent(t *testing.T) {
 	// Running migrations again on the same DB should be a no-op.
 	if err := db.runMigrations(); err != nil {
 		t.Fatalf("second runMigrations: %v", err)
+	}
+}
+
+// openDBBeforeMigration returns a DB with only the first idx migrations
+// applied, so a single migration can be exercised against realistic
+// pre-migration rows.
+func openDBBeforeMigration(t *testing.T, idx int) *DB {
+	t.Helper()
+
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	// One connection, or ":memory:" hands out a different empty database.
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+
+	d := &DB{db: sqlDB, encryptionKey: testKey}
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS migrations (
+		id         INTEGER PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create migrations table: %v", err)
+	}
+	for i := range idx {
+		if err := d.execMulti(migrations[i]); err != nil {
+			t.Fatalf("migration %d: %v", i, err)
+		}
+		if _, err := d.db.Exec(`INSERT INTO migrations (id) VALUES (?)`, i); err != nil {
+			t.Fatalf("record migration %d: %v", i, err)
+		}
+	}
+	return d
+}
+
+// Migration 0014 inverts the activity-type filter from an exclusion list to a
+// selection list. Nobody's imports may change as a result: whatever a user had
+// not excluded must come out selected, and the categories introduced with the
+// migration (sailing and friends) must arrive switched on.
+func TestMigration0014_BackfillsSelectionFromExclusions(t *testing.T) {
+	const migration0014 = 13 // slice index; migration 0013 is index 12
+
+	db := openDBBeforeMigration(t, migration0014)
+
+	cases := []struct {
+		email    string
+		excluded string
+		want     []string
+	}{
+		{
+			// Never touched the setting — the overwhelming majority. Comes out
+			// with the paddle sports and the catch-all; sailing, windsurf,
+			// surfing and motorboat are NOT backfilled, which is what stops
+			// them syncing on deploy.
+			email:    "untouched@example.com",
+			excluded: `[]`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// The Wanderfahrerabzeichen case from migration 0013: an explicit
+			// exclusion must survive the model change.
+			email:    "no-rowing@example.com",
+			excluded: `["rowing"]`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "whitewater", "other_water"},
+		},
+		{
+			// Excluded every category the old model knew about. They keep only
+			// the catch-all — and notably stop receiving sailing, which the old
+			// model was uploading to them all along because an unrecognised
+			// typeKey had no category to be excluded by.
+			email:    "nothing@example.com",
+			excluded: `["kayak","canoe","paddle","sup","rowing","whitewater"]`,
+			want:     []string{"other_water"},
+		},
+		{
+			// Unparseable value: json_each() would raise and abort the whole
+			// migration, which fails Open and stops the server booting. The
+			// guard must degrade it to "excluded nothing".
+			email:    "corrupt@example.com",
+			excluded: `not json at all`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// Empty string is the other shape SQLite will hand back if a row
+			// ever escaped the NOT NULL DEFAULT.
+			email:    "empty@example.com",
+			excluded: ``,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// Valid JSON, wrong shape — json_valid() alone lets this through
+			// and json_each yields a SQL NULL, turning NOT IN into NULL for
+			// every key and backfilling an EMPTY selection. That silently
+			// kills the user's imports, so it must fail open like the rest.
+			email:    "null@example.com",
+			excluded: `null`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// Same trap one level in: an array *containing* null.
+			email:    "null-elem@example.com",
+			excluded: `[null]`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// A JSON object is valid but not an array.
+			email:    "object@example.com",
+			excluded: `{"rowing":true}`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "rowing", "whitewater", "other_water"},
+		},
+		{
+			// Nulls mixed with real exclusions: the real ones must still apply.
+			email:    "null-mixed@example.com",
+			excluded: `["rowing",null]`,
+			want:     []string{"kayak", "canoe", "paddle", "sup", "whitewater", "other_water"},
+		},
+	}
+
+	for _, tc := range cases {
+		if _, err := db.db.Exec(
+			`INSERT INTO users (email, excluded_activity_types) VALUES (?, ?)`,
+			tc.email, tc.excluded,
+		); err != nil {
+			t.Fatalf("insert %s: %v", tc.email, err)
+		}
+	}
+
+	if err := db.runMigrations(); err != nil {
+		t.Fatalf("runMigrations: %v", err)
+	}
+
+	for _, tc := range cases {
+		var raw string
+		if err := db.db.QueryRow(
+			`SELECT selected_activity_types FROM users WHERE email = ?`, tc.email,
+		).Scan(&raw); err != nil {
+			t.Fatalf("select %s: %v", tc.email, err)
+		}
+		got := decodeSelectedCategories(raw)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: selected = %v, want %v", tc.email, got, tc.want)
+		}
 	}
 }
 

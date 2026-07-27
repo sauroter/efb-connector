@@ -199,6 +199,23 @@
       </article>
       {{end}}
 
+      {{if .ShowFilteredOutHint}}
+      <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
+        <header><strong>{{call .T "dashboard.filtered_out_hint.heading"}}</strong></header>
+        <p>{{call .T "dashboard.filtered_out_hint.body"}}</p>
+        {{$typeKeys := index .LastSync "TypeKeysSeen"}}
+        {{if $typeKeys}}
+        <p>
+          <small>
+            {{call .T "dashboard.no_activities_hint.types_seen_label"}}
+            <code>{{range $i, $t := $typeKeys}}{{if $i}}, {{end}}{{$t}}{{end}}</code>
+          </small>
+        </p>
+        {{end}}
+        <p><a href="/settings" role="button">{{call .T "dashboard.filtered_out_hint.fix"}}</a></p>
+      </article>
+      {{end}}
+
       {{if and .GarminConnected .EFBConnected}}
       <form method="POST" action="/sync/trigger"
             hx-post="/sync/trigger"

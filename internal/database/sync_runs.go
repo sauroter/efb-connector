@@ -36,10 +36,17 @@ type SyncRun struct {
 	// failed the strict water-sport filter but their name matched a
 	// keyword. Always 0 when match_by_name was off for this user.
 	NameMatchedCount int
-	// ExcludedCount is the number of activities that passed the
-	// water-sport filter but were dropped by the user's
-	// excluded_activity_types preference (migration 0013). Always 0 for
-	// users with no exclusions configured.
+	// ExcludedCount is the number of activities that passed Garmin's
+	// water-sport filter but were dropped because their category is not in
+	// the user's selected_activity_types (migration 0014).
+	//
+	// Do not read a non-zero value as "this user configured something": the
+	// default selection is paddle sports only, so sailing, windsurfing,
+	// surfing and motorboating are counted here for users who never opened
+	// the settings page. It is the signal that tells a run which found
+	// nothing apart from "Garmin returned nothing" (see the dashboard's
+	// filtered-out hint) — a "my trips stopped importing" ticket with
+	// excluded_count > 0 is usually the new default, not user error.
 	ExcludedCount int
 }
 

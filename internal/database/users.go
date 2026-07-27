@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"efb-connector/internal/garmin"
 )
 
 // User mirrors the users table.
@@ -26,22 +28,39 @@ type User struct {
 	// water-sport keyword even though their typeKey/parentTypeId did
 	// not match the strict filter. Off by default — see migration 0012.
 	MatchByName bool
-	// ExcludedActivityTypes is the list of water-sport category keys
-	// (see internal/garmin.KnownCategories) this user does NOT want
-	// synced to EFB. Empty slice means "sync everything that passes
-	// the water-sport filter" (the default). Persisted as a JSON array
-	// in the users.excluded_activity_types column (migration 0013).
-	ExcludedActivityTypes []string
+	// SelectedActivityTypes is the list of water-sport category keys
+	// (see internal/garmin.KnownCategories) this user DOES want synced to
+	// EFB. Anything that maps to a category outside this list is dropped
+	// before upload; activities that map to no known category at all are
+	// still kept. Persisted as a JSON array in the
+	// users.selected_activity_types column (migration 0014).
+	//
+	// An empty slice therefore means "sync nothing recognisable", not
+	// "sync everything" — new rows are seeded by CreateUser and existing
+	// ones were backfilled by the migration, so it is only empty if the
+	// user unticked every box.
+	SelectedActivityTypes []string
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
 // auto_create_trips is set to 1 here (recommended onboarding default) rather
 // than relying on the column's NOT NULL DEFAULT 0 from migration 0002 — see
 // migration 0010 for the rationale.
+//
+// selected_activity_types is seeded the same way, for the same reason: the
+// column defaults to '[]', which under the selection model means "sync
+// nothing". A new signup arrives with the paddle sports and the other_water
+// catch-all ticked — see garmin.DefaultSelectedCategories. Migration 0014
+// applied the same default to users who already existed.
 func (d *DB) CreateUser(email string) (*User, error) {
+	selected, err := json.Marshal(garmin.DefaultSelectedCategories())
+	if err != nil {
+		return nil, fmt.Errorf("database: encode default activity types: %w", err)
+	}
+
 	res, err := d.db.Exec(
-		`INSERT INTO users (email, auto_create_trips) VALUES (?, 1)`,
-		email,
+		`INSERT INTO users (email, auto_create_trips, selected_activity_types) VALUES (?, 1, ?)`,
+		email, string(selected),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: create user %q: %w", email, err)
@@ -59,7 +78,7 @@ func (d *DB) CreateUser(email string) (*User, error) {
 // no such row exists.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, excluded_activity_types
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types
 		   FROM users WHERE email = ?`, email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -72,7 +91,7 @@ func (d *DB) GetUserByEmail(email string) (*User, error) {
 // found.
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, excluded_activity_types
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types
 		   FROM users WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -145,20 +164,20 @@ func (d *DB) UpdateMatchByName(userID int64, enabled bool) error {
 	return nil
 }
 
-// UpdateExcludedActivityTypes overwrites the user's excluded_activity_types
+// UpdateSelectedActivityTypes overwrites the user's selected_activity_types
 // list. The caller is responsible for validating that every category is
 // known (see internal/garmin.IsKnownCategory); this function only encodes
-// and writes. An empty slice clears the list (everything syncs).
-func (d *DB) UpdateExcludedActivityTypes(userID int64, categories []string) error {
+// and writes. An empty slice means nothing recognisable syncs.
+func (d *DB) UpdateSelectedActivityTypes(userID int64, categories []string) error {
 	if categories == nil {
 		categories = []string{}
 	}
 	encoded, err := json.Marshal(categories)
 	if err != nil {
-		return fmt.Errorf("database: encode excluded_activity_types for user %d: %w", userID, err)
+		return fmt.Errorf("database: encode selected_activity_types for user %d: %w", userID, err)
 	}
-	if _, err := d.db.Exec(`UPDATE users SET excluded_activity_types = ? WHERE id = ?`, string(encoded), userID); err != nil {
-		return fmt.Errorf("database: update excluded_activity_types for user %d: %w", userID, err)
+	if _, err := d.db.Exec(`UPDATE users SET selected_activity_types = ? WHERE id = ?`, string(encoded), userID); err != nil {
+		return fmt.Errorf("database: update selected_activity_types for user %d: %w", userID, err)
 	}
 	return nil
 }
@@ -176,7 +195,7 @@ func (d *DB) DeleteUser(id int64) error {
 // both Garmin and EFB credentials marked as valid.
 func (d *DB) GetSyncableUsers() ([]User, error) {
 	rows, err := d.db.Query(`
-		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang, u.match_by_name, u.excluded_activity_types
+		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang, u.match_by_name, u.selected_activity_types
 		  FROM users u
 		  JOIN garmin_credentials gc ON gc.user_id = u.id AND gc.is_valid = 1
 		  JOIN efb_credentials    ec ON ec.user_id = u.id AND ec.is_valid = 1
@@ -236,11 +255,11 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted int
 
 	var matchByName int
-	var excludedJSON string
+	var selectedJSON string
 	err := row.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang, &matchByName, &excludedJSON,
+		&u.PreferredLang, &matchByName, &selectedJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -254,7 +273,7 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	u.EnrichTrips = enrichTrips != 0
 	u.SetupCompleted = setupCompleted != 0
 	u.MatchByName = matchByName != 0
-	u.ExcludedActivityTypes = decodeExcludedActivityTypes(excludedJSON)
+	u.SelectedActivityTypes = decodeSelectedCategories(selectedJSON)
 	return &u, nil
 }
 
@@ -263,12 +282,12 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
 	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted, matchByName int
-	var excludedJSON string
+	var selectedJSON string
 
 	err := rows.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang, &matchByName, &excludedJSON,
+		&u.PreferredLang, &matchByName, &selectedJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan user: %w", err)
@@ -282,20 +301,31 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	u.EnrichTrips = enrichTrips != 0
 	u.SetupCompleted = setupCompleted != 0
 	u.MatchByName = matchByName != 0
-	u.ExcludedActivityTypes = decodeExcludedActivityTypes(excludedJSON)
+	u.SelectedActivityTypes = decodeSelectedCategories(selectedJSON)
 	return &u, nil
 }
 
-// decodeExcludedActivityTypes decodes the JSON-encoded users.excluded_activity_types
-// column. Returns an empty slice when the column is empty, malformed, or
-// the default '[]' — callers iterate without nil checks.
-func decodeExcludedActivityTypes(s string) []string {
+// decodeSelectedCategories decodes users.selected_activity_types.
+//
+// Under the selection model an empty result means "sync nothing", so the two
+// ways of arriving at one must not be conflated: '[]' is a user who unticked
+// every box and is honoured, while an empty or unparseable column is a value
+// we cannot interpret and falls back to the defaults. Returning nil for both
+// would let one bad row silently stop a paddler's imports forever, with a
+// clean "completed" sync run and nothing logged — the worst failure this
+// package can produce.
+func decodeSelectedCategories(s string) []string {
 	if s == "" {
-		return nil
+		return garmin.DefaultSelectedCategories()
 	}
 	var out []string
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
+		return garmin.DefaultSelectedCategories()
+	}
+	if out == nil {
+		// Literal JSON `null` parses without error into a nil slice; that is
+		// an unreadable value, not an empty selection.
+		return garmin.DefaultSelectedCategories()
 	}
 	return out
 }
