@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+
+	"efb-connector/internal/garmin"
 )
 
 const specPath = "../../openapi.yaml"
@@ -80,6 +83,41 @@ func TestSpecValid(t *testing.T) {
 	doc := loadSpec(t)
 	if err := doc.Validate(context.Background()); err != nil {
 		t.Fatalf("openapi spec validation failed: %v", err)
+	}
+}
+
+// The activity-type enum in the spec is a third hand-maintained copy of
+// garmin.KnownCategories (the others being the i18n bundles, which
+// TestActivityTypeLabelsExist guards). Without this test, adding a category
+// leaves the published contract advertising a stale list and generated
+// clients rejecting a value the server accepts.
+func TestSpecActivityTypeEnumMatchesKnownCategories(t *testing.T) {
+	doc := loadSpec(t)
+
+	item := doc.Paths.Value("/settings/activity-types")
+	if item == nil || item.Post == nil {
+		t.Fatal("spec has no POST /settings/activity-types")
+	}
+	body := item.Post.RequestBody.Value.Content.Get("application/x-www-form-urlencoded")
+	if body == nil || body.Schema == nil {
+		t.Fatal("POST /settings/activity-types has no urlencoded schema")
+	}
+	prop := body.Schema.Value.Properties["category"]
+	if prop == nil || prop.Value.Items == nil {
+		t.Fatal("schema has no `category` array property")
+	}
+
+	got := make([]string, 0, len(prop.Value.Items.Value.Enum))
+	for _, v := range prop.Value.Items.Value.Enum {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("enum value %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+
+	if !slices.Equal(got, garmin.KnownCategories) {
+		t.Errorf("openapi.yaml category enum = %v,\n want %v\n(update the enum in openapi.yaml to match garmin.KnownCategories)", got, garmin.KnownCategories)
 	}
 }
 

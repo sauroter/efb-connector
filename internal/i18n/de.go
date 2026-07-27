@@ -102,6 +102,15 @@ var De = map[string]string{
 	"dashboard.no_activities_hint.types_seen_label": "Diese Aktivitätstypen haben wir stattdessen gesehen:",
 	"dashboard.no_activities_hint.howto":            "Falls du eine Kajakfahrt aufgezeichnet hast, sie in Garmin Connect aber als „Sonstiges“ oder „Cardio“ hinterlegt ist: Aktivität öffnen, Stift-Symbol antippen, Aktivitätstyp auf „Kajakfahren“ ändern. Der nächste Sync zieht sie dann automatisch nach.",
 
+	// ── Hinweis-Banner „Durch deine Auswahl gefiltert" ──
+	// Gegenstück zum Banner oben: Garmin hat sehr wohl Aktivitäten geliefert,
+	// sie wurden aber durch die Sportarten-Auswahl aussortiert. Ohne dieses
+	// Banner bekämen z.B. Segler den „ändere den Aktivitätstyp"-Hinweis, was
+	// genau das Falsche ist — ihr Aktivitätstyp stimmt bereits.
+	"dashboard.filtered_out_hint.heading": "Aktivitäten durch deine Auswahl gefiltert",
+	"dashboard.filtered_out_hint.body":    "Garmin Connect hat Aktivitäten geliefert, aber alle gehören zu Sportarten, die in deinen Einstellungen nicht ausgewählt sind. Standardmäßig synchronisieren wir nur Paddelsportarten — Segeln, Windsurfen, Surfen und Motorboot sind ausgeschaltet. Aktiviere die passende Sportart, wenn sie ins EFB soll.",
+	"dashboard.filtered_out_hint.fix":     "Sportarten auswählen",
+
 	// ── Getting started ──
 	"setup.heading":            "Erste Schritte",
 	"setup.intro":              "Richte dein Konto in vier Schritten ein:",
@@ -162,7 +171,7 @@ var De = map[string]string{
 	"settings.match_by_name":       "„Sonstiges“-Aktivitäten per Name erkennen",
 	"settings.match_by_name_desc":  "Auch in Garmin als „Sonstiges“ oder „Cardio“ markierte Aktivitäten importieren, wenn der Aktivitätsname Kajak/Kanu/SUP/Paddel/Rudern enthält. Praktisch, wenn deine Uhr (z.B. Venu 3) kein eigenes Kajak-Profil hat.",
 	"settings.activity_types":      "Sportarten synchronisieren",
-	"settings.activity_types_desc": "Alle Wassersportarten werden standardmäßig synchronisiert. Deaktiviere die, die nicht ins EFB sollen — z.B. Rudern weglassen, damit nur Paddelkilometer fürs Wanderfahrerabzeichen zählen.",
+	"settings.activity_types_desc": "Garmin führt vom Kajak bis zum Segeln alles unter „Wassersport“. Standardmäßig synchronisieren wir nur die Paddelsportarten — Segeln, Windsurfen/Kitesurfen, Surfen/Wasserski und Motorboot bleiben außen vor. Aktiviere sie, wenn sie doch ins EFB sollen, oder deaktiviere z.B. Rudern, damit nur Paddelkilometer fürs Wanderfahrerabzeichen zählen.",
 	"settings.activity_types_save": "Speichern",
 	"activity_type.kayak":          "Kajak",
 	"activity_type.canoe":          "Kanu",
@@ -170,6 +179,11 @@ var De = map[string]string{
 	"activity_type.sup":            "Stand-up Paddling",
 	"activity_type.rowing":         "Rudern",
 	"activity_type.whitewater":     "Wildwasser",
+	"activity_type.sailing":        "Segeln",
+	"activity_type.windsurf":       "Windsurfen / Kitesurfen",
+	"activity_type.surfing":        "Surfen / Wasserski",
+	"activity_type.motorboat":      "Motorboot",
+	"activity_type.other_water":    "Sonstiger Wassersport",
 	"settings.general":             "Allgemein",
 	"settings.language":            "Sprache",
 	"settings.language_desc":       "Bevorzugte Sprache wählen",

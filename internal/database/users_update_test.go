@@ -1,6 +1,11 @@
 package database
 
-import "testing"
+import (
+	"slices"
+	"testing"
+
+	"efb-connector/internal/garmin"
+)
 
 // mustGetUser fetches a user by id, fatalling on any error or missing row.
 // Used by the update tests instead of `got, _ := db.GetUserByID(id)` so a
@@ -85,6 +90,80 @@ func TestUpdateSetupCompleted(t *testing.T) {
 	}
 	if mustGetUser(t, db, u.ID).SetupCompleted {
 		t.Error("expected SetupCompleted=false")
+	}
+}
+
+func TestUpdateSelectedActivityTypes(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("uselected@example.com")
+
+	// A new account starts with the paddle sports plus the catch-all; the
+	// column's own '[]' default would mean "sync nothing", so CreateUser has
+	// to seed it.
+	wantDefault := garmin.DefaultSelectedCategories()
+	if !slices.Equal(u.SelectedActivityTypes, wantDefault) {
+		t.Errorf("CreateUser selected = %v, want %v", u.SelectedActivityTypes, wantDefault)
+	}
+	if slices.Contains(u.SelectedActivityTypes, garmin.CategorySailing) {
+		t.Error("sailing must not be selected for a new user")
+	}
+
+	want := []string{garmin.CategoryKayak, garmin.CategoryCanoe}
+	if err := db.UpdateSelectedActivityTypes(u.ID, want); err != nil {
+		t.Fatalf("UpdateSelectedActivityTypes: %v", err)
+	}
+	if got := mustGetUser(t, db, u.ID).SelectedActivityTypes; !slices.Equal(got, want) {
+		t.Errorf("SelectedActivityTypes = %v, want %v", got, want)
+	}
+
+	// nil and empty both mean "nothing selected" and must round-trip as such
+	// rather than blowing up on a NOT NULL column.
+	if err := db.UpdateSelectedActivityTypes(u.ID, nil); err != nil {
+		t.Fatalf("UpdateSelectedActivityTypes(nil): %v", err)
+	}
+	if got := mustGetUser(t, db, u.ID).SelectedActivityTypes; len(got) != 0 {
+		t.Errorf("SelectedActivityTypes after nil = %v, want empty", got)
+	}
+}
+
+// Empty means "sync nothing" under the selection model, so a value we cannot
+// read must NOT decode to empty — that would silently stop a user's imports
+// with a clean, successful-looking sync run. Only a real `[]` is honoured.
+func TestDecodeSelectedCategories_FailsOpenOnUnreadableValues(t *testing.T) {
+	defaults := garmin.DefaultSelectedCategories()
+
+	for _, raw := range []string{"", "not json", "null", "{}", `{"kayak":true}`} {
+		got := decodeSelectedCategories(raw)
+		if !slices.Equal(got, defaults) {
+			t.Errorf("decodeSelectedCategories(%q) = %v, want defaults %v", raw, got, defaults)
+		}
+	}
+
+	// A deliberate "I unticked everything" must survive as empty.
+	if got := decodeSelectedCategories(`[]`); len(got) != 0 {
+		t.Errorf("decodeSelectedCategories(`[]`) = %v, want empty (user unticked all)", got)
+	}
+	// And a real selection round-trips untouched.
+	if got := decodeSelectedCategories(`["kayak","sailing"]`); !slices.Equal(got, []string{"kayak", "sailing"}) {
+		t.Errorf("decodeSelectedCategories = %v, want [kayak sailing]", got)
+	}
+}
+
+// The column DEFAULT is a working selection, not '[]', so any INSERT that
+// omits the column yields a user who syncs rather than one who silently
+// never imports again.
+func TestSelectedActivityTypes_ColumnDefaultIsUsable(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.db.Exec(`INSERT INTO users (email) VALUES (?)`, "raw-insert@example.com"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	u, err := db.GetUserByEmail("raw-insert@example.com")
+	if err != nil || u == nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	if !slices.Equal(u.SelectedActivityTypes, garmin.DefaultSelectedCategories()) {
+		t.Errorf("column default gave %v, want %v", u.SelectedActivityTypes, garmin.DefaultSelectedCategories())
 	}
 }
 

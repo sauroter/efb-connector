@@ -83,7 +83,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// failure mode that prompted #216's "nothing is imported" report.
 	// Suppressed during setup (hasSynced=false) because that path already
 	// renders the getting-started checklist.
-	var noActivitiesHint bool
+	//
+	// filteredOutHint covers the other way a run finishes with nothing:
+	// Garmin did return activities and the user's own type selection dropped
+	// them. The two look identical in the counters, so they are told apart by
+	// excluded_count. Getting this wrong is worse than showing nothing — the
+	// no-activities copy tells people to re-tag activities that are already
+	// tagged correctly, and never mentions /settings.
+	var noActivitiesHint, filteredOutHint bool
 	if len(syncRuns) > 0 {
 		run := syncRuns[0]
 		lastSync = map[string]any{
@@ -100,14 +107,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			"TypeKeysSeen":      run.TypeKeysSeen,
 			"RawCount":          run.RawCount,
 			"NameMatchedCount":  run.NameMatchedCount,
+			"ExcludedCount":     run.ExcludedCount,
 		}
 		isClean := run.Status == "success" || run.Status == "completed"
 		hasSynced = isClean || run.Status == "partial"
-		noActivitiesHint = isClean &&
+		emptyRun := isClean &&
 			run.ActivitiesFound == 0 &&
 			run.ActivitiesSynced == 0 &&
 			run.ActivitiesFailed == 0 &&
 			run.ErrorMessage == ""
+		filteredOutHint = emptyRun && run.ExcludedCount > 0
+		noActivitiesHint = emptyRun && !filteredOutHint
 	}
 
 	// Compute getting-started state.
@@ -148,6 +158,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// the getting-started flow; the setup checklist already tells
 		// them why nothing has run yet.
 		"ShowNoActivitiesHint": noActivitiesHint && !showGettingStarted,
+		"ShowFilteredOutHint":  filteredOutHint && !showGettingStarted,
 	})
 }
 
@@ -194,9 +205,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		efbInvalid = !valid
 	}
 
-	excludedSet := make(map[string]bool, len(user.ExcludedActivityTypes))
-	for _, c := range user.ExcludedActivityTypes {
-		excludedSet[c] = true
+	selectedSet := make(map[string]bool, len(user.SelectedActivityTypes))
+	for _, c := range user.SelectedActivityTypes {
+		selectedSet[c] = true
 	}
 	type activityTypeFilter struct {
 		Key     string
@@ -204,7 +215,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	filters := make([]activityTypeFilter, 0, len(garmin.KnownCategories))
 	for _, cat := range garmin.KnownCategories {
-		filters = append(filters, activityTypeFilter{Key: cat, Checked: !excludedSet[cat]})
+		filters = append(filters, activityTypeFilter{Key: cat, Checked: selectedSet[cat]})
 	}
 
 	s.render(w, r, "settings.html", map[string]any{
@@ -368,13 +379,12 @@ func (s *Server) handleMatchByNameSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
-// handleExcludedActivityTypesSave saves the per-user activity-type
-// exclusion list (users.excluded_activity_types, migration 0013). The form
-// posts one `category` field per CHECKED box (= category the user wants
-// synced); we invert that to derive the excluded set so the on-the-wire
-// representation matches the user's mental model and "all unchecked"
-// degrades naturally into "exclude everything".
-func (s *Server) handleExcludedActivityTypesSave(w http.ResponseWriter, r *http.Request) {
+// handleSelectedActivityTypesSave saves the per-user activity-type
+// selection (users.selected_activity_types, migration 0014). The form posts
+// one `category` field per CHECKED box, which is exactly what we store — no
+// inversion, so the column reads the same way the checkboxes do and "all
+// unchecked" degrades naturally into "sync nothing".
+func (s *Server) handleSelectedActivityTypesSave(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserFromContext(r.Context())
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -395,19 +405,25 @@ func (s *Server) handleExcludedActivityTypesSave(w http.ResponseWriter, r *http.
 		keptSet[v] = true
 	}
 
-	excluded := make([]string, 0)
+	// Rebuild in KnownCategories order rather than trusting form order, so
+	// the stored array is stable and diffable across saves.
+	selected := make([]string, 0, len(keptSet))
 	for _, cat := range garmin.KnownCategories {
-		if !keptSet[cat] {
-			excluded = append(excluded, cat)
+		if keptSet[cat] {
+			selected = append(selected, cat)
 		}
 	}
 
-	if err := s.db.UpdateExcludedActivityTypes(userID, excluded); err != nil {
-		s.logger.Error("failed to update excluded_activity_types", "user_id", userID, "error", err)
+	// Log the success line only on success. Emitting it unconditionally would
+	// put "selected_activity_types updated" with the user's intended list in
+	// the log for a write that never landed, sending anyone triaging "I
+	// unticked sailing and it still syncs" looking in the engine.
+	if err := s.db.UpdateSelectedActivityTypes(userID, selected); err != nil {
+		s.logger.Error("failed to update selected_activity_types", "user_id", userID, "error", err)
 		setFlash(w, "flash.save_setting_failed")
+	} else {
+		s.logger.Info("selected_activity_types updated", "user_id", userID, "selected", selected)
 	}
-
-	s.logger.Info("excluded_activity_types updated", "user_id", userID, "excluded", excluded)
 
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }

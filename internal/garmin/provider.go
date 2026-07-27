@@ -91,8 +91,15 @@ type Activity struct {
 
 	// Type is the Garmin activity type key (e.g. kayaking_v2, paddling_v2,
 	// rowing_v2).  Filtering is done by parentTypeId in the Python script,
-	// so any water_sports subtype (parentTypeId 228) may appear here.
+	// so any water_sports subtype (parentTypeId 228) may appear here —
+	// including sailing, surfing and motorboating.
 	Type string
+
+	// ParentTypeID is Garmin's parent category id for Type, e.g. 228 for
+	// Water Sports.  Carried through so the sync engine can classify an
+	// activity whose typeKey postdates garmin.categoryPrefixes; see
+	// [CategoryForActivity].  Zero when Garmin omitted it.
+	ParentTypeID int
 
 	// Date is the local start date of the activity (date only, no time component).
 	Date time.Time

@@ -2,7 +2,23 @@ package i18n
 
 import (
 	"testing"
+
+	"efb-connector/internal/garmin"
 )
+
+// TestKeyParity only proves the two bundles agree; a category key missing
+// from *both* would slip through it and render as the raw key on /settings.
+func TestActivityTypeLabelsExist(t *testing.T) {
+	for _, cat := range garmin.KnownCategories {
+		key := "activity_type." + cat
+		for lang, bundle := range map[Lang]map[string]string{EN: En, DE: De} {
+			label, ok := bundle[key]
+			if !ok || label == "" {
+				t.Errorf("missing %s label for %q (add %q to both bundles)", lang, cat, key)
+			}
+		}
+	}
+}
 
 func TestKeyParity(t *testing.T) {
 	// Every key in En must also exist in De.

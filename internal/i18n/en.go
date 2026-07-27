@@ -103,6 +103,15 @@ var En = map[string]string{
 	"dashboard.no_activities_hint.types_seen_label": "Activity types we did see this run:",
 	"dashboard.no_activities_hint.howto":            "If you recorded a kayak trip but it's tagged as \"Other\" or \"Cardio\" in Garmin Connect, open the activity, tap the pencil icon, and change the activity type to Kajakfahren. The next sync will pick it up automatically.",
 
+	// ── "Filtered out by your selection" hint banner ──
+	// Counterpart to the banner above: Garmin did return activities, but the
+	// activity-type selection dropped all of them. Without this banner a
+	// sailor would get the "change your activity type" advice, which is
+	// exactly wrong — their activity type is already correct.
+	"dashboard.filtered_out_hint.heading": "Activities filtered out by your selection",
+	"dashboard.filtered_out_hint.body":    "Garmin Connect did return activities, but all of them belong to sports that aren't selected in your settings. By default we sync only paddle sports — sailing, windsurfing, surfing and motorboating are switched off. Tick the sport you want if it belongs in your EFB.",
+	"dashboard.filtered_out_hint.fix":     "Choose activity types",
+
 	// ── Getting started ──
 	"setup.heading":            "Getting Started",
 	"setup.intro":              "Set up your account in four steps:",
@@ -163,7 +172,7 @@ var En = map[string]string{
 	"settings.match_by_name":       "Match \"Other\" activities by name",
 	"settings.match_by_name_desc":  "Also include activities tagged \"Other\"/\"Cardio\" in Garmin if their name mentions Kajak/Kanu/SUP/Paddel/Rudern. Useful if your watch (e.g. Venu 3) doesn't have a native kayak activity profile.",
 	"settings.activity_types":      "Activity types to sync",
-	"settings.activity_types_desc": "All water sports are synced by default. Uncheck the ones you don't want in EFB — e.g. exclude rowing if you only want paddle-kilometres on your Wanderfahrerabzeichen.",
+	"settings.activity_types_desc": "Garmin files everything from kayaking to sailing under \"water sports\". By default we sync only the paddle sports — sailing, windsurfing/kitesurfing, surfing/waterskiing and motorboating stay out. Tick them if you do want them in EFB, or untick e.g. rowing if you only want paddle-kilometres on your Wanderfahrerabzeichen.",
 	"settings.activity_types_save": "Save",
 	"activity_type.kayak":          "Kayaking",
 	"activity_type.canoe":          "Canoeing",
@@ -171,6 +180,11 @@ var En = map[string]string{
 	"activity_type.sup":            "Stand-up paddling",
 	"activity_type.rowing":         "Rowing",
 	"activity_type.whitewater":     "Whitewater",
+	"activity_type.sailing":        "Sailing",
+	"activity_type.windsurf":       "Windsurfing / kitesurfing",
+	"activity_type.surfing":        "Surfing / waterskiing",
+	"activity_type.motorboat":      "Motorboating",
+	"activity_type.other_water":    "Other water sports",
 	"settings.general":             "General",
 	"settings.language":            "Language",
 	"settings.language_desc":       "Choose your preferred language",

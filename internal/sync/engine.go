@@ -237,7 +237,7 @@ func (s *SyncEngine) syncUserReportingLogin(ctx context.Context, userID int64, t
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, loggedIn, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.ExcludedActivityTypes)
+	found, synced, skipped, failed, tripsCreated, loggedIn, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.SelectedActivityTypes)
 
 	// 8. Determine final status.
 	status := "completed"
@@ -306,7 +306,7 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 // distinct signal rather than something inferred from the counters, because the
 // post-login no-track-points skip makes found==skipped possible even when a
 // login did happen.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, excludedCategories []string) (found, synced, skipped, failed, tripsCreated int, loggedIn bool, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, selectedCategories []string) (found, synced, skipped, failed, tripsCreated int, loggedIn bool, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -337,29 +337,34 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		return 0, 0, 0, 0, 0, false, fmt.Errorf("sync: list activities: %w", err)
 	}
 
-	// Apply the per-user activity-type exclusion (users.excluded_activity_types).
-	// Activities whose typeKey maps to an excluded category are dropped here,
-	// after Python's water-sport filter. Unknown typeKeys fall through
-	// untouched — see garmin.CategoryForTypeKey for the conservative default.
+	// Apply the per-user activity-type selection (users.selected_activity_types).
+	// Python's filter admits everything under Garmin's Water Sports parent —
+	// sailing and motorboating as much as kayaking — so this is where a user's
+	// choice about what belongs in their logbook is enforced, before any GPX is
+	// downloaded.
+	//
+	// Only activities that map to a *known* category are subject to the choice.
+	// One that maps to nothing (unrecognised typeKey outside the water-sports
+	// parent) is kept regardless — see garmin.CategoryForActivity for why that
+	// conservative default survives, and why it no longer lets whole sports
+	// through unasked.
 	excludedCount := 0
-	if len(excludedCategories) > 0 {
-		excludedSet := make(map[string]struct{}, len(excludedCategories))
-		for _, c := range excludedCategories {
-			excludedSet[c] = struct{}{}
-		}
-		kept := activities[:0]
-		for _, act := range activities {
-			cat, known := garmin.CategoryForTypeKey(act.Type)
-			if known {
-				if _, drop := excludedSet[cat]; drop {
-					excludedCount++
-					continue
-				}
-			}
-			kept = append(kept, act)
-		}
-		activities = kept
+	selectedSet := make(map[string]struct{}, len(selectedCategories))
+	for _, c := range selectedCategories {
+		selectedSet[c] = struct{}{}
 	}
+	kept := activities[:0]
+	for _, act := range activities {
+		cat, known := garmin.CategoryForActivity(act.Type, act.ParentTypeID, act.Name)
+		if known {
+			if _, want := selectedSet[cat]; !want {
+				excludedCount++
+				continue
+			}
+		}
+		kept = append(kept, act)
+	}
+	activities = kept
 
 	log.Info("fetched garmin activities",
 		"count", len(activities),

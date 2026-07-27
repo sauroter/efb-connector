@@ -168,4 +168,73 @@ ALTER TABLE sync_runs ADD COLUMN name_matched_count INTEGER;`,
 	// excluded by your filter" without re-running Garmin.
 	`ALTER TABLE users ADD COLUMN excluded_activity_types TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE sync_runs ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0;`,
+
+	// 0014 – invert the activity-type filter: store what the user WANTS
+	// synced (selected_activity_types) instead of what they excluded.
+	//
+	// Prompted by sailing showing up in eFB. Garmin's Water Sports parent
+	// (228) admits sailing, surfing, windsurfing and motorboating as well as
+	// paddle sports, and the exclusion model could not express "drop these"
+	// for any category the code didn't already know: unrecognised typeKeys
+	// were kept by design. Recording the positive selection instead means a
+	// *named* category added after this migration is off until someone ticks
+	// it.
+	//
+	// That is not a guarantee against the leak recurring, and must not be
+	// read as one: an unrecognised typeKey under parent 228 is classified as
+	// other_water, which is default-on (deliberately — see the note on
+	// garmin.CategoryOtherWater). So a new Garmin water sport still uploads
+	// by default; what this buys is that it lands in a box the user can
+	// untick, and that excluded_count/the dashboard hint can explain it.
+	//
+	// The backfilled list is the paddle sports plus the other_water catch-all
+	// (see garmin.DefaultSelectedCategories, which must stay in agreement),
+	// minus whatever the user had already excluded. So this migration DOES
+	// change behaviour for existing users, deliberately: sailing, surfing,
+	// windsurfing and motorboating stop syncing on deploy. That is the bug
+	// being fixed — a canoe logbook should not fill up with sailing trips
+	// because nobody noticed to untick a box. Anyone who wants them back
+	// ticks the box on /settings.
+	//
+	// Already-uploaded activities are untouched; the connector never deletes
+	// from EFB, so historical sailing entries stay until removed by hand.
+	//
+	// The key list is hardcoded on purpose — a migration is a point-in-time
+	// snapshot, and freezing it here is what makes later categories default
+	// to off. excluded_activity_types is left in place (applied migrations
+	// are never modified) but is no longer read.
+	//
+	// The input guard is not paranoia about our own writes (the column is NOT
+	// NULL and only ever set from json.Marshal): it bounds the blast radius,
+	// in two directions.
+	//
+	// json_each() raises on malformed input, which would fail the migration,
+	// roll back execMulti's transaction, and make Open — and so the whole
+	// server — refuse to start. Hence the CASE: an unreadable value degrades
+	// to "excluded nothing" rather than taking the service down on deploy.
+	//
+	// json_valid() alone is not enough, though. `null` and `[null]` are both
+	// valid JSON, and either makes json_each yield a SQL NULL, which turns
+	// `NOT IN` into NULL — never true — for every candidate key, silently
+	// backfilling an EMPTY selection. Under this model empty means "sync
+	// nothing", so that row's owner would lose their imports permanently.
+	// json_type() = 'array' rejects the first shape and the IS NOT NULL
+	// filter rejects the second, so both fail open like every other bad value.
+	//
+	// The column DEFAULT is the same paddle-sport list rather than '[]' for
+	// the same reason: any future INSERT that forgets the column gets a
+	// working user, not a silently dead one.
+	`ALTER TABLE users ADD COLUMN selected_activity_types TEXT NOT NULL DEFAULT '["kayak","canoe","paddle","sup","rowing","whitewater","other_water"]';
+UPDATE users SET selected_activity_types = (
+  SELECT json_group_array(v.value)
+    FROM json_each('["kayak","canoe","paddle","sup","rowing","whitewater","other_water"]') v
+   WHERE v.value NOT IN (
+     SELECT value FROM json_each(
+       CASE WHEN json_valid(users.excluded_activity_types)
+             AND json_type(users.excluded_activity_types) = 'array'
+            THEN users.excluded_activity_types ELSE '[]' END
+     )
+     WHERE value IS NOT NULL
+   )
+);`,
 }
