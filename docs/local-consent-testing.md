@@ -31,7 +31,9 @@ In another terminal:
 # 1. Sign up — paste your email, then check the server stdout for a line like
 #    "DEV MODE: email not sent ... text=… https://localhost:8080/auth/verify?token=… …"
 #    (the rendered plain-text body is logged verbatim and contains the link).
-# 2. Open that URL in the browser to log in.
+# 2. Open that URL in the browser, then click "Anmeldung bestätigen" to log in.
+#    (The link itself only renders a confirmation page — opening it does not
+#     consume the token, so email scanners cannot burn it.)
 # 3. Connect Garmin: any non-empty user/pass works (mock accepts anything).
 # 4. Connect EFB: any non-empty user/pass.
 #    -> The save handler calls CheckConsentGate. With the gate active, you

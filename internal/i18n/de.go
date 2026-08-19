@@ -70,6 +70,13 @@ var De = map[string]string{
 	"login_sent.spam":      "Nicht erhalten? Prüfe deinen Spam-Ordner oder",
 	"login_sent.try_again": "versuche es erneut",
 
+	// ── Login confirm (magic link landing page) ──
+	"login_confirm.title":    "Anmeldung bestätigen — EFB Connector",
+	"login_confirm.heading":  "Anmeldung bestätigen",
+	"login_confirm.subtitle": "Klicke auf den Button, um die Anmeldung abzuschließen.",
+	"login_confirm.submit":   "Anmeldung bestätigen",
+	"login_confirm.hint":     "Dieser Zwischenschritt schützt deinen Login-Link vor E-Mail-Sicherheitsscannern, die Links automatisch öffnen, bevor du dazu kommst.",
+
 	// ── Dashboard ──
 	"dashboard.title":        "Dashboard — EFB Connector",
 	"dashboard.heading":      "Dashboard",
@@ -263,8 +270,9 @@ var De = map[string]string{
 	"flash.email_required":                   "Bitte gib deine E-Mail-Adresse ein.",
 	"flash.login_rate_limited":               "Zu viele Anmeldeversuche. Bitte versuche es später erneut.",
 	"flash.generic_error":                    "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
-	"flash.invalid_login_link":               "Ungültiger oder fehlender Login-Link.",
-	"flash.login_link_expired":               "Dieser Login-Link ist ungültig oder abgelaufen. Bitte fordere einen neuen an.",
+	"flash.invalid_login_link":               "Ungültiger oder fehlender Login-Link. Bitte fordere einen neuen an.",
+	"flash.login_link_expired":               "Dieser Login-Link ist abgelaufen. Bitte fordere einen neuen an.",
+	"flash.login_link_used":                  "Dieser Login-Link wurde bereits verwendet. Bitte fordere einen neuen an.",
 	"flash.welcome":                          "Willkommen! Lass uns deine Konten verbinden.",
 	"flash.logged_out":                       "Du wurdest abgemeldet.",
 	"flash.email_password_required":          "E-Mail und Passwort sind erforderlich.",

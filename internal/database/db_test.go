@@ -2,9 +2,11 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -814,6 +816,50 @@ func TestMagicLink_ValidateSuccess(t *testing.T) {
 	}
 }
 
+// ValidateMagicLink enforces expiry with a SQL string comparison against
+// datetime('now'), which is only correct while expires_at is stored in that
+// exact layout. An RFC3339 value would sort above every datetime('now') and
+// the link would never expire, so pin the stored format.
+func TestMagicLink_StoredExpiryFormat(t *testing.T) {
+	db := openTestDB(t)
+
+	// One clock read for both the expectation and the value written, so a
+	// second boundary landing between them cannot fail the test spuriously.
+	now := time.Now()
+	want := now.Add(time.Hour).UTC().Format("2006-01-02 15:04:05")
+	if err := db.CreateMagicLink("fmt@e.com", "fmthash", now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateMagicLink: %v", err)
+	}
+
+	var got string
+	if err := db.db.QueryRow(
+		`SELECT expires_at FROM magic_links WHERE token_hash = ?`, "fmthash",
+	).Scan(&got); err != nil {
+		t.Fatalf("select expires_at: %v", err)
+	}
+	if got != want {
+		t.Errorf("expires_at = %q, want %q", got, want)
+	}
+
+	// Behavioural half. Asserting that a *future* value sorts above
+	// datetime('now') would prove nothing — an RFC3339 value does too. The
+	// inversion is same-day: 'T' (0x54) sorts above ' ' (0x20), so an RFC3339
+	// timestamp from earlier today still compares as later and the link would
+	// never expire. So assert on an already-expired row instead.
+	if err := db.CreateMagicLink("fmt2@e.com", "fmthash2", now.Add(-time.Minute)); err != nil {
+		t.Fatalf("CreateMagicLink (past): %v", err)
+	}
+	var stillUnexpired bool
+	if err := db.db.QueryRow(
+		`SELECT expires_at > datetime('now') FROM magic_links WHERE token_hash = ?`, "fmthash2",
+	).Scan(&stillUnexpired); err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if stillUnexpired {
+		t.Error("an already-expired link compares as unexpired; expiry is not enforced")
+	}
+}
+
 func TestMagicLink_UsedTwice(t *testing.T) {
 	db := openTestDB(t)
 
@@ -821,8 +867,8 @@ func TestMagicLink_UsedTwice(t *testing.T) {
 	_, _ = db.ValidateMagicLink("hash1")
 
 	_, err := db.ValidateMagicLink("hash1")
-	if err == nil {
-		t.Error("expected error on second use, got nil")
+	if !errors.Is(err, ErrMagicLinkUsed) {
+		t.Errorf("err = %v, want ErrMagicLinkUsed", err)
 	}
 }
 
@@ -832,8 +878,8 @@ func TestMagicLink_Expired(t *testing.T) {
 	_ = db.CreateMagicLink("m@e.com", "expiredhash", time.Now().Add(-time.Minute))
 
 	_, err := db.ValidateMagicLink("expiredhash")
-	if err == nil {
-		t.Error("expected error for expired link, got nil")
+	if !errors.Is(err, ErrMagicLinkExpired) {
+		t.Errorf("err = %v, want ErrMagicLinkExpired", err)
 	}
 }
 
@@ -841,8 +887,43 @@ func TestMagicLink_NotFound(t *testing.T) {
 	db := openTestDB(t)
 
 	_, err := db.ValidateMagicLink("notexist")
-	if err == nil {
-		t.Error("expected error for missing link, got nil")
+	if !errors.Is(err, ErrMagicLinkNotFound) {
+		t.Errorf("err = %v, want ErrMagicLinkNotFound", err)
+	}
+}
+
+// Consumption is a single conditional UPDATE, so a double-submitted
+// confirmation form cannot mint two sessions from one link.
+func TestMagicLink_ConcurrentConsume(t *testing.T) {
+	db := openTestDB(t)
+
+	_ = db.CreateMagicLink("race@e.com", "racehash", time.Now().Add(time.Hour))
+
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, results[i] = db.ValidateMagicLink("racehash")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var ok int
+	for i, err := range results {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrMagicLinkUsed) {
+			t.Errorf("goroutine %d: err = %v, want nil or ErrMagicLinkUsed", i, err)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("%d goroutines consumed the link, want exactly 1", ok)
 	}
 }
 

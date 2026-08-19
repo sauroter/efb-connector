@@ -20,45 +20,77 @@ func (d *DB) CreateMagicLink(email, tokenHash string, expiresAt time.Time) error
 	return nil
 }
 
-// ValidateMagicLink checks that tokenHash exists, has not been used, and has
-// not expired. On success it marks the link as used and returns the associated
-// email.
+// Magic-link validation failure modes. They are distinguished so the login
+// handler can tell the user which one happened: "already used" and "expired"
+// used to render as the same message, which sent a real bug report down the
+// wrong path.
+var (
+	ErrMagicLinkNotFound = errors.New("database: magic link not found")
+	ErrMagicLinkUsed     = errors.New("database: magic link already used")
+	ErrMagicLinkExpired  = errors.New("database: magic link expired")
+)
+
+// ValidateMagicLink consumes the link identified by tokenHash and returns the
+// associated email. Consumption is a single conditional UPDATE, so concurrent
+// callers cannot both succeed on the same token.
+//
+// expires_at is compared as a string: CreateMagicLink writes UTC in exactly the
+// format SQLite's datetime('now') produces, so lexical order is chronological.
 func (d *DB) ValidateMagicLink(tokenHash string) (email string, err error) {
-	var id int64
+	err = d.db.QueryRow(`
+		UPDATE magic_links
+		   SET used_at = datetime('now')
+		 WHERE token_hash = ?
+		   AND used_at IS NULL
+		   AND expires_at > datetime('now')
+		RETURNING email
+	`, tokenHash).Scan(&email)
+
+	if err == nil {
+		return email, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("database: consume magic link: %w", err)
+	}
+
+	// The UPDATE matched nothing. Work out why, for the user-facing message.
+	return "", d.classifyMagicLinkFailure(tokenHash)
+}
+
+// classifyMagicLinkFailure runs only on the failure path, to turn "no row was
+// updated" into a specific reason.
+func (d *DB) classifyMagicLinkFailure(tokenHash string) error {
 	var expiresAtStr string
 	var usedAt sql.NullString
 
-	err = d.db.QueryRow(`
-		SELECT id, email, expires_at, used_at
-		  FROM magic_links WHERE token_hash = ?
-	`, tokenHash).Scan(&id, &email, &expiresAtStr, &usedAt)
+	err := d.db.QueryRow(`
+		SELECT expires_at, used_at FROM magic_links WHERE token_hash = ?
+	`, tokenHash).Scan(&expiresAtStr, &usedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("database: magic link not found")
+		return ErrMagicLinkNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("database: query magic link: %w", err)
+		return fmt.Errorf("database: query magic link: %w", err)
 	}
 
+	// Check used before expired: a link that was used and has since expired is
+	// more usefully reported as used.
 	if usedAt.Valid {
-		return "", fmt.Errorf("database: magic link already used")
+		return ErrMagicLinkUsed
 	}
 
 	expiresAt, err := parseTime(expiresAtStr)
 	if err != nil {
-		return "", fmt.Errorf("database: parse magic link expiry: %w", err)
+		return fmt.Errorf("database: parse magic link expiry: %w", err)
 	}
 	if time.Now().After(expiresAt) {
-		return "", fmt.Errorf("database: magic link expired")
+		return ErrMagicLinkExpired
 	}
 
-	if _, err := d.db.Exec(
-		`UPDATE magic_links SET used_at = datetime('now') WHERE id = ?`, id,
-	); err != nil {
-		return "", fmt.Errorf("database: mark magic link used: %w", err)
-	}
-
-	return email, nil
+	// Row exists, unused, unexpired — the UPDATE should have matched. Only
+	// reachable if another caller consumed it between the two statements.
+	return ErrMagicLinkUsed
 }
 
 // CreateSession inserts a session row for userID.
