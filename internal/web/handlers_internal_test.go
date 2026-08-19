@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"efb-connector/internal/database"
 	"efb-connector/internal/garmin"
 )
 
@@ -176,6 +178,47 @@ func TestInternalSyncAll_RejectsConcurrentRun(t *testing.T) {
 	}
 	if body["total_users"].(float64) != 5 {
 		t.Errorf("body.total_users = %v, want 5", body["total_users"])
+	}
+}
+
+// TestInternalSyncAll_TriggersCleanup verifies that the nightly run sweeps
+// expired records. This is the reliable hook for housekeeping: the 1h ticker in
+// cmd/server/main.go almost never fires, because Fly suspends the machine
+// whenever traffic stops.
+//
+// The observable is the sentinel returned for a long-expired link. Before the
+// sweep the row is present and reports ErrMagicLinkExpired; after it, the row is
+// gone and it reports ErrMagicLinkNotFound. There is no equivalent observable
+// for sessions — GetSession returns the same generic error either way — so this
+// asserts on the magic link, which is enough to prove CleanupExpired ran.
+//
+// No sleep is needed: the cleanup defer runs BEFORE the defer that flips
+// in_progress to false, so waiting for completion also waits for the sweep.
+func TestInternalSyncAll_TriggersCleanup(t *testing.T) {
+	h := newTestHarness(t)
+
+	// Expired well past the retention grace period, so the sweep deletes it.
+	if err := h.db.CreateMagicLink("stale@example.com", "stale-token", time.Now().Add(-8*24*time.Hour)); err != nil {
+		t.Fatalf("CreateMagicLink: %v", err)
+	}
+	if _, err := h.db.ValidateMagicLink("stale-token"); !errors.Is(err, database.ErrMagicLinkExpired) {
+		t.Fatalf("before sweep: err = %v, want ErrMagicLinkExpired", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/internal/sync/run-all", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForRunAllCompletion(t, h, 2*time.Second) {
+		t.Fatalf("run-all never reported in_progress=false")
+	}
+
+	if _, err := h.db.ValidateMagicLink("stale-token"); !errors.Is(err, database.ErrMagicLinkNotFound) {
+		t.Errorf("after sweep: err = %v, want ErrMagicLinkNotFound (row should have been deleted)", err)
 	}
 }
 
