@@ -99,10 +99,25 @@ func (ts *testServer) login(t *testing.T, email string) int64 {
 		t.Fatalf("generate magic link: %v", err)
 	}
 
-	// Visit the verify URL — this creates the user + session and sets cookie.
-	resp, err := ts.client.Get(ts.srv.URL + "/auth/verify?token=" + token)
+	// Step 1: the link itself only renders a confirmation page. Exercise it so
+	// every integration test covers the real two-step flow.
+	resp, err := ts.client.Get(ts.srv.URL + "/auth/verify?token=" + url.QueryEscape(token))
 	if err != nil {
-		t.Fatalf("verify magic link: %v", err)
+		t.Fatalf("verify magic link form: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify form status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(string(bodyBytes), `name="token" value="`+token+`"`) {
+		t.Fatal("confirmation page does not carry the token")
+	}
+
+	// Step 2: submitting the form consumes the token and sets the cookie.
+	resp, err = ts.client.PostForm(ts.srv.URL+"/auth/verify", url.Values{"token": {token}})
+	if err != nil {
+		t.Fatalf("confirm magic link: %v", err)
 	}
 	resp.Body.Close()
 

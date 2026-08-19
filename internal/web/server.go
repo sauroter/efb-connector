@@ -211,7 +211,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /", s.handleLanding)
 	mux.HandleFunc("GET /login", s.handleLoginForm)
 	mux.HandleFunc("POST /login", s.handleLoginSubmit)
-	mux.HandleFunc("GET /auth/verify", s.handleVerifyMagicLink)
+	mux.HandleFunc("GET /auth/verify", s.handleVerifyMagicLinkForm)
+	mux.HandleFunc("POST /auth/verify", s.handleVerifyMagicLinkConfirm)
 	mux.HandleFunc("GET /impressum", s.handleImpressum)
 	mux.HandleFunc("GET /privacy", s.handlePrivacy)
 

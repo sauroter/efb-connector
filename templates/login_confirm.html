@@ -1,0 +1,41 @@
+{{define "login_confirm.html"}}<!DOCTYPE html>
+<html lang="{{.Lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>{{call .T "login_confirm.title"}}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .auth-card { max-width: 420px; margin: 4rem auto; }
+  </style>
+</head>
+<body>
+  <nav class="container">
+    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>{{call .T "nav.brand"}}</strong></a></li></ul>
+  </nav>
+
+  <main class="container">
+    <article class="auth-card">
+      <hgroup>
+        <h1>{{call .T "login_confirm.heading"}}</h1>
+        <p>{{call .T "login_confirm.subtitle"}}</p>
+      </hgroup>
+
+      {{if .Flash}}
+      <div role="alert" class="flash-message">{{.Flash}}</div>
+      {{end}}
+
+      <form method="POST" action="/auth/verify">
+        <input type="hidden" name="token" value="{{.Token}}">
+        <button type="submit">{{call .T "login_confirm.submit"}}</button>
+      </form>
+
+      <p><small>{{call .T "login_confirm.hint"}}</small></p>
+    </article>
+  </main>
+
+  {{template "footer" .}}
+</body>
+</html>{{end}}

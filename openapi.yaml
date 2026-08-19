@@ -490,8 +490,11 @@ paths:
   /auth/verify:
     get:
       tags: [Public]
-      summary: Verify magic link
-      description: Validates the token, creates a session, and redirects to /dashboard.
+      summary: Magic-link sign-in confirmation page
+      description: |
+        Renders a confirmation page with a submit button. Side-effect free: the
+        token is NOT validated or consumed and no user is created, so link
+        prefetching by email security scanners cannot burn the one-time token.
       operationId: getVerifyMagicLink
       parameters:
         - name: token
@@ -500,12 +503,43 @@ paths:
           schema:
             type: string
       responses:
+        "200":
+          description: HTML confirmation page
+          content:
+            text/html:
+              schema:
+                type: string
         "303":
-          description: Redirect to /dashboard with session cookie set
+          description: Redirect to /login when the token is missing or malformed
+    post:
+      tags: [Public]
+      summary: Confirm magic link and create session
+      description: |
+        Validates and consumes the one-time token, creates the session, and
+        redirects to /dashboard. Not CSRF-protected (no session exists yet);
+        guarded by a same-origin check instead.
+      operationId: postVerifyMagicLink
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required: [token]
+      responses:
+        "303":
+          description: Redirect to /dashboard with session cookie set, or to /login on failure
           headers:
             Set-Cookie:
               schema:
                 type: string
+        "400":
+          description: Malformed form body
+        "403":
+          description: Cross-origin POST rejected
 
   /impressum:
     get:

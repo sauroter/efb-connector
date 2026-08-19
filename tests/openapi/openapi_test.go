@@ -24,6 +24,7 @@ var registeredRoutes = []string{
 	"GET /login",
 	"POST /login",
 	"GET /auth/verify",
+	"POST /auth/verify",
 	"GET /impressum",
 	"GET /privacy",
 	"POST /auth/logout",

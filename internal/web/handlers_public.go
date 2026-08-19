@@ -1,11 +1,14 @@
 package web
 
 import (
+	"encoding/base64"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/database"
 	"efb-connector/internal/i18n"
 )
 
@@ -93,10 +96,58 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleVerifyMagicLink validates the magic link token, creates a session,
-// sets a session cookie, and redirects to /dashboard.
-func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
+// handleVerifyMagicLinkForm renders the sign-in confirmation page.
+//
+// This handler is deliberately free of side effects: the token is neither
+// looked up nor consumed, and no user is created. Email security scanners
+// (Bitdefender, Microsoft Defender Safe Links) prefetch links found in mail,
+// and Go's ServeMux serves HEAD from a GET pattern — so while verification
+// happened on GET, a scanner's prefetch consumed the one-time token and the
+// human's click landed on "already used" a fraction of a second later.
+// Consumption now requires the POST below.
+func (s *Server) handleVerifyMagicLinkForm(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
+	if token == "" {
+		setFlash(w, "flash.invalid_login_link")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	// Format check only — no database access. This path is reachable by any
+	// scanner, so it must not become an oracle for which tokens exist. It does
+	// catch links a mail client truncated or line-wrapped.
+	if _, err := base64.RawURLEncoding.DecodeString(token); err != nil {
+		setFlash(w, "flash.invalid_login_link")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	s.render(w, r, "login_confirm.html", map[string]any{
+		"Token": token,
+		"Flash": flash(w, r),
+	})
+}
+
+// handleVerifyMagicLinkConfirm consumes the magic link token, creates a
+// session, sets the session cookie, and redirects to /dashboard.
+func (s *Server) handleVerifyMagicLinkConfirm(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	if !sameOriginPost(r, s.baseURL(r)) {
+		s.logger.Warn("cross-origin magic link confirm rejected",
+			"ip", remoteIP(r),
+			"origin", r.Header.Get("Origin"),
+			"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
+			"user_agent", r.UserAgent(),
+		)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	token := r.FormValue("token")
 	if token == "" {
 		setFlash(w, "flash.invalid_login_link")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -105,8 +156,13 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := s.auth.ValidateMagicLink(token)
 	if err != nil {
-		s.logger.Warn("magic link validation failed", "error", err)
-		setFlash(w, "flash.login_link_expired")
+		s.logger.Warn("magic link validation failed",
+			"error", err,
+			"method", r.Method,
+			"ip", remoteIP(r),
+			"user_agent", r.UserAgent(),
+		)
+		setFlash(w, magicLinkFlashKey(err))
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -131,7 +187,12 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	s.logger.Info("user logged in", "user_id", userID)
+	s.logger.Info("user logged in",
+		"user_id", userID,
+		"method", r.Method,
+		"ip", remoteIP(r),
+		"user_agent", r.UserAgent(),
+	)
 
 	// Show a welcome message for new users who haven't connected any services yet.
 	_, _, garminErr := s.db.GetGarminCredentials(userID)
@@ -141,6 +202,45 @@ func (s *Server) handleVerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// magicLinkFlashKey maps a validation failure to the i18n key shown to the
+// user. Reporting "already used" as "expired" is what made a real bug report
+// look like a clock problem, so these stay distinct.
+func magicLinkFlashKey(err error) string {
+	switch {
+	case errors.Is(err, database.ErrMagicLinkUsed):
+		return "flash.login_link_used"
+	case errors.Is(err, database.ErrMagicLinkExpired):
+		return "flash.login_link_expired"
+	case errors.Is(err, database.ErrMagicLinkNotFound):
+		return "flash.invalid_login_link"
+	default:
+		// A database error, or user lookup/creation failed. Not the user's
+		// fault and not something a fresh link would fix.
+		return "flash.generic_error"
+	}
+}
+
+// sameOriginPost guards session-creating POSTs that cannot use CSRFProtect,
+// which requires a session that does not exist yet at confirm time.
+//
+// Without it, an attacker could auto-submit their own magic link token from a
+// page the victim visits, landing the victim in the attacker's account — where
+// they would then store their Garmin and EFB credentials.
+//
+// An absent Origin means a non-browser client (curl, tests): browsers always
+// send Origin on cross-origin form POSTs and scripts cannot forge it, so
+// allowing the absent case does not weaken the check.
+func sameOriginPost(r *http.Request, base string) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin" || site == "none"
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	return strings.TrimSuffix(origin, "/") == strings.TrimSuffix(base, "/")
 }
 
 // handleLogout destroys the current session, clears the cookie, and redirects

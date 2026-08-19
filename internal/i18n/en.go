@@ -70,6 +70,13 @@ var En = map[string]string{
 	"login_sent.spam":      "Didn't receive it? Check your spam folder or",
 	"login_sent.try_again": "try again",
 
+	// ── Login confirm (magic link landing page) ──
+	"login_confirm.title":    "Confirm sign-in — EFB Connector",
+	"login_confirm.heading":  "Confirm sign-in",
+	"login_confirm.subtitle": "Click the button below to finish signing in.",
+	"login_confirm.submit":   "Confirm sign-in",
+	"login_confirm.hint":     "This extra step protects your login link from email security scanners, which open links automatically before you get a chance to.",
+
 	// ── Dashboard ──
 	"dashboard.title":        "Dashboard — EFB Connector",
 	"dashboard.heading":      "Dashboard",
@@ -265,7 +272,8 @@ var En = map[string]string{
 	"flash.login_rate_limited":               "Too many login attempts. Please try again later.",
 	"flash.generic_error":                    "Something went wrong. Please try again.",
 	"flash.invalid_login_link":               "Invalid or missing login link.",
-	"flash.login_link_expired":               "This login link is invalid or has expired. Please request a new one.",
+	"flash.login_link_expired":               "This login link has expired. Please request a new one.",
+	"flash.login_link_used":                  "This login link has already been used. Please request a new one.",
 	"flash.welcome":                          "Welcome! Let's get your accounts connected.",
 	"flash.logged_out":                       "You have been logged out.",
 	"flash.email_password_required":          "Email and password are required.",

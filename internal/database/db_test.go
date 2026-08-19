@@ -2,9 +2,11 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -821,8 +823,8 @@ func TestMagicLink_UsedTwice(t *testing.T) {
 	_, _ = db.ValidateMagicLink("hash1")
 
 	_, err := db.ValidateMagicLink("hash1")
-	if err == nil {
-		t.Error("expected error on second use, got nil")
+	if !errors.Is(err, ErrMagicLinkUsed) {
+		t.Errorf("err = %v, want ErrMagicLinkUsed", err)
 	}
 }
 
@@ -832,8 +834,8 @@ func TestMagicLink_Expired(t *testing.T) {
 	_ = db.CreateMagicLink("m@e.com", "expiredhash", time.Now().Add(-time.Minute))
 
 	_, err := db.ValidateMagicLink("expiredhash")
-	if err == nil {
-		t.Error("expected error for expired link, got nil")
+	if !errors.Is(err, ErrMagicLinkExpired) {
+		t.Errorf("err = %v, want ErrMagicLinkExpired", err)
 	}
 }
 
@@ -841,8 +843,43 @@ func TestMagicLink_NotFound(t *testing.T) {
 	db := openTestDB(t)
 
 	_, err := db.ValidateMagicLink("notexist")
-	if err == nil {
-		t.Error("expected error for missing link, got nil")
+	if !errors.Is(err, ErrMagicLinkNotFound) {
+		t.Errorf("err = %v, want ErrMagicLinkNotFound", err)
+	}
+}
+
+// Consumption is a single conditional UPDATE, so a double-submitted
+// confirmation form cannot mint two sessions from one link.
+func TestMagicLink_ConcurrentConsume(t *testing.T) {
+	db := openTestDB(t)
+
+	_ = db.CreateMagicLink("race@e.com", "racehash", time.Now().Add(time.Hour))
+
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([]error, n)
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, results[i] = db.ValidateMagicLink("racehash")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var ok int
+	for i, err := range results {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrMagicLinkUsed) {
+			t.Errorf("goroutine %d: err = %v, want nil or ErrMagicLinkUsed", i, err)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("%d goroutines consumed the link, want exactly 1", ok)
 	}
 }
 

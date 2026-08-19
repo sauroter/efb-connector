@@ -79,7 +79,10 @@ func (s *AuthService) GenerateMagicLink(email string) (token string, err error) 
 func (s *AuthService) ValidateMagicLink(token string) (userID int64, err error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, fmt.Errorf("auth: decode magic link token: %w", err)
+		// A token that is not valid base64url was never in the table; report it
+		// as unknown rather than as a generic error, so the caller can show the
+		// same message as for any other unrecognised token.
+		return 0, fmt.Errorf("auth: decode magic link token: %w", database.ErrMagicLinkNotFound)
 	}
 
 	hash := sha256Hex(raw)
