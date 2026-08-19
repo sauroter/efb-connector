@@ -122,6 +122,10 @@ func (s *Server) handleVerifyMagicLinkForm(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The body carries a live one-time token, unlike the bodyless redirect this
+	// replaced. Keep it out of shared caches and browser history.
+	w.Header().Set("Cache-Control", "no-store, private")
+
 	s.render(w, r, "login_confirm.html", map[string]any{
 		"Token": token,
 		"Flash": flash(w, r),
@@ -136,10 +140,12 @@ func (s *Server) handleVerifyMagicLinkConfirm(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !sameOriginPost(r, s.baseURL(r)) {
+	base := s.baseURL(r)
+	if !sameOriginPost(r, base) {
 		s.logger.Warn("cross-origin magic link confirm rejected",
 			"ip", remoteIP(r),
 			"origin", r.Header.Get("Origin"),
+			"expected_origin", base,
 			"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
 			"user_agent", r.UserAgent(),
 		)

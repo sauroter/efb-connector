@@ -137,6 +137,26 @@ func TestVerifyMagicLinkForm_UnknownToken_RendersConfirmPage(t *testing.T) {
 	}
 }
 
+// The page body carries a live token, so it must not be cached.
+func TestVerifyMagicLinkForm_IsNotCached(t *testing.T) {
+	h := newTestHarness(t)
+
+	token, err := h.auth.GenerateMagicLink("cache@example.com")
+	if err != nil {
+		t.Fatalf("generate magic link: %v", err)
+	}
+
+	resp, err := h.raw.Get(h.srv.URL + "/auth/verify?token=" + token)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want it to contain no-store", cc)
+	}
+}
+
 func TestVerifyMagicLinkForm_MalformedToken_RedirectsToLogin(t *testing.T) {
 	h := newTestHarness(t)
 

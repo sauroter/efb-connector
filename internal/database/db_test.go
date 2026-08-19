@@ -816,6 +816,40 @@ func TestMagicLink_ValidateSuccess(t *testing.T) {
 	}
 }
 
+// ValidateMagicLink enforces expiry with a SQL string comparison against
+// datetime('now'), which is only correct while expires_at is stored in that
+// exact layout. An RFC3339 value would sort above every datetime('now') and
+// the link would never expire, so pin the stored format.
+func TestMagicLink_StoredExpiryFormat(t *testing.T) {
+	db := openTestDB(t)
+
+	want := time.Now().Add(time.Hour).UTC().Format("2006-01-02 15:04:05")
+	if err := db.CreateMagicLink("fmt@e.com", "fmthash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateMagicLink: %v", err)
+	}
+
+	var got string
+	if err := db.db.QueryRow(
+		`SELECT expires_at FROM magic_links WHERE token_hash = ?`, "fmthash",
+	).Scan(&got); err != nil {
+		t.Fatalf("select expires_at: %v", err)
+	}
+	if got != want {
+		t.Errorf("expires_at = %q, want %q", got, want)
+	}
+
+	// And the comparison the query relies on must actually hold.
+	var newer bool
+	if err := db.db.QueryRow(
+		`SELECT ? > datetime('now') FROM magic_links WHERE token_hash = ?`, got, "fmthash",
+	).Scan(&newer); err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if !newer {
+		t.Error("stored expires_at does not compare as later than datetime('now')")
+	}
+}
+
 func TestMagicLink_UsedTwice(t *testing.T) {
 	db := openTestDB(t)
 
