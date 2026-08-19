@@ -127,7 +127,7 @@ func (s *Server) runSyncAll() {
 	// rather than a tail call so the sweep also happens when the run returned
 	// early, timed out, or panicked — CleanupExpired takes no context, so a
 	// dead ctx does not skip it.
-	defer s.cleanupExpired("after-run-all")
+	defer s.CleanupExpired("after-run-all")
 
 	// Resolve the user list ourselves so TotalUsers and the iterated set
 	// come from the same query — avoids spurious workflow failures from
@@ -185,10 +185,13 @@ func (s *Server) runSyncAll() {
 	s.logger.Info("sync-all completed", "total_users", len(users))
 }
 
-// cleanupExpired runs the expired-record sweep and logs the outcome. Errors are
+// CleanupExpired runs the expired-record sweep and logs the outcome. Errors are
 // logged, never folded into runAllState: housekeeping must not fail the nightly
 // GitHub Action.
-func (s *Server) cleanupExpired(reason string) {
+//
+// Exported because cmd/server drives the same sweep at startup and on its
+// hourly ticker; reason distinguishes the three call sites in the logs.
+func (s *Server) CleanupExpired(reason string) {
 	stats, err := s.db.CleanupExpired()
 	if err != nil {
 		s.logger.Error("cleanup expired records failed", "reason", reason, "error", err)

@@ -987,12 +987,20 @@ func TestCleanupExpired(t *testing.T) {
 	db := openTestDB(t)
 	u, _ := db.CreateUser("cleanup@example.com")
 
-	// Three magic links spanning the retention boundary. The "recently
-	// expired" one is the interesting case: it must SURVIVE, so a late clicker
+	// Magic links straddling the retention boundary. The two "just inside"
+	// cases are the interesting ones: they must SURVIVE, so a late clicker
 	// still gets "expired" rather than "invalid link". See magicLinkRetention.
+	//
+	// The boundary pair sits 1h either side of the 7-day grace, which pins the
+	// constant: any retention shorter than ~7d deletes just-inside-ml, any
+	// longer keeps just-outside-ml. Fixtures a day apart would leave the window
+	// free to drift by days without failing anything.
+	grace := 7 * 24 * time.Hour
 	_ = db.CreateMagicLink("cleanup@example.com", "fresh-ml", time.Now().Add(time.Hour))
 	_ = db.CreateMagicLink("cleanup@example.com", "recent-ml", time.Now().Add(-time.Minute))
-	_ = db.CreateMagicLink("cleanup@example.com", "ancient-ml", time.Now().Add(-8*24*time.Hour))
+	_ = db.CreateMagicLink("cleanup@example.com", "just-inside-ml", time.Now().Add(-grace+time.Hour))
+	_ = db.CreateMagicLink("cleanup@example.com", "just-outside-ml", time.Now().Add(-grace-time.Hour))
+	_ = db.CreateMagicLink("cleanup@example.com", "ancient-ml", time.Now().Add(-30*24*time.Hour))
 
 	// Sessions have no grace period — expired means deletable.
 	_ = db.CreateSession(u.ID, "expired-sess", time.Now().Add(-time.Minute))
@@ -1002,8 +1010,11 @@ func TestCleanupExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CleanupExpired: %v", err)
 	}
-	if stats.MagicLinks != 1 {
-		t.Errorf("stats.MagicLinks = %d, want 1", stats.MagicLinks)
+	// Deliberately unequal counts: with both expectations at 1, swapping the
+	// two assignments in CleanupExpired would go undetected, and that log line
+	// is the only observability this sweep has.
+	if stats.MagicLinks != 2 {
+		t.Errorf("stats.MagicLinks = %d, want 2", stats.MagicLinks)
 	}
 	if stats.Sessions != 1 {
 		t.Errorf("stats.Sessions = %d, want 1", stats.Sessions)
@@ -1017,8 +1028,10 @@ func TestCleanupExpired(t *testing.T) {
 		want  bool
 	}{
 		{"fresh-ml", true},
-		{"recent-ml", true},   // expired 1m ago — inside the 7-day grace
-		{"ancient-ml", false}, // expired 8d ago — past it
+		{"recent-ml", true},        // expired 1m ago — well inside the grace
+		{"just-inside-ml", true},   // expired 6d23h ago — 1h inside
+		{"just-outside-ml", false}, // expired 7d1h ago — 1h outside
+		{"ancient-ml", false},      // expired 30d ago
 	} {
 		if got := magicLinkExists(t, db, tc.token); got != tc.want {
 			t.Errorf("magic link %q exists = %v, want %v", tc.token, got, tc.want)
