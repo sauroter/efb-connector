@@ -218,18 +218,34 @@ func run(logger *slog.Logger) error {
 
 	// ── Periodic cleanup of expired sessions and magic links ──
 
+	runCleanup := func(reason string) {
+		stats, err := db.CleanupExpired()
+		if err != nil {
+			logger.Error("cleanup expired records failed", "reason", reason, "error", err)
+			return
+		}
+		logger.Info("cleanup expired records completed",
+			"reason", reason,
+			"magic_links", stats.MagicLinks,
+			"sessions", stats.Sessions,
+		)
+	}
+
 	stopCleanup := make(chan struct{})
 	go func() {
+		// Sweep once at startup. Fly suspends this machine whenever traffic
+		// stops (auto_stop_machines, min_machines_running = 0), so the ticker
+		// below rarely survives long enough to fire — a deploy or cold start is
+		// a far more frequent opportunity than a full hour of uptime. The
+		// nightly run-all sweeps too; see Server.cleanupExpired.
+		runCleanup("startup")
+
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if err := db.CleanupExpired(); err != nil {
-					logger.Error("cleanup expired records failed", "error", err)
-				} else {
-					logger.Info("cleanup expired records completed")
-				}
+				runCleanup("ticker")
 			case <-stopCleanup:
 				return
 			}

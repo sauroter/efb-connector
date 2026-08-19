@@ -115,6 +115,20 @@ func (s *Server) runSyncAll() {
 		s.runAllState.FinishedAt = &now
 	}()
 
+	// Housekeeping rides along with the nightly run: the 1h cleanup ticker in
+	// main.go almost never fires, because Fly suspends the machine whenever
+	// traffic stops (auto_stop_machines, min_machines_running = 0). This run is
+	// the one moment the machine is reliably awake.
+	//
+	// Registered LAST so it runs FIRST (defers are LIFO), which matters twice:
+	// the daily-sync workflow polls until in_progress=false, so the machine is
+	// still awake while the sweep runs; and a panic raised here is still caught
+	// by the recover() in the state defer above, which runs after it. A defer
+	// rather than a tail call so the sweep also happens when the run returned
+	// early, timed out, or panicked — CleanupExpired takes no context, so a
+	// dead ctx does not skip it.
+	defer s.cleanupExpired("after-run-all")
+
 	// Resolve the user list ourselves so TotalUsers and the iterated set
 	// come from the same query — avoids spurious workflow failures from
 	// snapshot drift between two reads.
@@ -169,6 +183,22 @@ func (s *Server) runSyncAll() {
 		return
 	}
 	s.logger.Info("sync-all completed", "total_users", len(users))
+}
+
+// cleanupExpired runs the expired-record sweep and logs the outcome. Errors are
+// logged, never folded into runAllState: housekeeping must not fail the nightly
+// GitHub Action.
+func (s *Server) cleanupExpired(reason string) {
+	stats, err := s.db.CleanupExpired()
+	if err != nil {
+		s.logger.Error("cleanup expired records failed", "reason", reason, "error", err)
+		return
+	}
+	s.logger.Info("cleanup expired records completed",
+		"reason", reason,
+		"magic_links", stats.MagicLinks,
+		"sessions", stats.Sessions,
+	)
 }
 
 // handleInternalSyncAllStatus returns the current/last run-all state as

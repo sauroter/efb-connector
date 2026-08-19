@@ -147,19 +147,52 @@ func (d *DB) DeleteSession(tokenHash string) error {
 	return nil
 }
 
-// CleanupExpired deletes all expired magic_links and sessions.
-func (d *DB) CleanupExpired() error {
-	if _, err := d.db.Exec(
-		`DELETE FROM magic_links WHERE expires_at < datetime('now')`,
-	); err != nil {
-		return fmt.Errorf("database: cleanup expired magic links: %w", err)
-	}
+// magicLinkRetention keeps magic links around after they expire so
+// classifyMagicLinkFailure can still tell a late clicker "this link expired"
+// rather than the vaguer "invalid link". Links expire 15 minutes after issue,
+// so a week of grace covers any realistic late click while still bounding the
+// table. Sessions need no equivalent: GetSession returns the same generic error
+// whether the row is expired or absent.
+const magicLinkRetention = "-7 days"
 
-	if _, err := d.db.Exec(
+// CleanupStats reports what a CleanupExpired sweep removed.
+type CleanupStats struct {
+	MagicLinks int64
+	Sessions   int64
+}
+
+// CleanupExpired deletes expired sessions and magic links that are past the
+// retention grace period, returning what it removed so callers can log it.
+func (d *DB) CleanupExpired() (CleanupStats, error) {
+	var stats CleanupStats
+
+	res, err := d.db.Exec(
+		`DELETE FROM magic_links WHERE expires_at < datetime('now', ?)`,
+		magicLinkRetention,
+	)
+	if err != nil {
+		return stats, fmt.Errorf("database: cleanup expired magic links: %w", err)
+	}
+	stats.MagicLinks = rowsAffected(res)
+
+	res, err = d.db.Exec(
 		`DELETE FROM sessions WHERE expires_at < datetime('now')`,
-	); err != nil {
-		return fmt.Errorf("database: cleanup expired sessions: %w", err)
+	)
+	if err != nil {
+		return stats, fmt.Errorf("database: cleanup expired sessions: %w", err)
 	}
+	stats.Sessions = rowsAffected(res)
 
-	return nil
+	return stats, nil
+}
+
+// rowsAffected extracts a row count for logging. The delete has already
+// succeeded by the time this runs, so a driver that cannot report a count
+// yields 0 rather than failing the sweep.
+func rowsAffected(res sql.Result) int64 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0
+	}
+	return n
 }

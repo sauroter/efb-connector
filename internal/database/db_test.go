@@ -987,37 +987,102 @@ func TestCleanupExpired(t *testing.T) {
 	db := openTestDB(t)
 	u, _ := db.CreateUser("cleanup@example.com")
 
-	// Insert one expired and one valid magic link.
-	_ = db.CreateMagicLink("cleanup@example.com", "expired-ml", time.Now().Add(-time.Minute))
-	_ = db.CreateMagicLink("cleanup@example.com", "valid-ml", time.Now().Add(time.Hour))
+	// Three magic links spanning the retention boundary. The "recently
+	// expired" one is the interesting case: it must SURVIVE, so a late clicker
+	// still gets "expired" rather than "invalid link". See magicLinkRetention.
+	_ = db.CreateMagicLink("cleanup@example.com", "fresh-ml", time.Now().Add(time.Hour))
+	_ = db.CreateMagicLink("cleanup@example.com", "recent-ml", time.Now().Add(-time.Minute))
+	_ = db.CreateMagicLink("cleanup@example.com", "ancient-ml", time.Now().Add(-8*24*time.Hour))
 
-	// Insert one expired and one valid session.
+	// Sessions have no grace period — expired means deletable.
 	_ = db.CreateSession(u.ID, "expired-sess", time.Now().Add(-time.Minute))
 	_ = db.CreateSession(u.ID, "valid-sess", time.Now().Add(time.Hour))
 
-	if err := db.CleanupExpired(); err != nil {
+	stats, err := db.CleanupExpired()
+	if err != nil {
 		t.Fatalf("CleanupExpired: %v", err)
 	}
-
-	// Expired entries should be gone.
-	_, err := db.ValidateMagicLink("expired-ml")
-	if err == nil {
-		t.Error("expired magic link should have been cleaned up")
+	if stats.MagicLinks != 1 {
+		t.Errorf("stats.MagicLinks = %d, want 1", stats.MagicLinks)
+	}
+	if stats.Sessions != 1 {
+		t.Errorf("stats.Sessions = %d, want 1", stats.Sessions)
 	}
 
-	_, err = db.GetSession("expired-sess")
-	if err == nil {
-		t.Error("expired session should have been cleaned up")
+	// Assert on row presence, not on ValidateMagicLink returning an error: a
+	// retained-but-expired row also errors, so an error-based assertion would
+	// pass whether or not the row was deleted.
+	for _, tc := range []struct {
+		token string
+		want  bool
+	}{
+		{"fresh-ml", true},
+		{"recent-ml", true},   // expired 1m ago — inside the 7-day grace
+		{"ancient-ml", false}, // expired 8d ago — past it
+	} {
+		if got := magicLinkExists(t, db, tc.token); got != tc.want {
+			t.Errorf("magic link %q exists = %v, want %v", tc.token, got, tc.want)
+		}
 	}
 
-	// Valid entries should survive.
-	email, err := db.ValidateMagicLink("valid-ml")
+	for _, tc := range []struct {
+		token string
+		want  bool
+	}{
+		{"valid-sess", true},
+		{"expired-sess", false},
+	} {
+		if got := sessionExists(t, db, tc.token); got != tc.want {
+			t.Errorf("session %q exists = %v, want %v", tc.token, got, tc.want)
+		}
+	}
+
+	// The surviving fresh link is still usable.
+	email, err := db.ValidateMagicLink("fresh-ml")
 	if err != nil {
-		t.Errorf("valid magic link should survive cleanup: %v", err)
+		t.Errorf("fresh magic link should survive cleanup: %v", err)
 	}
 	if email != "cleanup@example.com" {
 		t.Errorf("magic link email = %q", email)
 	}
+}
+
+// TestCleanupExpired_KeepsExpiredLinkClassifiable is the regression test for
+// the interaction between the sweep and magic-link error messages: deleting a
+// link the moment it expires would collapse ErrMagicLinkExpired into
+// ErrMagicLinkNotFound, turning "this login link has expired" back into the
+// vaguer "invalid or missing login link".
+func TestCleanupExpired_KeepsExpiredLinkClassifiable(t *testing.T) {
+	db := openTestDB(t)
+	_ = db.CreateMagicLink("late@example.com", "late-ml", time.Now().Add(-time.Minute))
+
+	if _, err := db.CleanupExpired(); err != nil {
+		t.Fatalf("CleanupExpired: %v", err)
+	}
+
+	_, err := db.ValidateMagicLink("late-ml")
+	if !errors.Is(err, ErrMagicLinkExpired) {
+		t.Errorf("err = %v, want ErrMagicLinkExpired (got ErrMagicLinkNotFound? the sweep deleted the row too eagerly)", err)
+	}
+}
+
+func magicLinkExists(t *testing.T, db *DB, tokenHash string) bool {
+	t.Helper()
+	return rowExists(t, db, `SELECT COUNT(*) FROM magic_links WHERE token_hash = ?`, tokenHash)
+}
+
+func sessionExists(t *testing.T, db *DB, tokenHash string) bool {
+	t.Helper()
+	return rowExists(t, db, `SELECT COUNT(*) FROM sessions WHERE token_hash = ?`, tokenHash)
+}
+
+func rowExists(t *testing.T, db *DB, query, tokenHash string) bool {
+	t.Helper()
+	var n int
+	if err := db.db.QueryRow(query, tokenHash).Scan(&n); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	return n > 0
 }
 
 // ──────────────────────────────────────────────
