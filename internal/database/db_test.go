@@ -823,8 +823,11 @@ func TestMagicLink_ValidateSuccess(t *testing.T) {
 func TestMagicLink_StoredExpiryFormat(t *testing.T) {
 	db := openTestDB(t)
 
-	want := time.Now().Add(time.Hour).UTC().Format("2006-01-02 15:04:05")
-	if err := db.CreateMagicLink("fmt@e.com", "fmthash", time.Now().Add(time.Hour)); err != nil {
+	// One clock read for both the expectation and the value written, so a
+	// second boundary landing between them cannot fail the test spuriously.
+	now := time.Now()
+	want := now.Add(time.Hour).UTC().Format("2006-01-02 15:04:05")
+	if err := db.CreateMagicLink("fmt@e.com", "fmthash", now.Add(time.Hour)); err != nil {
 		t.Fatalf("CreateMagicLink: %v", err)
 	}
 
@@ -838,15 +841,22 @@ func TestMagicLink_StoredExpiryFormat(t *testing.T) {
 		t.Errorf("expires_at = %q, want %q", got, want)
 	}
 
-	// And the comparison the query relies on must actually hold.
-	var newer bool
+	// Behavioural half. Asserting that a *future* value sorts above
+	// datetime('now') would prove nothing — an RFC3339 value does too. The
+	// inversion is same-day: 'T' (0x54) sorts above ' ' (0x20), so an RFC3339
+	// timestamp from earlier today still compares as later and the link would
+	// never expire. So assert on an already-expired row instead.
+	if err := db.CreateMagicLink("fmt2@e.com", "fmthash2", now.Add(-time.Minute)); err != nil {
+		t.Fatalf("CreateMagicLink (past): %v", err)
+	}
+	var stillUnexpired bool
 	if err := db.db.QueryRow(
-		`SELECT ? > datetime('now') FROM magic_links WHERE token_hash = ?`, got, "fmthash",
-	).Scan(&newer); err != nil {
+		`SELECT expires_at > datetime('now') FROM magic_links WHERE token_hash = ?`, "fmthash2",
+	).Scan(&stillUnexpired); err != nil {
 		t.Fatalf("compare: %v", err)
 	}
-	if !newer {
-		t.Error("stored expires_at does not compare as later than datetime('now')")
+	if stillUnexpired {
+		t.Error("an already-expired link compares as unexpired; expiry is not enforced")
 	}
 }
 

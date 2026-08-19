@@ -270,7 +270,7 @@ var De = map[string]string{
 	"flash.email_required":                   "Bitte gib deine E-Mail-Adresse ein.",
 	"flash.login_rate_limited":               "Zu viele Anmeldeversuche. Bitte versuche es später erneut.",
 	"flash.generic_error":                    "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
-	"flash.invalid_login_link":               "Dieser Login-Link ist ungültig oder nicht mehr bekannt. Bitte fordere einen neuen an.",
+	"flash.invalid_login_link":               "Ungültiger oder fehlender Login-Link. Bitte fordere einen neuen an.",
 	"flash.login_link_expired":               "Dieser Login-Link ist abgelaufen. Bitte fordere einen neuen an.",
 	"flash.login_link_used":                  "Dieser Login-Link wurde bereits verwendet. Bitte fordere einen neuen an.",
 	"flash.welcome":                          "Willkommen! Lass uns deine Konten verbinden.",

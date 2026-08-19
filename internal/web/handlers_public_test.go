@@ -3,6 +3,7 @@ package web
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -134,6 +135,49 @@ func TestVerifyMagicLinkForm_UnknownToken_RendersConfirmPage(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), `name="token"`) {
 		t.Error("confirmation page missing token field")
+	}
+}
+
+func TestSameOriginPost(t *testing.T) {
+	cases := []struct {
+		name       string
+		host       string
+		secFetch   string
+		origin     string
+		wantOK     bool
+		wantReason string
+	}{
+		{"browser form submit", "app.example.com", "same-origin", "https://app.example.com", true, ""},
+		{"cross-site auto-submit", "app.example.com", "cross-site", "https://evil.example.com", false, "sec-fetch-site"},
+		{"same-site subdomain", "app.example.com", "same-site", "https://other.example.com", false, "sec-fetch-site"},
+		{"user typed the URL", "app.example.com", "none", "", true, ""},
+		// Sec-Fetch-Site absent: older iOS Safari and some in-app webviews.
+		{"legacy browser, matching origin", "app.example.com", "", "https://app.example.com", true, ""},
+		{"legacy browser, foreign origin", "app.example.com", "", "https://evil.example.com", false, "origin-mismatch"},
+		{"legacy browser, opaque origin", "app.example.com", "", "null", false, "origin-mismatch"},
+		// Must compare against the host actually served, not a configured
+		// BASE_URL — otherwise the *.fly.dev fallback host would 403.
+		{"legacy browser on alternate host", "efb-connector.fly.dev", "", "https://efb-connector.fly.dev", true, ""},
+		{"non-browser client", "app.example.com", "", "", true, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "https://"+tc.host+"/auth/verify", nil)
+			r.Host = tc.host
+			r.Header.Set("X-Forwarded-Proto", "https")
+			if tc.secFetch != "" {
+				r.Header.Set("Sec-Fetch-Site", tc.secFetch)
+			}
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+
+			ok, reason := sameOriginPost(r)
+			if ok != tc.wantOK || reason != tc.wantReason {
+				t.Errorf("sameOriginPost() = (%v, %q), want (%v, %q)", ok, reason, tc.wantOK, tc.wantReason)
+			}
+		})
 	}
 }
 

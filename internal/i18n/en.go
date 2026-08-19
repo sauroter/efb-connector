@@ -271,7 +271,7 @@ var En = map[string]string{
 	"flash.email_required":                   "Please enter your email address.",
 	"flash.login_rate_limited":               "Too many login attempts. Please try again later.",
 	"flash.generic_error":                    "Something went wrong. Please try again.",
-	"flash.invalid_login_link":               "This login link is invalid or is no longer known. Please request a new one.",
+	"flash.invalid_login_link":               "Invalid or missing login link. Please request a new one.",
 	"flash.login_link_expired":               "This login link has expired. Please request a new one.",
 	"flash.login_link_used":                  "This login link has already been used. Please request a new one.",
 	"flash.welcome":                          "Welcome! Let's get your accounts connected.",

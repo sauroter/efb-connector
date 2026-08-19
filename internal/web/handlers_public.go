@@ -140,16 +140,19 @@ func (s *Server) handleVerifyMagicLinkConfirm(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	base := s.baseURL(r)
-	if !sameOriginPost(r, base) {
-		s.logger.Warn("cross-origin magic link confirm rejected",
+	if ok, reason := sameOriginPost(r); !ok {
+		attrs := []any{
+			"reason", reason,
 			"ip", remoteIP(r),
-			"origin", r.Header.Get("Origin"),
-			"expected_origin", base,
 			"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
 			"user_agent", r.UserAgent(),
-		)
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		}
+		// Only name the compared origins when that comparison is what rejected.
+		if reason == "origin-mismatch" {
+			attrs = append(attrs, "origin", r.Header.Get("Origin"), "expected_origin", requestOrigin(r))
+		}
+		s.logger.Warn("cross-origin magic link confirm rejected", attrs...)
+		http.Error(w, "Forbidden: cross-origin request", http.StatusForbidden)
 		return
 	}
 
@@ -238,15 +241,21 @@ func magicLinkFlashKey(err error) string {
 // An absent Origin means a non-browser client (curl, tests): browsers always
 // send Origin on cross-origin form POSTs and scripts cannot forge it, so
 // allowing the absent case does not weaken the check.
-func sameOriginPost(r *http.Request, base string) bool {
+func sameOriginPost(r *http.Request) (ok bool, reason string) {
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
-		return site == "same-origin" || site == "none"
+		if site == "same-origin" || site == "none" {
+			return true, ""
+		}
+		return false, "sec-fetch-site"
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return true
+		return true, ""
 	}
-	return strings.TrimSuffix(origin, "/") == strings.TrimSuffix(base, "/")
+	if strings.TrimSuffix(origin, "/") == strings.TrimSuffix(requestOrigin(r), "/") {
+		return true, ""
+	}
+	return false, "origin-mismatch"
 }
 
 // handleLogout destroys the current session, clears the cookie, and redirects
@@ -299,7 +308,15 @@ func (s *Server) baseURL(r *http.Request) string {
 	if s.configBaseURL != "" {
 		return s.configBaseURL
 	}
+	return requestOrigin(r)
+}
 
+// requestOrigin reconstructs the origin the request actually arrived on,
+// deliberately ignoring the configured BASE_URL. Comparing a browser-sent
+// Origin against BASE_URL would reject legitimate submissions from any other
+// hostname the app answers on (the *.fly.dev fallback, a www. alias), so the
+// same-origin check compares against this instead.
+func requestOrigin(r *http.Request) string {
 	scheme := "https"
 	if r.TLS == nil {
 		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
