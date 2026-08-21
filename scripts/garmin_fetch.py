@@ -224,9 +224,13 @@ def _is_optional_profile_error(exc):
     efb-connector uses for listing or uploading activities. For some accounts
     those endpoints fail persistently, and they are occasionally flaky for
     everyone; the library turns that into a fatal GarminConnectAuthenticationError
-    that would otherwise block every sync. The MFA validation path
-    (return_on_mfa=True) already returns before these fetches run, so tolerating
-    them here keeps every code path consistent.
+    that would otherwise block every sync.
+
+    Note this predicate only classifies the message. Deciding whether to
+    swallow also needs _is_transient_profile_failure, and the MFA path needs
+    _install_profile_tolerance explicitly -- since garminconnect 0.3.5,
+    resume_login() runs these fetches too and lets failures propagate, so
+    return_on_mfa=True no longer returns before they happen.
 
     Genuine auth failures (401/MFA/rate-limit) carry different messages and are
     not matched, so they still propagate.
@@ -242,10 +246,12 @@ def _is_optional_profile_error(exc):
     )
 
 
-# Statuses on the profile/settings fetch that genuinely mean "this token is no
-# longer accepted". Anything else (429, 5xx, transport hiccups) is a transient
-# failure of an endpoint efb-connector never reads, and must not cost a token.
-_TOKEN_REJECTED_STATUSES = frozenset({401, 403})
+# We swallow a profile/settings failure only when we can positively identify it
+# as transient. Defaulting the unknown case to "swallow" would silently defeat
+# garminconnect's poisoned-cache recovery: upstream raises a *cause-less*
+# "Invalid profile data found" when the endpoint answers three times with a
+# non-dict body, which is exactly what a session the API tier no longer accepts
+# looks like -- and that one genuinely wants a re-login.
 
 # garminconnect's connectapi() raises GarminConnectConnectionError("API Error
 # <status> ...") for any >=400 response, and _load_profile_and_settings()
@@ -271,6 +277,44 @@ def _profile_error_status(exc):
     return None
 
 
+def _is_transient_profile_failure(exc):
+    """True when a profile/settings failure is a blip on an endpoint we never
+    read, rather than a signal that the cached token is dead.
+
+    Transient: 429 and 5xx from the API, plus status-less transport errors
+    (connection reset, read timeout) -- those carry a __cause__ but no
+    "API Error NNN" marker.
+
+    Not transient, so garminconnect's discard-and-re-login runs: 401/403, any
+    other 4xx, and the cause-less "Invalid profile data found" / "Invalid user
+    settings found" that upstream raises when the endpoint returns a non-dict
+    three times.
+    """
+    status = _profile_error_status(exc)
+    if status is not None:
+        return status == 429 or 500 <= status <= 599
+    return (exc.__cause__ or exc.__context__) is not None
+
+
+def _profile_failure_label(exc):
+    """Human-readable cause for the tolerated-failure warning.
+
+    Deliberately free of bare HTTP status digits: classifyError() in
+    internal/garmin/python.go keyword-matches the whole stderr blob and checks
+    "429" *before* its authentication branch, so printing the raw number here
+    would make a later genuine auth failure surface to the user as "Garmin
+    temporarily unavailable" instead of "re-enter your credentials".
+    """
+    status = _profile_error_status(exc)
+    if status is None:
+        return "transport-error"
+    if status == 429:
+        return "rate-limited"
+    if 500 <= status <= 599:
+        return "server-error"
+    return f"http-{status // 100}xx"
+
+
 def _install_profile_tolerance(client, auth_error_cls):
     """Make a transient profile/settings failure non-fatal *inside* login().
 
@@ -293,7 +337,14 @@ def _install_profile_tolerance(client, auth_error_cls):
     original = getattr(client, "_load_profile_and_settings", None)
     if original is None:
         # garminconnect < 0.3.5 fetched the profile inline with no interception,
-        # so there is nothing to wrap; _login_tolerating_profile still covers it.
+        # so there was nothing to wrap. But this hooks a *private* method, and a
+        # future bump that renames it would remove the protection with no other
+        # signal -- so say so rather than failing open in silence.
+        print(
+            "Warning: garminconnect has no _load_profile_and_settings hook; "
+            "transient profile failures may now cost a full SSO login",
+            file=sys.stderr,
+        )
         return
 
     def tolerant():
@@ -302,13 +353,12 @@ def _install_profile_tolerance(client, auth_error_cls):
         except auth_error_cls as e:
             if not _is_optional_profile_error(e):
                 raise
-            status = _profile_error_status(e)
-            if status in _TOKEN_REJECTED_STATUSES:
-                # Genuinely rejected token: let login() re-authenticate.
+            if not _is_transient_profile_failure(e):
+                # Token may genuinely be dead: let garminconnect re-authenticate.
                 raise
             print(
-                f"Warning: {e} (status={status}); keeping cached token "
-                "(profile/settings metadata is unused)",
+                f"Warning: {e} ({_profile_failure_label(e)}); keeping cached "
+                "token (profile/settings metadata is unused)",
                 file=sys.stderr,
             )
 
@@ -510,6 +560,14 @@ def validate_mfa():
     try:
         Path(tokenstore).mkdir(parents=True, exist_ok=True)
         client = Garmin(email, password, return_on_mfa=True)
+        # Both login() and resume_login() below fetch the social profile and
+        # user settings after auth succeeds. garminconnect 0.3.3 logged and
+        # continued when that failed; 0.3.11 raises. Without this, a user whose
+        # profile endpoint is flaky enters a *correct* MFA code, auth succeeds,
+        # the profile fetch 429s -- and the exception skips the client.dump()
+        # below, throwing away the freshly issued tokens. They could never
+        # finish Garmin setup, and would be asked for a new MFA code every try.
+        _install_profile_tolerance(client, GarminConnectAuthenticationError)
         mfa_status, _ = client.login(tokenstore=tokenstore)
 
         if mfa_status == "needs_mfa":
