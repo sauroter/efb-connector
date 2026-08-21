@@ -295,3 +295,230 @@ class ValidateCredentialsProfileToleranceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProfileErrorStatusTest(unittest.TestCase):
+    """_profile_error_status recovers the HTTP status garminconnect buried in
+    the __cause__ chain, so tolerance can distinguish a dead token (401/403)
+    from a transient blip on an endpoint we never read (429/5xx)."""
+
+    def test_status_from_direct_message(self):
+        self.assertEqual(
+            gf._profile_error_status(Exception("API Error 429 - slow down")), 429
+        )
+
+    def test_status_from_cause_chain(self):
+        try:
+            try:
+                raise Exception("API Error 500 - upstream boom")
+            except Exception as inner:
+                raise _FakeAuthError("Failed to retrieve social profile") from inner
+        except _FakeAuthError as outer:
+            self.assertEqual(gf._profile_error_status(outer), 500)
+
+    def test_no_status_recoverable(self):
+        self.assertIsNone(
+            gf._profile_error_status(_FakeAuthError("Invalid profile data found"))
+        )
+
+    def test_cyclic_cause_chain_terminates(self):
+        a = Exception("no status here")
+        b = Exception("nor here")
+        a.__cause__ = b
+        b.__cause__ = a
+        self.assertIsNone(gf._profile_error_status(a))
+
+
+class InstallProfileToleranceTest(unittest.TestCase):
+    """garminconnect >= 0.3.5 treats *any* auth error out of
+    _load_profile_and_settings() as 'cached token rejected' and burns a full
+    SSO credential login. For a flaky profile endpoint that is a pure waste of
+    a good token -- and an escalation when the trigger was itself a 429."""
+
+    def _client_with_profile_error(self, exc):
+        client = mock.Mock(name="GarminClient")
+        client._load_profile_and_settings = mock.Mock(side_effect=exc)
+        gf._install_profile_tolerance(client, _FakeAuthError)
+        return client
+
+    @staticmethod
+    def _profile_error(message, status=None):
+        if status is None:
+            return _FakeAuthError(message)
+        try:
+            try:
+                raise Exception(f"API Error {status}")
+            except Exception as inner:
+                raise _FakeAuthError(message) from inner
+        except _FakeAuthError as outer:
+            return outer
+
+    def test_transient_429_is_swallowed(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve social profile", 429)
+        )
+        client._load_profile_and_settings()  # must not raise -> no re-login
+
+    def test_transient_500_is_swallowed(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve user settings", 500)
+        )
+        client._load_profile_and_settings()
+
+    def test_causeless_invalid_data_propagates(self):
+        # Upstream raises this with no __cause__ when the endpoint answers with
+        # a non-dict three times -- what a session the API no longer accepts
+        # looks like. Swallowing it would defeat the poisoned-cache recovery.
+        client = self._client_with_profile_error(
+            self._profile_error("Invalid profile data found")
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_statusless_transport_error_is_swallowed(self):
+        # A connection reset carries a __cause__ but no "API Error NNN": still
+        # a blip on an endpoint we never read, so the token must survive it.
+        try:
+            try:
+                raise OSError("connection reset by peer")
+            except OSError as inner:
+                raise _FakeAuthError("Failed to retrieve social profile") from inner
+        except _FakeAuthError as exc:
+            client = self._client_with_profile_error(exc)
+        client._load_profile_and_settings()
+
+    def test_other_4xx_propagates(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve social profile", 400)
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_401_still_propagates_so_login_can_reauthenticate(self):
+        # A genuinely dead token must reach garminconnect's self-heal; this is
+        # the poisoned-cache recovery we deliberately keep.
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve social profile", 401)
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_403_still_propagates(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve user settings", 403)
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_unrelated_auth_error_still_propagates(self):
+        client = self._client_with_profile_error(
+            _FakeAuthError("Authentication failed (401 Unauthorized)")
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_success_passes_through(self):
+        client = mock.Mock(name="GarminClient")
+        client._load_profile_and_settings = mock.Mock(return_value=None)
+        gf._install_profile_tolerance(client, _FakeAuthError)
+        client._load_profile_and_settings()
+
+    def test_missing_helper_is_a_noop(self):
+        # garminconnect < 0.3.5 fetched the profile inline; nothing to wrap.
+        class _Bare:
+            pass
+
+        client = _Bare()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            gf._install_profile_tolerance(client, _FakeAuthError)  # must not raise
+        self.assertFalse(hasattr(client, "_load_profile_and_settings"))
+        # Failing open must not be silent: the shim shadows a *private* method.
+        self.assertIn("no _load_profile_and_settings hook", stderr.getvalue())
+
+
+class ProfileWarningStderrSafetyTest(unittest.TestCase):
+    """classifyError() in internal/garmin/python.go lowercases the whole stderr
+    blob and tests for "429" *before* its authentication branch. A bare status
+    number in the tolerated-failure warning would therefore make a later genuine
+    auth failure surface as "Garmin temporarily unavailable" instead of
+    prompting the user to re-enter credentials."""
+
+    # Mirrors the substrings classifyError checks before ErrGarminAuth.
+    _GO_UNAVAILABLE_KEYWORDS = ("429", "rate limit", "too many",
+                                "strategies exhausted", "strategies rate limited")
+
+    def _warning_for(self, status):
+        try:
+            try:
+                raise Exception(f"API Error {status}")
+            except Exception as inner:
+                raise _FakeAuthError("Failed to retrieve social profile") from inner
+        except _FakeAuthError as exc:
+            client = mock.Mock(name="GarminClient")
+            client._load_profile_and_settings = mock.Mock(side_effect=exc)
+            gf._install_profile_tolerance(client, _FakeAuthError)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                client._load_profile_and_settings()
+            return stderr.getvalue()
+
+    def test_rate_limited_warning_has_no_go_keyword(self):
+        warning = self._warning_for(429)
+        self.assertIn("rate-limited", warning)
+        for keyword in self._GO_UNAVAILABLE_KEYWORDS:
+            self.assertNotIn(keyword, warning.lower(),
+                             f"warning would be misclassified by Go on {keyword!r}")
+
+    def test_server_error_warning_has_no_go_keyword(self):
+        warning = self._warning_for(503)
+        self.assertIn("server-error", warning)
+        for keyword in self._GO_UNAVAILABLE_KEYWORDS:
+            self.assertNotIn(keyword, warning.lower())
+
+
+class ValidateMFAProfileToleranceTest(unittest.TestCase):
+    """The MFA setup path must tolerate a flaky profile endpoint too.
+
+    garminconnect 0.3.3's resume_login() logged and continued when the profile
+    fetch failed; 0.3.11 raises. Unprotected, a user with a correct MFA code
+    would authenticate successfully, hit a 429 on the profile fetch, and have
+    the exception skip client.client.dump() -- discarding freshly issued tokens
+    so Garmin setup could never complete."""
+
+    def test_resume_login_profile_failure_still_dumps_tokens(self):
+        dumped = []
+
+        def failing_profile():
+            try:
+                raise Exception("API Error 429")
+            except Exception as inner:
+                raise _FakeAuthError("Failed to retrieve social profile") from inner
+
+        fake_client = mock.Mock(name="Garmin")
+        fake_client.login.return_value = ("needs_mfa", None)
+        fake_client._load_profile_and_settings = mock.Mock(side_effect=failing_profile)
+        # resume_login mirrors garminconnect >=0.3.5: fetch profile, let it raise.
+        fake_client.resume_login.side_effect = (
+            lambda *_: fake_client._load_profile_and_settings()
+        )
+        fake_client.client.dump.side_effect = lambda path: dumped.append(path)
+
+        with tempfile.TemporaryDirectory() as tokenstore:
+            # validate_mfa reads stdin directly: credentials, then the MFA code.
+            stdin = io.StringIO(
+                json.dumps({"email": "e@example.com", "password": "pw",
+                            "tokenstore": tokenstore})
+                + "\n" + json.dumps({"mfa_code": "123456"}) + "\n"
+            )
+            with mock.patch.object(gf, "_import_garmin",
+                                   return_value=(mock.Mock(return_value=fake_client),
+                                                 _FakeAuthError)), \
+                    mock.patch.object(gf.sys, "stdin", stdin), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    gf.validate_mfa()
+
+        self.assertEqual(cm.exception.code, 0, "MFA setup must succeed")
+        self.assertTrue(dumped, "tokens must be persisted despite the profile blip")

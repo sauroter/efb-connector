@@ -378,6 +378,32 @@ type mfaStatusResponse struct {
 	Message string `json:"message"`
 }
 
+// makeTokenTempDir creates a temporary directory to hold decrypted Garmin
+// tokens, with every symlink in its path already resolved.
+//
+// garminconnect >= 0.3.10 rejects a tokenstore whose path contains a symlink
+// anywhere in its ancestry (a hardening measure against pre-planted symlinks
+// redirecting token reads and writes). On macOS os.MkdirTemp("") lands under
+// /var/folders/..., and /var is a symlink to /private/var, so the raw path is
+// refused: token loads and dumps both fail, silently turning every Garmin call
+// into a full SSO credential login. Linux containers are unaffected because
+// /tmp is a real directory, but resolving unconditionally keeps dev and prod
+// on the same path shape.
+func makeTokenTempDir() (string, error) {
+	dir, err := os.MkdirTemp("", "garmin-tokens-*")
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		// Fall back to the unresolved path rather than failing the sync: the
+		// worst case is that garminconnect declines to cache tokens, which is
+		// no worse than not having the directory at all.
+		return dir, nil
+	}
+	return resolved, nil
+}
+
 // ValidateWithMFA starts an interactive validation that supports MFA.  It
 // returns "ok" when the credentials are accepted without MFA, or "needs_mfa"
 // when the subprocess is waiting for an MFA code (the session is stored for
@@ -399,7 +425,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	cleanupTmpDir := true // deferred cleanup; set false when MFA session takes ownership
 	if useEncryption {
 		var err error
-		tmpTokenDir, err = os.MkdirTemp("", "garmin-tokens-*")
+		tmpTokenDir, err = makeTokenTempDir()
 		if err != nil {
 			return "", fmt.Errorf("garmin: create temp token dir: %w", err)
 		}
@@ -654,7 +680,7 @@ func (p *PythonGarminProvider) run(
 
 	var tmpTokenDir string
 	if useEncryption {
-		tmpTokenDir, err = os.MkdirTemp("", "garmin-tokens-*")
+		tmpTokenDir, err = makeTokenTempDir()
 		if err != nil {
 			return "", "", fmt.Errorf("garmin: create temp token dir: %w", err)
 		}
