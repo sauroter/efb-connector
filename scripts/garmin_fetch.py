@@ -242,10 +242,84 @@ def _is_optional_profile_error(exc):
     )
 
 
+# Statuses on the profile/settings fetch that genuinely mean "this token is no
+# longer accepted". Anything else (429, 5xx, transport hiccups) is a transient
+# failure of an endpoint efb-connector never reads, and must not cost a token.
+_TOKEN_REJECTED_STATUSES = frozenset({401, 403})
+
+# garminconnect's connectapi() raises GarminConnectConnectionError("API Error
+# <status> ...") for any >=400 response, and _load_profile_and_settings()
+# re-raises it via `raise ... from e`, so the status survives on __cause__.
+_API_ERROR_STATUS_RE = re.compile(r"API Error (\d{3})")
+
+
+def _profile_error_status(exc):
+    """Best-effort HTTP status behind a profile/settings failure.
+
+    Walks the __cause__/__context__ chain looking for garminconnect's
+    "API Error <status>" marker. Returns None when no status can be recovered
+    (e.g. the endpoint returned a non-dict rather than an HTTP error).
+    """
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        match = _API_ERROR_STATUS_RE.search(str(current))
+        if match:
+            return int(match.group(1))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _install_profile_tolerance(client, auth_error_cls):
+    """Make a transient profile/settings failure non-fatal *inside* login().
+
+    garminconnect >= 0.3.5 catches GarminConnectAuthenticationError raised by
+    Garmin._load_profile_and_settings() and treats it as "the cached token was
+    rejected": it discards that token and runs a full SSO credential login.
+    The check cannot tell a 429 or 500 on the profile endpoint from a genuinely
+    dead token, so for accounts whose profile endpoint fails persistently (see
+    _is_optional_profile_error) every sync would burn a full SSO login on a
+    token that was perfectly good -- the exact traffic pattern that gets our
+    egress IP rate-limited, and self-reinforcing when the trigger *is* a 429.
+
+    So we swallow the transient cases before login() can react to them, and
+    deliberately let 401/403 through: those mean the token really is dead, and
+    garminconnect's re-login is the right response (it fixes the poisoned-cache
+    footgun that motivated the feature upstream).
+
+    Nothing here reads display_name or unit_system; efb-connector uses neither.
+    """
+    original = getattr(client, "_load_profile_and_settings", None)
+    if original is None:
+        # garminconnect < 0.3.5 fetched the profile inline with no interception,
+        # so there is nothing to wrap; _login_tolerating_profile still covers it.
+        return
+
+    def tolerant():
+        try:
+            original()
+        except auth_error_cls as e:
+            if not _is_optional_profile_error(e):
+                raise
+            status = _profile_error_status(e)
+            if status in _TOKEN_REJECTED_STATUSES:
+                # Genuinely rejected token: let login() re-authenticate.
+                raise
+            print(
+                f"Warning: {e} (status={status}); keeping cached token "
+                "(profile/settings metadata is unused)",
+                file=sys.stderr,
+            )
+
+    client._load_profile_and_settings = tolerant
+
+
 def _login_tolerating_profile(client, tokenstore, auth_error_cls):
     """Run client.login(tokenstore=...), tolerating non-fatal post-auth
     metadata failures (see _is_optional_profile_error). Token authentication
     has already completed when those fire, so the client remains usable."""
+    _install_profile_tolerance(client, auth_error_cls)
     try:
         client.login(tokenstore=tokenstore)
     except auth_error_cls as e:

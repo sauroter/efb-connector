@@ -812,3 +812,43 @@ func TestCleanupLegacyTokens(t *testing.T) {
 		t.Errorf("expected garmin_tokens.json.enc to be preserved: %v", err)
 	}
 }
+
+// TestMakeTokenTempDir_NoSymlinkedAncestors locks in the fix for a silent
+// token-caching failure on macOS: garminconnect >= 0.3.10 refuses a tokenstore
+// path with a symlink anywhere in its ancestry, and os.MkdirTemp("") returns a
+// path under the symlinked /var on Darwin. Without resolution, token load and
+// dump both fail inside garminconnect's suppressed error handling, so every
+// Garmin call silently falls back to a full SSO credential login.
+func TestMakeTokenTempDir_NoSymlinkedAncestors(t *testing.T) {
+	dir, err := makeTokenTempDir()
+	if err != nil {
+		t.Fatalf("makeTokenTempDir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", dir, err)
+	}
+	if dir != resolved {
+		t.Errorf("token temp dir %q has a symlinked ancestor (resolves to %q); "+
+			"garminconnect >=0.3.10 rejects such a tokenstore", dir, resolved)
+	}
+}
+
+// The directory must still be usable for the decrypted token files.
+func TestMakeTokenTempDir_Writable(t *testing.T) {
+	dir, err := makeTokenTempDir()
+	if err != nil {
+		t.Fatalf("makeTokenTempDir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	tokenFile := filepath.Join(dir, "garmin_tokens.json")
+	if err := os.WriteFile(tokenFile, []byte(`{"di_token":"t"}`), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	if _, err := os.Stat(tokenFile); err != nil {
+		t.Fatalf("stat token file: %v", err)
+	}
+}

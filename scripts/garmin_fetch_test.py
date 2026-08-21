@@ -295,3 +295,116 @@ class ValidateCredentialsProfileToleranceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProfileErrorStatusTest(unittest.TestCase):
+    """_profile_error_status recovers the HTTP status garminconnect buried in
+    the __cause__ chain, so tolerance can distinguish a dead token (401/403)
+    from a transient blip on an endpoint we never read (429/5xx)."""
+
+    def test_status_from_direct_message(self):
+        self.assertEqual(
+            gf._profile_error_status(Exception("API Error 429 - slow down")), 429
+        )
+
+    def test_status_from_cause_chain(self):
+        try:
+            try:
+                raise Exception("API Error 500 - upstream boom")
+            except Exception as inner:
+                raise _FakeAuthError("Failed to retrieve social profile") from inner
+        except _FakeAuthError as outer:
+            self.assertEqual(gf._profile_error_status(outer), 500)
+
+    def test_no_status_recoverable(self):
+        self.assertIsNone(
+            gf._profile_error_status(_FakeAuthError("Invalid profile data found"))
+        )
+
+    def test_cyclic_cause_chain_terminates(self):
+        a = Exception("no status here")
+        b = Exception("nor here")
+        a.__cause__ = b
+        b.__cause__ = a
+        self.assertIsNone(gf._profile_error_status(a))
+
+
+class InstallProfileToleranceTest(unittest.TestCase):
+    """garminconnect >= 0.3.5 treats *any* auth error out of
+    _load_profile_and_settings() as 'cached token rejected' and burns a full
+    SSO credential login. For a flaky profile endpoint that is a pure waste of
+    a good token -- and an escalation when the trigger was itself a 429."""
+
+    def _client_with_profile_error(self, exc):
+        client = mock.Mock(name="GarminClient")
+        client._load_profile_and_settings = mock.Mock(side_effect=exc)
+        gf._install_profile_tolerance(client, _FakeAuthError)
+        return client
+
+    @staticmethod
+    def _profile_error(message, status=None):
+        if status is None:
+            return _FakeAuthError(message)
+        try:
+            try:
+                raise Exception(f"API Error {status}")
+            except Exception as inner:
+                raise _FakeAuthError(message) from inner
+        except _FakeAuthError as outer:
+            return outer
+
+    def test_transient_429_is_swallowed(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve social profile", 429)
+        )
+        client._load_profile_and_settings()  # must not raise -> no re-login
+
+    def test_transient_500_is_swallowed(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve user settings", 500)
+        )
+        client._load_profile_and_settings()
+
+    def test_statusless_profile_error_is_swallowed(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Invalid profile data found")
+        )
+        client._load_profile_and_settings()
+
+    def test_401_still_propagates_so_login_can_reauthenticate(self):
+        # A genuinely dead token must reach garminconnect's self-heal; this is
+        # the poisoned-cache recovery we deliberately keep.
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve social profile", 401)
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_403_still_propagates(self):
+        client = self._client_with_profile_error(
+            self._profile_error("Failed to retrieve user settings", 403)
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_unrelated_auth_error_still_propagates(self):
+        client = self._client_with_profile_error(
+            _FakeAuthError("Authentication failed (401 Unauthorized)")
+        )
+        with self.assertRaises(_FakeAuthError):
+            client._load_profile_and_settings()
+
+    def test_success_passes_through(self):
+        client = mock.Mock(name="GarminClient")
+        client._load_profile_and_settings = mock.Mock(return_value=None)
+        gf._install_profile_tolerance(client, _FakeAuthError)
+        client._load_profile_and_settings()
+
+    def test_missing_helper_is_a_noop(self):
+        # garminconnect < 0.3.5 fetched the profile inline; nothing to wrap.
+        class _Bare:
+            pass
+
+        client = _Bare()
+        gf._install_profile_tolerance(client, _FakeAuthError)  # must not raise
+        self.assertFalse(hasattr(client, "_load_profile_and_settings"))

@@ -60,6 +60,12 @@ User authentication uses magic links sent via email (Resend API). No passwords s
 
 EFB and Garmin credentials are stored encrypted (AES-256-GCM) in the SQLite database.
 
+### Garmin token cache and the profile-fetch trap
+
+Garmin tokens are cached per user, stored encrypted at rest and decrypted into a temp dir for each Python subprocess (`internal/garmin/python.go`, `makeTokenTempDir`). That temp dir **must** have no symlink in its path ancestry: garminconnect >= 0.3.10 rejects such a tokenstore outright, and both the load and the dump fail inside suppressed error handling — so the only symptom is that tokens silently stop caching and every call becomes a full SSO login. `os.MkdirTemp("")` on macOS returns a path under the symlinked `/var`, which is why the temp dir is resolved with `EvalSymlinks`. Linux containers are unaffected (`/tmp` is real), so CI cannot catch a regression here.
+
+`scripts/garmin_fetch.py:_install_profile_tolerance` exists for a related trap. After token auth succeeds, garminconnect fetches the social profile and user settings — neither of which efb-connector reads. Since 0.3.5, `Garmin.login()` catches *any* `GarminConnectAuthenticationError` from that fetch and treats it as "the cached token was rejected": it discards the token and runs a full SSO credential login. `_load_profile_and_settings()` raises that same exception type for a 429 or a 500 as for a genuine 401, so a flaky profile endpoint would burn an SSO login on a perfectly good token on **every** sync — self-reinforcing when the trigger is itself a rate-limit. We therefore swallow transient failures before `login()` can react, and deliberately let 401/403 through so the poisoned-cache recovery still works. When triaging "why is this user hitting SSO every run", check for the `keeping cached token` warning on stderr.
+
 ## Configuration
 
 The server is configured via environment variables:
