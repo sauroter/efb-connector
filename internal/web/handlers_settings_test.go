@@ -348,6 +348,14 @@ func TestMatchByName_ToggleOnlyPostLeavesKeywordsIntact(t *testing.T) {
 		t.Errorf("after toggle-only post: MatchByName=%v NameKeywords=%v, want true/[Drachenboot]", u.MatchByName, u.NameKeywords)
 	}
 
+	// A keywords parameter in the URL query is not the form field: only the
+	// posted body decides, so a crafted link cannot clear the list.
+	postForm(t, h, "/settings/match-by-name?keywords=", url.Values{"enabled": {"1"}})
+	u, _ = h.db.GetUserByID(uid)
+	if !slices.Equal(u.NameKeywords, []string{"Drachenboot"}) {
+		t.Errorf("after query-string keywords post: NameKeywords=%v, want [Drachenboot] untouched", u.NameKeywords)
+	}
+
 	// ...whereas an explicitly empty field clears the list.
 	postForm(t, h, "/settings/match-by-name", url.Values{"enabled": {"1"}, "keywords": {""}})
 	u, _ = h.db.GetUserByID(uid)

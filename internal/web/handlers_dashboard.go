@@ -372,18 +372,21 @@ func (s *Server) handleMatchByNameSave(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 
-	enabled := r.FormValue("enabled") == "1"
+	enabled := r.PostFormValue("enabled") == "1"
 
 	// The keywords field shares the form with the switch. It is optional
 	// so a client that only knows the toggle leaves the list alone; when
 	// present, an explicitly empty value clears it. Invalid input saves
 	// nothing at all — the switch auto-submits the form, so a rejected
 	// field also blocks the toggle rather than saving half of the form.
+	// PostForm, not Form: r.Form also carries the URL query, and "absent
+	// leaves the list untouched" must not be defeatable by a link that
+	// carries ?keywords= in its href.
 	var keywords []string
-	hasKeywords := r.Form.Has("keywords")
+	hasKeywords := r.PostForm.Has("keywords")
 	if hasKeywords {
 		var err error
-		keywords, err = garmin.ParseNameKeywords(r.FormValue("keywords"))
+		keywords, err = garmin.ParseNameKeywords(r.PostFormValue("keywords"))
 		if err != nil {
 			s.logger.Info("rejected name_keywords", "user_id", userID, "error", err)
 			setFlash(w, "flash.name_keywords_invalid")

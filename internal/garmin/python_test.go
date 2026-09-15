@@ -318,10 +318,13 @@ print(json.dumps([{
 	p := NewPythonGarminProvider(script, nil)
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
-	keywords := []string{"Drachenboot", "Outrigger Canoe"}
+	// A keyword starting with "-" is a plausible thing to type and must not
+	// be mistaken for a flag by argparse — that would fail every sync for
+	// that user with an error that never mentions keywords.
+	keywords := []string{"Drachenboot", "Outrigger Canoe", "-Kanu"}
 
 	// With match-by-name on, every keyword is forwarded as its own flag —
-	// including one containing a space.
+	// including one containing a space and one starting with a dash.
 	acts, _, err := p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{
 		MatchByName:  true,
 		NameKeywords: keywords,
@@ -329,7 +332,7 @@ print(json.dumps([{
 	if err != nil {
 		t.Fatalf("ListActivities (on): %v", err)
 	}
-	if len(acts) != 1 || acts[0].Name != "keywords=Drachenboot|Outrigger Canoe" {
+	if len(acts) != 1 || acts[0].Name != "keywords=Drachenboot|Outrigger Canoe|-Kanu" {
 		t.Fatalf("expected forwarded keywords, got %+v", acts)
 	}
 

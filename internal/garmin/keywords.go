@@ -57,6 +57,12 @@ func ParseNameKeywords(raw string) ([]string, error) {
 // substring test like it: the script decides what is admitted, this decides
 // what bypasses the category selection in the sync engine, and the two must
 // agree on the same activities. The caller applies the parent-17 guard.
+//
+// Known, accepted drift: Go's strings.ToLower and Python's str.lower differ
+// on a handful of code points (Turkish dotted İ folds to one code point here
+// and two there), so a name containing one of those could be admitted by the
+// script yet not exempted from the selection. Irrelevant for the German and
+// English names this serves; noted so nobody "fixes" one side alone.
 func NameMatchesKeywords(name string, keywords []string) bool {
 	if name == "" {
 		return false
