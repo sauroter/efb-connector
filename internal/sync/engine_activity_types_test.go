@@ -303,6 +303,84 @@ func TestSyncUser_ActivityTypes_NameMatchedUnknownKept(t *testing.T) {
 	}
 }
 
+// A user's own keyword (users.name_keywords) is an explicit "I want this":
+// an activity it admits bypasses the category selection even when the
+// built-in name patterns would file it under a deselected category. Here
+// "Drachenbootrudern" would be Rowing, which the user unticked — the keyword
+// "Drachenboot" still wins. The keywords must also reach the provider, which
+// is where the admission itself happens.
+func TestSyncUser_ActivityTypes_KeywordMatchedBypassesSelection(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	if err := db.UpdateMatchByName(user.ID, true); err != nil {
+		t.Fatalf("UpdateMatchByName: %v", err)
+	}
+	if err := db.UpdateNameKeywords(user.ID, []string{"Drachenboot"}); err != nil {
+		t.Fatalf("UpdateNameKeywords: %v", err)
+	}
+	deselect(t, db, user.ID, garmin.CategoryRowing, garmin.CategoryOtherWater)
+
+	now := time.Now()
+	gp := &mockGarminProvider{activities: []garmin.Activity{
+		{ProviderID: "drachen-1", Name: "Drachenbootrudern", Type: "other", ParentTypeID: 17, Date: now, StartTime: now, DurationSecs: 3600, DistanceM: 8000},
+		{ProviderID: "row-1", Name: "Rudern am Morgen", Type: "other", ParentTypeID: 17, Date: now, StartTime: now, DurationSecs: 1800, DistanceM: 3000},
+	}}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, _ := engine.SyncUser(context.Background(), user.ID, "manual")
+	run, _ := db.GetSyncRun(runID)
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("ActivitiesSynced = %d, want 1 (keyword match kept, plain rowing dropped)", run.ActivitiesSynced)
+	}
+	if run.ExcludedCount != 1 {
+		t.Errorf("ExcludedCount = %d, want 1 (keyword matches are not exclusions)", run.ExcludedCount)
+	}
+	if synced, _ := db.IsActivitySynced(user.ID, "drachen-1"); !synced {
+		t.Error("keyword-matched activity must bypass the deselected Rowing category")
+	}
+	if synced, _ := db.IsActivitySynced(user.ID, "row-1"); synced {
+		t.Error("activity without a keyword match must still obey the selection")
+	}
+	if !slices.Equal(gp.lastListOpts.NameKeywords, []string{"Drachenboot"}) {
+		t.Errorf("ListOptions.NameKeywords = %v, want [Drachenboot]", gp.lastListOpts.NameKeywords)
+	}
+}
+
+// Keywords are an extension of the match-by-name fallback, not a feature of
+// their own: with the toggle off they neither reach the provider nor bypass
+// anything in the engine.
+func TestSyncUser_ActivityTypes_KeywordsInertWithoutMatchByName(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServer(t)
+
+	if err := db.UpdateNameKeywords(user.ID, []string{"Drachenboot"}); err != nil {
+		t.Fatalf("UpdateNameKeywords: %v", err)
+	}
+	deselect(t, db, user.ID, garmin.CategoryRowing)
+
+	now := time.Now()
+	// The real provider would never return this with match_by_name off;
+	// the mock does, which lets us check the engine-side bypass is gated.
+	gp := &mockGarminProvider{activities: []garmin.Activity{
+		{ProviderID: "drachen-1", Name: "Drachenbootrudern", Type: "other", ParentTypeID: 17, Date: now, StartTime: now, DurationSecs: 3600, DistanceM: 8000},
+	}}
+	ec := efb.NewEFBClient(srv.URL)
+	engine := newEngine(db, gp, ec)
+
+	runID, _ := engine.SyncUser(context.Background(), user.ID, "manual")
+	run, _ := db.GetSyncRun(runID)
+	if run.ActivitiesSynced != 0 || run.ExcludedCount != 1 {
+		t.Errorf("synced=%d excluded=%d, want 0/1 (rowing deselected, keywords inert)", run.ActivitiesSynced, run.ExcludedCount)
+	}
+	if gp.lastListOpts.MatchByName || len(gp.lastListOpts.NameKeywords) != 0 {
+		t.Errorf("ListOptions = %+v, want no match-by-name and no keywords", gp.lastListOpts)
+	}
+}
+
 // The catch-all: an unrecognised typeKey that Garmin *did* file under Water
 // Sports is a water sport we haven't named yet, so "other water sports" claims
 // it and the user can switch it off. Without this, the next sport Garmin adds

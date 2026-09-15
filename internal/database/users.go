@@ -40,6 +40,11 @@ type User struct {
 	// ones were backfilled by the migration, so it is only empty if the
 	// user unticked every box.
 	SelectedActivityTypes []string
+	// NameKeywords are the user's own words for the match_by_name
+	// fallback (migration 0015): a parent-17 activity whose name contains
+	// one of them is synced regardless of SelectedActivityTypes. Only
+	// meaningful while MatchByName is true. Empty for most users.
+	NameKeywords []string
 }
 
 // CreateUser inserts a new user row and returns the fully-populated struct.
@@ -78,7 +83,7 @@ func (d *DB) CreateUser(email string) (*User, error) {
 // no such row exists.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types, name_keywords
 		   FROM users WHERE email = ?`, email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -91,7 +96,7 @@ func (d *DB) GetUserByEmail(email string) (*User, error) {
 // found.
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u, err := d.scanUser(d.db.QueryRow(
-		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types
+		`SELECT id, email, created_at, updated_at, is_active, sync_enabled, sync_days, auto_create_trips, enrich_trips, setup_completed, preferred_lang, match_by_name, selected_activity_types, name_keywords
 		   FROM users WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -182,6 +187,24 @@ func (d *DB) UpdateSelectedActivityTypes(userID int64, categories []string) erro
 	return nil
 }
 
+// UpdateNameKeywords overwrites the user's name_keywords list. The caller
+// is responsible for normalising and validating the input (see
+// internal/garmin.ParseNameKeywords); this function only encodes and writes.
+// nil and empty both mean "no keywords".
+func (d *DB) UpdateNameKeywords(userID int64, keywords []string) error {
+	if keywords == nil {
+		keywords = []string{}
+	}
+	encoded, err := json.Marshal(keywords)
+	if err != nil {
+		return fmt.Errorf("database: encode name_keywords for user %d: %w", userID, err)
+	}
+	if _, err := d.db.Exec(`UPDATE users SET name_keywords = ? WHERE id = ?`, string(encoded), userID); err != nil {
+		return fmt.Errorf("database: update name_keywords for user %d: %w", userID, err)
+	}
+	return nil
+}
+
 // DeleteUser removes the user and all cascaded rows (credentials, activities,
 // sessions, sync_runs).
 func (d *DB) DeleteUser(id int64) error {
@@ -195,7 +218,7 @@ func (d *DB) DeleteUser(id int64) error {
 // both Garmin and EFB credentials marked as valid.
 func (d *DB) GetSyncableUsers() ([]User, error) {
 	rows, err := d.db.Query(`
-		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang, u.match_by_name, u.selected_activity_types
+		SELECT u.id, u.email, u.created_at, u.updated_at, u.is_active, u.sync_enabled, u.sync_days, u.auto_create_trips, u.enrich_trips, u.setup_completed, u.preferred_lang, u.match_by_name, u.selected_activity_types, u.name_keywords
 		  FROM users u
 		  JOIN garmin_credentials gc ON gc.user_id = u.id AND gc.is_valid = 1
 		  JOIN efb_credentials    ec ON ec.user_id = u.id AND ec.is_valid = 1
@@ -255,11 +278,11 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted int
 
 	var matchByName int
-	var selectedJSON string
+	var selectedJSON, keywordsJSON string
 	err := row.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang, &matchByName, &selectedJSON,
+		&u.PreferredLang, &matchByName, &selectedJSON, &keywordsJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -274,6 +297,7 @@ func (d *DB) scanUser(row *sql.Row) (*User, error) {
 	u.SetupCompleted = setupCompleted != 0
 	u.MatchByName = matchByName != 0
 	u.SelectedActivityTypes = decodeSelectedCategories(selectedJSON)
+	u.NameKeywords = decodeNameKeywords(keywordsJSON)
 	return &u, nil
 }
 
@@ -282,12 +306,12 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
 	var isActive, syncEnabled, autoCreateTrips, enrichTrips, setupCompleted, matchByName int
-	var selectedJSON string
+	var selectedJSON, keywordsJSON string
 
 	err := rows.Scan(
 		&u.ID, &u.Email, &createdAt, &updatedAt,
 		&isActive, &syncEnabled, &u.SyncDays, &autoCreateTrips, &enrichTrips, &setupCompleted,
-		&u.PreferredLang, &matchByName, &selectedJSON,
+		&u.PreferredLang, &matchByName, &selectedJSON, &keywordsJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan user: %w", err)
@@ -302,6 +326,7 @@ func (d *DB) scanUserRow(rows *sql.Rows) (*User, error) {
 	u.SetupCompleted = setupCompleted != 0
 	u.MatchByName = matchByName != 0
 	u.SelectedActivityTypes = decodeSelectedCategories(selectedJSON)
+	u.NameKeywords = decodeNameKeywords(keywordsJSON)
 	return &u, nil
 }
 
@@ -326,6 +351,21 @@ func decodeSelectedCategories(s string) []string {
 		// Literal JSON `null` parses without error into a nil slice; that is
 		// an unreadable value, not an empty selection.
 		return garmin.DefaultSelectedCategories()
+	}
+	return out
+}
+
+// decodeNameKeywords decodes users.name_keywords. Unlike the category
+// selection there is no default to restore and a lost keyword only costs an
+// opt-in extra, so anything unreadable simply means "no keywords" — the
+// column only ever holds what UpdateNameKeywords wrote.
+func decodeNameKeywords(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
 	}
 	return out
 }

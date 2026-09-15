@@ -50,6 +50,12 @@ type ListOptions struct {
 	// the generic-fitness parent (parent_type_id=17). Off by default;
 	// driven by users.match_by_name.
 	MatchByName bool
+
+	// NameKeywords are the user's own words (users.name_keywords) that
+	// extend the built-in keyword list of the name fallback. They are
+	// forwarded to the script only when MatchByName is true, and the
+	// script applies the same parent_type_id=17 guard to them.
+	NameKeywords []string
 }
 
 // ListDiagnostics carries observational data from a ListActivities call

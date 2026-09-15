@@ -150,6 +150,11 @@ func (p *PythonGarminProvider) ListActivities(
 	}
 	if opts.MatchByName {
 		args = append(args, "--match-by-name")
+		// One flag per keyword rather than a joined list: there is no
+		// shell in between, so a keyword with spaces arrives intact.
+		for _, kw := range opts.NameKeywords {
+			args = append(args, "--name-keyword", kw)
+		}
 	}
 
 	stdout, stderr, err := p.run(ctx, creds, args...)

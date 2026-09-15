@@ -127,18 +127,31 @@ def is_water_sport(activity):
     return type_key in LEGACY_WATER_SPORT_TYPES
 
 
-def name_matches_water_sport(activity):
+def name_matches_water_sport(activity, extra_keywords=()):
     """Return True if the activity's name contains a water-sport keyword
-    (matched at word boundaries — "support" / "supper" don't match) AND
-    it sits under the generic fitness parent (id 17). The parent guard
-    prevents us from grabbing a "Paddel-Tennis" cycling activity by name."""
+    AND it sits under the generic fitness parent (id 17). The parent guard
+    prevents us from grabbing a "Paddel-Tennis" cycling activity by name.
+
+    Two sources of keywords, both behind the same guard:
+
+      - the built-in WATER_SPORT_NAME_PATTERN, where SUP is matched at
+        word boundaries so "support" / "supper" don't match;
+      - `extra_keywords`, the user's own words (users.name_keywords, passed
+        as repeated --name-keyword flags). These are plain case-insensitive
+        substrings by design — the user typed them, and German compounds
+        ("Drachenboottraining") must still match — so a user keyword "sup"
+        *would* match "Support". That is the user's call, not ours.
+        internal/garmin/keywords.go:NameMatchesKeywords mirrors this rule."""
     parent_id = activity.get("activityType", {}).get("parentTypeId")
     if parent_id != GENERIC_FITNESS_PARENT_TYPE_ID:
         return False
     name = activity.get("activityName") or ""
     if not name:
         return False
-    return WATER_SPORT_NAME_PATTERN.search(name) is not None
+    if WATER_SPORT_NAME_PATTERN.search(name) is not None:
+        return True
+    lowered = name.lower()
+    return any(kw.strip() and kw.strip().lower() in lowered for kw in extra_keywords)
 
 
 def load_config():
@@ -401,7 +414,8 @@ def connect_garmin(config):
         sys.exit(1)
 
 
-def list_activities(client, days=30, include_all=False, match_by_name=False):
+def list_activities(client, days=30, include_all=False, match_by_name=False,
+                    name_keywords=()):
     """List activities from the last N days.
 
     By default, returns only water-sport activities (passes `is_water_sport`).
@@ -412,7 +426,9 @@ def list_activities(client, days=30, include_all=False, match_by_name=False):
     When match_by_name=True (per-user opt-in via users.match_by_name),
     activities that fail `is_water_sport` are accepted if their name
     matches `name_matches_water_sport` (keyword-in-name AND parent_type_id
-    == 17). include_all takes precedence over match_by_name.
+    == 17). `name_keywords` (users.name_keywords) extends the keyword set
+    and has no effect unless match_by_name is on. include_all takes
+    precedence over match_by_name.
 
     Emits a single-line `DIAGNOSTICS: {...}` envelope on stderr describing
     the raw pre-filter activity count and the set of typeKey values seen.
@@ -435,7 +451,7 @@ def list_activities(client, days=30, include_all=False, match_by_name=False):
             raw_type_keys.add(t)
         if not include_all:
             if not is_water_sport(activity):
-                if not (match_by_name and name_matches_water_sport(activity)):
+                if not (match_by_name and name_matches_water_sport(activity, name_keywords)):
                     continue
                 name_matched_count += 1
         out.append({
@@ -636,6 +652,13 @@ def main():
         help="Include activities whose name matches a water-sport keyword "
              "(opt-in fallback for watches that record kayak as Sonstiges/Other)",
     )
+    list_parser.add_argument(
+        "--name-keyword", action="append", dest="name_keywords", default=[],
+        metavar="WORD",
+        help="Additional user-defined keyword for --match-by-name (repeatable; "
+             "case-insensitive substring of the activity name). Ignored without "
+             "--match-by-name.",
+    )
 
     # Fetch command
     fetch_parser = subparsers.add_parser("fetch", help="Fetch GPX for a specific activity")
@@ -677,6 +700,7 @@ def main():
             client, args.days,
             include_all=args.no_filter,
             match_by_name=args.match_by_name,
+            name_keywords=args.name_keywords,
         )
 
         if args.json:

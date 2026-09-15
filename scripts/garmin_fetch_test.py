@@ -127,6 +127,47 @@ class NameMatchesWaterSportTest(unittest.TestCase):
         self.assertFalse(gf.name_matches_water_sport(_activity("kayaking", parent=228)))
 
 
+class NameMatchesUserKeywordsTest(unittest.TestCase):
+    """User-defined keywords (users.name_keywords) extend the built-in
+    pattern under the same parent_type_id == 17 guard."""
+
+    def test_user_310_drachenboot(self):
+        # The feedback that motivated the feature: dragon boat recorded
+        # as "Sonstiges", a word the built-in pattern does not know.
+        self.assertFalse(gf.name_matches_water_sport(_activity("Drachenboot Training")))
+        self.assertTrue(
+            gf.name_matches_water_sport(_activity("Drachenboot Training"), ["Drachenboot"])
+        )
+
+    def test_keyword_is_case_insensitive_substring(self):
+        for name in ("drachenboot", "DRACHENBOOT", "Drachenboottraining", "Abends Drachenboot"):
+            with self.subTest(name=name):
+                self.assertTrue(
+                    gf.name_matches_water_sport(_activity(name), ["dRaChEnBoOt"])
+                )
+
+    def test_any_of_several_keywords_matches(self):
+        keywords = ["Drachenboot", "Outrigger"]
+        self.assertTrue(gf.name_matches_water_sport(_activity("Outrigger Session"), keywords))
+        self.assertFalse(gf.name_matches_water_sport(_activity("Sunday Walk"), keywords))
+
+    def test_builtin_pattern_still_applies_alongside_keywords(self):
+        self.assertTrue(gf.name_matches_water_sport(_activity("Seekajak"), ["Drachenboot"]))
+
+    def test_parent_guard_still_applies_to_keywords(self):
+        for parent in (2, 228, None):
+            with self.subTest(parent=parent):
+                self.assertFalse(
+                    gf.name_matches_water_sport(
+                        _activity("Drachenboot Training", parent=parent), ["Drachenboot"]
+                    )
+                )
+
+    def test_empty_keywords_are_ignored(self):
+        self.assertFalse(gf.name_matches_water_sport(_activity("Sunday Walk"), ["", "  "]))
+        self.assertFalse(gf.name_matches_water_sport(_activity("Sunday Walk"), []))
+
+
 class ListActivitiesFilteringTest(unittest.TestCase):
     """End-to-end filtering through list_activities with a fake client."""
 
@@ -161,7 +202,18 @@ class ListActivitiesFilteringTest(unittest.TestCase):
                 "activityType": {"typeKey": "cycling", "parentTypeId": 17},
                 "startTimeLocal": "2026-05-30 10:00:00",
             },
+            # "Sonstiges" with a name only a user-defined keyword knows.
+            {
+                "activityId": 4,
+                "activityName": "Drachenboot Training",
+                "activityType": {"typeKey": "other", "parentTypeId": 17},
+                "startTimeLocal": "2026-05-31 18:00:00",
+            },
         ]
+
+    def _diagnostics(self, stderr_text):
+        line = next(l for l in stderr_text.splitlines() if l.startswith("DIAGNOSTICS: "))
+        return json.loads(line[len("DIAGNOSTICS: "):])
 
     def test_strict_mode_keeps_only_water_sport(self):
         out = gf.list_activities(self._FakeClient(self._make_activities()), days=30)
@@ -181,7 +233,27 @@ class ListActivitiesFilteringTest(unittest.TestCase):
             days=30,
             include_all=True,
         )
-        self.assertEqual([a["id"] for a in out], [1, 2, 3])
+        self.assertEqual([a["id"] for a in out], [1, 2, 3, 4])
+
+    def test_name_keywords_recover_activity_and_count_as_name_matched(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            out = gf.list_activities(
+                self._FakeClient(self._make_activities()),
+                days=30,
+                match_by_name=True,
+                name_keywords=["drachenboot"],
+            )
+        self.assertEqual([a["id"] for a in out], [1, 2, 4])
+        self.assertEqual(self._diagnostics(stderr.getvalue())["name_matched_count"], 2)
+
+    def test_name_keywords_ignored_without_match_by_name(self):
+        out = gf.list_activities(
+            self._FakeClient(self._make_activities()),
+            days=30,
+            name_keywords=["drachenboot"],
+        )
+        self.assertEqual([a["id"] for a in out], [1])
 
 
 class _FakeAuthError(Exception):

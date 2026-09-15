@@ -232,6 +232,11 @@ func CategoryForActivityName(name string) (string, bool) {
 // and unticking a category silently does nothing for exactly the users who
 // needed the fallback — see scripts/garmin_fetch.py:name_matches_water_sport.
 //
+// One carve-out lives in the caller, not here: an activity admitted by the
+// user's *own* keywords (users.name_keywords, [NameMatchesKeywords]) skips the
+// selection entirely, because typing the word is a stronger signal than a
+// tick box. Only built-in name matches go through this classification.
+//
 // Activities matching none of the three still return ("", false) and are kept
 // by the caller — a paddling activity carrying some typeKey we've never seen
 // must never be dropped just because this table is out of date.

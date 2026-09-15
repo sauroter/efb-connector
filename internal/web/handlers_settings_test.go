@@ -263,6 +263,99 @@ func TestMatchByName_PassedToGarminProviderOnSync(t *testing.T) {
 	}
 }
 
+func TestMatchByName_KeywordsPersistNormalisedAndPropagateToSync(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "match-by-name-keywords@example.com")
+
+	resp := postForm(t, h, "/settings/match-by-name", url.Values{
+		"enabled":  {"1"},
+		"keywords": {" Drachenboot , outrigger,, DRACHENBOOT "},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if f := flashFrom(resp); f != "" {
+		t.Errorf("unexpected flash %q", f)
+	}
+	u, _ := h.db.GetUserByID(uid)
+	want := []string{"Drachenboot", "outrigger"}
+	if !u.MatchByName || !slices.Equal(u.NameKeywords, want) {
+		t.Errorf("stored MatchByName=%v NameKeywords=%v, want true/%v", u.MatchByName, u.NameKeywords, want)
+	}
+
+	// The settings page shows the stored list back, comma-joined.
+	page, err := h.client.Get(h.srv.URL + "/settings")
+	if err != nil {
+		t.Fatalf("GET /settings: %v", err)
+	}
+	defer page.Body.Close()
+	body, _ := io.ReadAll(page.Body)
+	if !strings.Contains(string(body), `name="keywords"`) || !strings.Contains(string(body), `value="Drachenboot, outrigger"`) {
+		t.Errorf("settings page does not render the stored keywords")
+	}
+
+	// And the sync engine hands them to the provider.
+	if _, err := h.server.syncEngine.SyncUser(context.Background(), uid, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	if !slices.Equal(h.garmin.LastOpts.NameKeywords, want) {
+		t.Errorf("provider received NameKeywords=%v, want %v", h.garmin.LastOpts.NameKeywords, want)
+	}
+}
+
+func TestMatchByName_InvalidKeywordsFlashAndSaveNothing(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "match-by-name-invalid@example.com")
+
+	if err := h.db.UpdateNameKeywords(uid, []string{"Drachenboot"}); err != nil {
+		t.Fatalf("UpdateNameKeywords: %v", err)
+	}
+
+	// The switch auto-submits the whole form, so an invalid field also
+	// blocks the toggle — nothing changes, and the flash says why.
+	resp := postForm(t, h, "/settings/match-by-name", url.Values{
+		"enabled":  {"1"},
+		"keywords": {"Drachenboot, x"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if f := flashFrom(resp); f != "flash.name_keywords_invalid" {
+		t.Errorf("flash = %q, want flash.name_keywords_invalid", f)
+	}
+	u, _ := h.db.GetUserByID(uid)
+	if u.MatchByName {
+		t.Error("toggle must not be saved when the keywords are rejected")
+	}
+	if !slices.Equal(u.NameKeywords, []string{"Drachenboot"}) {
+		t.Errorf("NameKeywords = %v, want the previous value kept", u.NameKeywords)
+	}
+}
+
+func TestMatchByName_ToggleOnlyPostLeavesKeywordsIntact(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "match-by-name-toggle-only@example.com")
+
+	if err := h.db.UpdateNameKeywords(uid, []string{"Drachenboot"}); err != nil {
+		t.Fatalf("UpdateNameKeywords: %v", err)
+	}
+
+	// A form without the keywords field at all (older client) only touches
+	// the toggle...
+	postForm(t, h, "/settings/match-by-name", url.Values{"enabled": {"1"}})
+	u, _ := h.db.GetUserByID(uid)
+	if !u.MatchByName || !slices.Equal(u.NameKeywords, []string{"Drachenboot"}) {
+		t.Errorf("after toggle-only post: MatchByName=%v NameKeywords=%v, want true/[Drachenboot]", u.MatchByName, u.NameKeywords)
+	}
+
+	// ...whereas an explicitly empty field clears the list.
+	postForm(t, h, "/settings/match-by-name", url.Values{"enabled": {"1"}, "keywords": {""}})
+	u, _ = h.db.GetUserByID(uid)
+	if len(u.NameKeywords) != 0 {
+		t.Errorf("after empty keywords post: NameKeywords=%v, want empty", u.NameKeywords)
+	}
+}
+
 func TestActivityTypes_NewUserStartsWithPaddleSportsOnly(t *testing.T) {
 	h := newTestHarness(t)
 	uid := loginAs(t, h, "activity-types-default@example.com")

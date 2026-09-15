@@ -287,6 +287,64 @@ print(json.dumps([{
 	}
 }
 
+func TestListActivities_ForwardsNameKeywords(t *testing.T) {
+	dir := t.TempDir()
+	// Mock script that echoes the received --name-keyword values (joined
+	// by "|") as the activity name, so the test can see exactly what the
+	// Go side forwarded.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--json", action="store_true")
+lp.add_argument("--no-filter", action="store_true")
+lp.add_argument("--match-by-name", action="store_true")
+lp.add_argument("--name-keyword", action="append", dest="name_keywords", default=[])
+ns = parser.parse_args()
+print(json.dumps([{
+    "id": 1,
+    "name": "keywords=" + "|".join(ns.name_keywords),
+    "type": "other",
+    "parent_type_id": 17,
+    "date": "2026-05-01",
+    "start_time": "2026-05-01 12:00:00",
+    "start_lat": 0, "start_lng": 0, "end_lat": 0, "end_lng": 0,
+    "duration": 0, "distance": 0,
+}]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	keywords := []string{"Drachenboot", "Outrigger Canoe"}
+
+	// With match-by-name on, every keyword is forwarded as its own flag —
+	// including one containing a space.
+	acts, _, err := p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{
+		MatchByName:  true,
+		NameKeywords: keywords,
+	})
+	if err != nil {
+		t.Fatalf("ListActivities (on): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "keywords=Drachenboot|Outrigger Canoe" {
+		t.Fatalf("expected forwarded keywords, got %+v", acts)
+	}
+
+	// With match-by-name off, keywords are meaningless and must not be sent.
+	acts, _, err = p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{
+		NameKeywords: keywords,
+	})
+	if err != nil {
+		t.Fatalf("ListActivities (off): %v", err)
+	}
+	if len(acts) != 1 || acts[0].Name != "keywords=" {
+		t.Fatalf("expected no forwarded keywords, got %+v", acts)
+	}
+}
+
 func TestParseListDiagnostics_RequiresLineStart(t *testing.T) {
 	// A Python traceback line that happens to contain the substring
 	// "DIAGNOSTICS: " mid-line must not be parsed as a real diagnostics
