@@ -237,7 +237,7 @@ func (s *SyncEngine) syncUserReportingLogin(ctx context.Context, userID int64, t
 	syncStart := time.Now()
 
 	// Run the sync and capture results.
-	found, synced, skipped, failed, tripsCreated, loggedIn, syncErr := s.doSync(ctx, userID, runID, log, start, end, user.AutoCreateTrips, user.EnrichTrips, user.MatchByName, user.SelectedActivityTypes)
+	found, synced, skipped, failed, tripsCreated, loggedIn, syncErr := s.doSync(ctx, userID, runID, log, start, end, syncPrefsFor(user))
 
 	// 8. Determine final status.
 	status := "completed"
@@ -298,6 +298,36 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 	return start, end, nil
 }
 
+// syncPrefs is the per-user configuration doSync needs, lifted off the
+// users row so the signature does not grow a positional argument per
+// setting.
+type syncPrefs struct {
+	AutoCreateTrips bool
+	EnrichTrips     bool
+	// MatchByName and NameKeywords drive the name fallback in the
+	// provider; NameKeywords additionally exempts the activities it admits
+	// from SelectedCategories (see the selection loop below).
+	MatchByName        bool
+	NameKeywords       []string
+	SelectedCategories []string
+}
+
+func syncPrefsFor(user *database.User) syncPrefs {
+	p := syncPrefs{
+		AutoCreateTrips:    user.AutoCreateTrips,
+		EnrichTrips:        user.EnrichTrips,
+		MatchByName:        user.MatchByName,
+		SelectedCategories: user.SelectedActivityTypes,
+	}
+	if user.MatchByName {
+		// Keywords are an extension of the toggle, not a feature of their
+		// own: with it off they must neither reach the script nor bypass
+		// the selection.
+		p.NameKeywords = user.NameKeywords
+	}
+	return p
+}
+
 // doSync performs the actual sync work and returns counters.
 // The loggedIn return reports whether the EFB login endpoint was hit (login
 // attempted, regardless of outcome). The bulk runner uses it to decide whether
@@ -306,7 +336,7 @@ func (s *SyncEngine) resolveTimeWindowFromUser(user *database.User, opts SyncOpt
 // distinct signal rather than something inferred from the counters, because the
 // post-login no-track-points skip makes found==skipped possible even when a
 // login did happen.
-func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, autoCreateTrips, enrichTrips, matchByName bool, selectedCategories []string) (found, synced, skipped, failed, tripsCreated int, loggedIn bool, err error) {
+func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.Logger, start, end time.Time, prefs syncPrefs) (found, synced, skipped, failed, tripsCreated int, loggedIn bool, err error) {
 	// 2. Get Garmin credentials.
 	garminEmail, garminPass, err := s.db.GetGarminCredentials(userID)
 	if err != nil {
@@ -324,7 +354,8 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	// 3. List activities from Garmin.
 	activities, diag, err := s.garmin.ListActivities(ctx, garminCreds, start, end, garmin.ListOptions{
-		MatchByName: matchByName,
+		MatchByName:  prefs.MatchByName,
+		NameKeywords: prefs.NameKeywords,
 	})
 	if err != nil {
 		// On auth failure: mark credentials invalid.
@@ -348,13 +379,27 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	// parent) is kept regardless — see garmin.CategoryForActivity for why that
 	// conservative default survives, and why it no longer lets whole sports
 	// through unasked.
+	//
+	// The one deliberate exception: an activity the user's own keywords
+	// (users.name_keywords) admitted. The built-in name patterns would file
+	// "Drachenbootrudern" under Rowing and drop it for a user who unticked
+	// Rowing — but they typed "Drachenboot" precisely to get it, so a keyword
+	// match is kept without consulting the selection. Same parent-17 guard as
+	// the script, so this can only ever exempt what the fallback let in.
 	excludedCount := 0
-	selectedSet := make(map[string]struct{}, len(selectedCategories))
-	for _, c := range selectedCategories {
+	keywordMatched := 0
+	selectedSet := make(map[string]struct{}, len(prefs.SelectedCategories))
+	for _, c := range prefs.SelectedCategories {
 		selectedSet[c] = struct{}{}
 	}
 	kept := activities[:0]
 	for _, act := range activities {
+		if prefs.MatchByName && act.ParentTypeID == garmin.GenericFitnessParentTypeID &&
+			garmin.NameMatchesKeywords(act.Name, prefs.NameKeywords) {
+			keywordMatched++
+			kept = append(kept, act)
+			continue
+		}
 		cat, known := garmin.CategoryForActivity(act.Type, act.ParentTypeID, act.Name)
 		if known {
 			if _, want := selectedSet[cat]; !want {
@@ -371,6 +416,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		"raw_count", diag.RawCount,
 		"type_keys_seen", diag.TypeKeysSeen,
 		"name_matched_count", diag.NameMatchedCount,
+		"keyword_matched_count", keywordMatched,
 		"excluded_count", excludedCount,
 	)
 
@@ -629,7 +675,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 		// 7e: Create trip from the uploaded track (if enabled).
 		// Trip creation failure is non-fatal — log and continue.
-		if autoCreateTrips && !act.startTime.IsZero() {
+		if prefs.AutoCreateTrips && !act.startTime.IsZero() {
 			trackID, findErr := efbClient.FindUnassociatedTrack(ctx, filename)
 			if findErr != nil {
 				log.Warn("failed to find track for trip creation", "error", findErr)
@@ -638,7 +684,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			} else {
 				// Build enrichment from Rivermap if available and enabled.
 				var enrichment *efb.TripEnrichment
-				if enrichTrips && s.rivermap != nil {
+				if prefs.EnrichTrips && s.rivermap != nil {
 					enrichment = s.buildEnrichment(ctx, act, log)
 				}
 				if tripErr := s.createTripLoggingDiag(ctx, efbClient, trackID, act, enrichment, log); tripErr != nil {
@@ -842,7 +888,8 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 		end := time.Now()
 		start := end.AddDate(0, 0, -user.SyncDays)
 		acts, _, err := s.garmin.ListActivities(ctx, garminCreds, start, end, garmin.ListOptions{
-			MatchByName: user.MatchByName,
+			MatchByName:  user.MatchByName,
+			NameKeywords: user.NameKeywords,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("debug-upload: list activities: %w", err)

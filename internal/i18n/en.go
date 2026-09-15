@@ -177,7 +177,7 @@ var En = map[string]string{
 	"settings.enrich":              "Enrich trip entries",
 	"settings.enrich_desc":         "Add river section, grade, and gauge data from Rivermap",
 	"settings.match_by_name":       "Match \"Other\" activities by name",
-	"settings.match_by_name_desc":  "Also include activities tagged \"Other\"/\"Cardio\" in Garmin if their name mentions Kajak/Kanu/SUP/Paddel/Rudern. Useful if your watch (e.g. Venu 3) doesn't have a native kayak activity profile.",
+	"settings.match_by_name_desc":  "Also include activities tagged \"Other\"/\"Cardio\" in Garmin if their name mentions Kajak/Kanu/SUP/Paddel/Rudern. Useful if your watch (e.g. Venu 3) doesn't have a native kayak activity profile. Add your own words below.",
 	"settings.activity_types":      "Activity types to sync",
 	"settings.activity_types_desc": "Garmin files everything from kayaking to sailing under \"water sports\". By default we sync only the paddle sports — sailing, windsurfing/kitesurfing, surfing/waterskiing and motorboating stay out. Tick them if you do want them in EFB, or untick e.g. rowing if you only want paddle-kilometres on your Wanderfahrerabzeichen.",
 	"settings.activity_types_save": "Save",
@@ -199,6 +199,12 @@ var En = map[string]string{
 	"settings.delete_account":      "Delete account",
 	"settings.delete_desc":         "Permanently remove your account and all data",
 	"settings.delete_confirm":      "Are you sure? This will permanently delete your account and all data. This cannot be undone.",
+
+	// ── Settings: user-defined keywords for the match-by-name fallback ──
+	"settings.match_by_name_keywords":      "Your own keywords",
+	"settings.match_by_name_keywords_desc": "Comma-separated. An \"Other\" activity whose name contains one of these is always synced, regardless of the activity types below. Only applies while the switch is on.",
+	"settings.match_by_name_keywords_hint": "e.g. Drachenboot, Outrigger",
+	"settings.match_by_name_keywords_save": "Save keywords",
 
 	// ── Garmin settings ──
 	"garmin.title":             "Garmin Settings — EFB Connector",
@@ -295,6 +301,7 @@ var En = map[string]string{
 	"flash.efb_consent_recheck_rate_limited": "You've checked a few times in the last hour. Please give it a moment before trying again.",
 	"flash.save_preferences_failed":          "Failed to save preferences. Please try again.",
 	"flash.save_setting_failed":              "Failed to save setting. Please try again.",
+	"flash.name_keywords_invalid":            "Keywords not saved: up to 20 entries of 2–40 characters each, separated by commas.",
 	"flash.delete_account_failed":            "Failed to delete account. Please try again.",
 	"flash.account_deleted":                  "Your account and all data have been deleted.",
 	"flash.sync_rate_limited":                "You can only sync once per hour. Please try again later.",

@@ -167,6 +167,76 @@ func TestSelectedActivityTypes_ColumnDefaultIsUsable(t *testing.T) {
 	}
 }
 
+func TestUpdateNameKeywords(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("ukeywords@example.com")
+
+	if len(u.NameKeywords) != 0 {
+		t.Errorf("CreateUser NameKeywords = %v, want empty", u.NameKeywords)
+	}
+
+	want := []string{"Drachenboot", "Outrigger Canoe"}
+	if err := db.UpdateNameKeywords(u.ID, want); err != nil {
+		t.Fatalf("UpdateNameKeywords: %v", err)
+	}
+	if got := mustGetUser(t, db, u.ID).NameKeywords; !slices.Equal(got, want) {
+		t.Errorf("NameKeywords via GetUserByID = %v, want %v", got, want)
+	}
+
+	// The sync path reads users through GetSyncableUsers, which has its own
+	// column list and scan function — both must carry the keywords too.
+	if err := db.SaveGarminCredentials(u.ID, "g@example.com", "pw"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := db.SaveEFBCredentials(u.ID, "efb", "pw"); err != nil {
+		t.Fatalf("SaveEFBCredentials: %v", err)
+	}
+	syncable, err := db.GetSyncableUsers()
+	if err != nil {
+		t.Fatalf("GetSyncableUsers: %v", err)
+	}
+	if len(syncable) != 1 || !slices.Equal(syncable[0].NameKeywords, want) {
+		t.Errorf("GetSyncableUsers NameKeywords = %+v, want %v", syncable, want)
+	}
+
+	// nil clears the list without tripping the NOT NULL column.
+	if err := db.UpdateNameKeywords(u.ID, nil); err != nil {
+		t.Fatalf("UpdateNameKeywords(nil): %v", err)
+	}
+	if got := mustGetUser(t, db, u.ID).NameKeywords; len(got) != 0 {
+		t.Errorf("NameKeywords after nil = %v, want empty", got)
+	}
+}
+
+// Unlike the category selection there is no default to fall back to, and a
+// missing keyword only loses an opt-in extra, so unreadable values decode to
+// "no keywords" rather than failing the whole user scan.
+func TestDecodeNameKeywords_UnreadableValuesMeanNone(t *testing.T) {
+	for _, raw := range []string{"", "not json", "null", "{}", `["ok",1]`} {
+		if got := decodeNameKeywords(raw); len(got) != 0 {
+			t.Errorf("decodeNameKeywords(%q) = %v, want empty", raw, got)
+		}
+	}
+	if got := decodeNameKeywords(`["Drachenboot","Outrigger"]`); !slices.Equal(got, []string{"Drachenboot", "Outrigger"}) {
+		t.Errorf("decodeNameKeywords = %v, want [Drachenboot Outrigger]", got)
+	}
+}
+
+func TestNameKeywords_ColumnDefaultIsUsable(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.db.Exec(`INSERT INTO users (email) VALUES (?)`, "raw-insert-kw@example.com"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	u, err := db.GetUserByEmail("raw-insert-kw@example.com")
+	if err != nil || u == nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	if len(u.NameKeywords) != 0 {
+		t.Errorf("column default gave %v, want empty", u.NameKeywords)
+	}
+}
+
 func TestPing(t *testing.T) {
 	db := openTestDB(t)
 	if err := db.Ping(); err != nil {

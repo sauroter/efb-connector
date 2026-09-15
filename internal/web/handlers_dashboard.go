@@ -231,6 +231,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"AutoCreateTrips":     user.AutoCreateTrips,
 		"EnrichTrips":         user.EnrichTrips,
 		"MatchByName":         user.MatchByName,
+		"NameKeywords":        strings.Join(user.NameKeywords, ", "),
 		"ActivityTypeFilters": filters,
 	})
 }
@@ -363,20 +364,54 @@ func (s *Server) handleMatchByNameSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enabled := r.FormValue("enabled") == "1"
+	redirect := func() {
+		if ref := r.Referer(); strings.Contains(ref, "/settings") {
+			http.Redirect(w, r, "/settings", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
+
+	enabled := r.PostFormValue("enabled") == "1"
+
+	// The keywords field shares the form with the switch. It is optional
+	// so a client that only knows the toggle leaves the list alone; when
+	// present, an explicitly empty value clears it. Invalid input saves
+	// nothing at all — the switch auto-submits the form, so a rejected
+	// field also blocks the toggle rather than saving half of the form.
+	// PostForm, not Form: r.Form also carries the URL query, and "absent
+	// leaves the list untouched" must not be defeatable by a link that
+	// carries ?keywords= in its href.
+	var keywords []string
+	hasKeywords := r.PostForm.Has("keywords")
+	if hasKeywords {
+		var err error
+		keywords, err = garmin.ParseNameKeywords(r.PostFormValue("keywords"))
+		if err != nil {
+			s.logger.Info("rejected name_keywords", "user_id", userID, "error", err)
+			setFlash(w, "flash.name_keywords_invalid")
+			redirect()
+			return
+		}
+	}
 
 	if err := s.db.UpdateMatchByName(userID, enabled); err != nil {
 		s.logger.Error("failed to update match_by_name", "user_id", userID, "error", err)
 		setFlash(w, "flash.save_setting_failed")
-	}
-
-	s.logger.Info("match_by_name updated", "user_id", userID, "enabled", enabled)
-
-	if ref := r.Referer(); strings.Contains(ref, "/settings") {
-		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		redirect()
 		return
 	}
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	if hasKeywords {
+		if err := s.db.UpdateNameKeywords(userID, keywords); err != nil {
+			s.logger.Error("failed to update name_keywords", "user_id", userID, "error", err)
+			setFlash(w, "flash.save_setting_failed")
+			redirect()
+			return
+		}
+	}
+
+	s.logger.Info("match_by_name updated", "user_id", userID, "enabled", enabled, "keywords", len(keywords), "keywords_updated", hasKeywords)
+	redirect()
 }
 
 // handleSelectedActivityTypesSave saves the per-user activity-type

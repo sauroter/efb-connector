@@ -176,7 +176,7 @@ var De = map[string]string{
 	"settings.enrich":              "Fahrteinträge anreichern",
 	"settings.enrich_desc":         "Flussabschnitt, Schwierigkeitsgrad und Pegeldaten von Rivermap hinzufügen",
 	"settings.match_by_name":       "„Sonstiges“-Aktivitäten per Name erkennen",
-	"settings.match_by_name_desc":  "Auch in Garmin als „Sonstiges“ oder „Cardio“ markierte Aktivitäten importieren, wenn der Aktivitätsname Kajak/Kanu/SUP/Paddel/Rudern enthält. Praktisch, wenn deine Uhr (z.B. Venu 3) kein eigenes Kajak-Profil hat.",
+	"settings.match_by_name_desc":  "Auch in Garmin als „Sonstiges“ oder „Cardio“ markierte Aktivitäten importieren, wenn der Aktivitätsname Kajak/Kanu/SUP/Paddel/Rudern enthält. Praktisch, wenn deine Uhr (z.B. Venu 3) kein eigenes Kajak-Profil hat. Eigene Begriffe kannst du unten ergänzen.",
 	"settings.activity_types":      "Sportarten synchronisieren",
 	"settings.activity_types_desc": "Garmin führt vom Kajak bis zum Segeln alles unter „Wassersport“. Standardmäßig synchronisieren wir nur die Paddelsportarten — Segeln, Windsurfen/Kitesurfen, Surfen/Wasserski und Motorboot bleiben außen vor. Aktiviere sie, wenn sie doch ins EFB sollen, oder deaktiviere z.B. Rudern, damit nur Paddelkilometer fürs Wanderfahrerabzeichen zählen.",
 	"settings.activity_types_save": "Speichern",
@@ -198,6 +198,12 @@ var De = map[string]string{
 	"settings.delete_account":      "Konto löschen",
 	"settings.delete_desc":         "Konto und alle Daten unwiderruflich löschen",
 	"settings.delete_confirm":      "Bist du sicher? Dein Konto und alle Daten werden unwiderruflich gelöscht.",
+
+	// ── Settings: eigene Suchbegriffe für die Namenserkennung ──
+	"settings.match_by_name_keywords":      "Eigene Suchbegriffe",
+	"settings.match_by_name_keywords_desc": "Durch Komma getrennt. Eine „Sonstiges“-Aktivität, deren Name einen dieser Begriffe enthält, wird immer synchronisiert – unabhängig von den Aktivitätstypen unten. Gilt nur, solange der Schalter an ist.",
+	"settings.match_by_name_keywords_hint": "z.B. Drachenboot, Outrigger",
+	"settings.match_by_name_keywords_save": "Begriffe speichern",
 
 	// ── Garmin settings ──
 	"garmin.title":             "Garmin-Einstellungen — EFB Connector",
@@ -294,6 +300,7 @@ var De = map[string]string{
 	"flash.efb_consent_recheck_rate_limited": "Du hast in der letzten Stunde schon mehrfach geprüft. Bitte warte einen Moment, bevor du es erneut versuchst.",
 	"flash.save_preferences_failed":          "Einstellungen konnten nicht gespeichert werden. Bitte versuche es erneut.",
 	"flash.save_setting_failed":              "Einstellung konnte nicht gespeichert werden. Bitte versuche es erneut.",
+	"flash.name_keywords_invalid":            "Begriffe nicht gespeichert: höchstens 20 Einträge mit je 2–40 Zeichen, durch Komma getrennt.",
 	"flash.delete_account_failed":            "Konto konnte nicht gelöscht werden. Bitte versuche es erneut.",
 	"flash.account_deleted":                  "Dein Konto und alle Daten wurden gelöscht.",
 	"flash.sync_rate_limited":                "Du kannst nur einmal pro Stunde synchronisieren. Bitte versuche es später erneut.",

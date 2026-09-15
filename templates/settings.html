@@ -90,17 +90,29 @@
         </div>
       </div>
       {{end}}
-      <div class="settings-row">
-        <div class="settings-row-info">
-          <strong>{{call .T "settings.match_by_name"}}</strong>
-          <small>{{call .T "settings.match_by_name_desc"}}</small>
-        </div>
-        <div class="settings-row-action">
-          <form method="post" action="/settings/match-by-name" style="margin: 0;">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <input type="checkbox" name="enabled" value="1" role="switch" {{if .MatchByName}}checked{{end}} onchange="this.form.submit()" style="margin: 0;">
-          </form>
-        </div>
+      <div class="settings-row" style="flex-direction: column; align-items: stretch;">
+        <form method="post" action="/settings/match-by-name" style="margin: 0;">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+            <div class="settings-row-info">
+              <strong>{{call .T "settings.match_by_name"}}</strong>
+              <small>{{call .T "settings.match_by_name_desc"}}</small>
+            </div>
+            <div class="settings-row-action">
+              <input type="checkbox" name="enabled" value="1" role="switch" {{if .MatchByName}}checked{{end}} onchange="this.form.submit()" style="margin: 0;">
+            </div>
+          </div>
+          <label for="name-keywords" style="margin: 0.75rem 0 0.25rem; font-size: 0.85em;">
+            {{call .T "settings.match_by_name_keywords"}}
+            <small style="display: block;">{{call .T "settings.match_by_name_keywords_desc"}}</small>
+          </label>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" id="name-keywords" name="keywords" value="{{.NameKeywords}}" placeholder="{{call .T "settings.match_by_name_keywords_hint"}}" autocomplete="off" style="margin: 0; flex: 1 1 auto; width: auto; min-width: 0;">
+            <button type="submit" class="outline secondary" style="margin: 0; padding: 0.3em 0.8em; font-size: 0.85em; white-space: nowrap; flex: 0 0 auto; width: auto;">
+              {{call .T "settings.match_by_name_keywords_save"}}
+            </button>
+          </div>
+        </form>
       </div>
       <div class="settings-row" style="flex-direction: column; align-items: stretch;">
         <div class="settings-row-info" style="margin-bottom: 0.5rem;">

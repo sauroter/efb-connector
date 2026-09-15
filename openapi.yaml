@@ -922,6 +922,12 @@ paths:
 
         Intended for users whose watch lacks a native kayak activity
         profile (e.g. Garmin Venu 3) and who record under "Other".
+
+        The optional `keywords` field stores the user's own words
+        (`users.name_keywords`) that extend the built-in list under the
+        same parent_type_id=17 guard. An activity admitted by a user
+        keyword bypasses the activity-type selection. Invalid input is
+        rejected with a flash and nothing (not even the toggle) is saved.
       operationId: postMatchByName
       security:
         - sessionCookie: []
@@ -935,6 +941,15 @@ paths:
                 enabled:
                   type: string
                   description: '"1" for enabled, absent for disabled'
+                keywords:
+                  type: string
+                  description: |
+                    Comma-separated user keywords for the name fallback,
+                    matched as case-insensitive substrings of the activity
+                    name. Entries are trimmed and de-duplicated; each must
+                    be 2–40 characters, at most 20 in total. Absent leaves
+                    the stored list untouched; empty clears it.
+                  example: "Drachenboot, Outrigger"
                 csrf_token:
                   type: string
               required: [csrf_token]

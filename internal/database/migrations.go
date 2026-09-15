@@ -237,4 +237,16 @@ UPDATE users SET selected_activity_types = (
      WHERE value IS NOT NULL
    )
 );`,
+
+	// 0015 – user-defined keywords for the match_by_name fallback.
+	//
+	// Prompted by dragon boat recorded as Garmin "Sonstiges" (parent 17):
+	// the built-in keyword list in scripts/garmin_fetch.py only knows the
+	// paddle-sport vocabulary, and growing it for every word a paddler
+	// might use does not scale. The user's own comma-separated words live
+	// here as a JSON array of strings; they only apply while match_by_name
+	// is on, under the same parent-17 guard, and an activity they admit
+	// bypasses selected_activity_types (the user typed it, so they want
+	// it). '[]' is the correct default: no keywords, nothing changes.
+	`ALTER TABLE users ADD COLUMN name_keywords TEXT NOT NULL DEFAULT '[]';`,
 }
