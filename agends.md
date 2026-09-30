@@ -106,7 +106,7 @@ All `/internal/admin/*` routes require `Authorization: Bearer $INTERNAL_SECRET`.
 - `GET /internal/admin/users/{id}/sync-history` — last 50 sync_runs for a user (status, found/synced/failed counters, `error_message`, `raw_count`, `type_keys_seen`).
 - `GET /internal/admin/users/{id}/garmin/activities-raw?days=N` — every activity Garmin returns for the user, **bypassing the water-sport filter**. First thing to hit on any "no imports" feedback: it answers "what activity types does this user actually have?" Hits Garmin directly using cached tokens; subject to rate limits. `days` capped at 365.
 - `GET /internal/admin/activity-errors?include_body=1` — recent failed activity uploads with EFB response excerpts (capped at 5 stored bodies).
-- `POST /internal/admin/users/{id}/debug-upload` — dry-run a single EFB upload using stored credentials, returning the raw EFB response. Does not mutate `synced_activities` or `sync_runs`.
+- `POST /internal/admin/users/{id}/debug-upload` — dry-run a single EFB upload using stored credentials, returning the raw EFB response. Does not mutate `synced_activities` or `sync_runs`. Add `?include_trip_form=1` to also get the trip-creation form EFB offers for that track (`form_fields` lists what a save would send) — the tool for "track uploaded but no Fahrt", which `sync_runs` shows as `ActivitiesSynced > 0, TripsCreated = 0`. The form is not submitted, but fetching it clicks "Fahrt neu anlegen" in the user's real account: check `still_unassociated` in the response, because a track EFB has attached a draft to is one the sync will never create a trip for.
 
 ## Water-sport filter
 

@@ -819,6 +819,41 @@ type DebugUploadResult struct {
 	GPXContentBase64 string              `json:"gpx_content_base64,omitempty"`
 	GPXTruncated     bool                `json:"gpx_truncated,omitempty"`
 	Upload           DebugUploadResponse `json:"upload"`
+	// TripForm is populated when DebugUploadOnce is called with
+	// includeTripForm=true and the upload succeeded: the page EFB renders
+	// after clicking the track's "Fahrt neu anlegen" button. The form is
+	// not submitted, but the click itself is a request EFB may act on —
+	// see DebugTripForm.StillUnassociated.
+	TripForm *DebugTripForm `json:"trip_form,omitempty"`
+}
+
+// DebugTripForm captures EFB's raw answer to the track click for the admin
+// debug path, so an operator can see why a track never becomes a trip
+// (no form at all, or a form missing something the save needs). Body is
+// capped to MaxDebugTripFormBytes.
+type DebugTripForm struct {
+	// TrackID is the EFB track the form was opened for; empty, with Note
+	// saying why, when no unassociated track could be located.
+	TrackID       string `json:"track_id"`
+	Note          string `json:"note,omitempty"`
+	RequestURL    string `json:"request_url,omitempty"`
+	FinalURL      string `json:"final_url,omitempty"`
+	StatusCode    int    `json:"status_code,omitempty"`
+	ResponseBody  string `json:"response_body,omitempty"`
+	BodySizeBytes int    `json:"body_size_bytes,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	HasForm       bool   `json:"has_form"`
+	IsLoginPage   bool   `json:"is_login_page"`
+	// FormFields is what a save would submit before the times are filled
+	// in, each value capped at MaxDebugFormFieldBytes. A select with no
+	// options (e.g. no water offered) has no entry.
+	FormFields map[string][]string `json:"form_fields,omitempty"`
+	// StillUnassociated reports whether the tracks page still offers
+	// "Fahrt neu anlegen" for the track after the click. False means the
+	// click alone made EFB attach something (a draft trip) to the track,
+	// and the sync will no longer create a trip for it. Nil when the
+	// re-check could not be made; Note then says why.
+	StillUnassociated *bool `json:"still_unassociated,omitempty"`
 }
 
 // DebugUploadResponse mirrors [efb.RawUploadResult] for JSON serialisation.
@@ -845,6 +880,15 @@ const MaxDebugBodyBytes = 64 * 1024
 // so truncation should be rare.
 const MaxDebugGPXBytes = 1 << 20 // 1 MiB
 
+// MaxDebugTripFormBytes caps the trip-form page returned by DebugUploadOnce
+// when includeTripForm is true. Larger than MaxDebugBodyBytes because the
+// page may carry the track itself ahead of the fields we want to read.
+const MaxDebugTripFormBytes = 256 * 1024
+
+// MaxDebugFormFieldBytes caps each value in DebugTripForm.FormFields, so a
+// hidden field carrying the whole track cannot defeat the body cap.
+const MaxDebugFormFieldBytes = 1024
+
 // DebugUploadOnce performs a one-shot upload attempt for an admin debug
 // session. It logs in with the user's stored EFB credentials, downloads
 // the requested Garmin activity, performs the upload, and returns the
@@ -859,7 +903,14 @@ const MaxDebugGPXBytes = 1 << 20 // 1 MiB
 // When includeGPX is true the returned result also carries the downloaded
 // GPX bytes (base64-encoded, capped at MaxDebugGPXBytes) so an operator
 // can inspect what Garmin emitted side-by-side with EFB's rejection.
-func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID string, includeGPX bool) (*DebugUploadResult, error) {
+//
+// When includeTripForm is true and the upload succeeded, the result also
+// carries the page EFB renders for the track's "Fahrt neu anlegen" button.
+// The form is fetched but not submitted. That click is still a POST to the
+// user's real EFB account: if EFB reacts to it by attaching a draft trip,
+// the track stops being eligible for automatic trip creation. The result's
+// StillUnassociated says whether that happened.
+func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID string, includeGPX, includeTripForm bool) (*DebugUploadResult, error) {
 	user, err := s.db.GetUserByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("debug-upload: get user: %w", err)
@@ -942,7 +993,7 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 		gpxB64 = base64.StdEncoding.EncodeToString(clipped)
 	}
 
-	return &DebugUploadResult{
+	result := &DebugUploadResult{
 		UserID:           userID,
 		GarminActivityID: garminID,
 		GPXSizeBytes:     len(gpxData),
@@ -959,7 +1010,71 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 			ContainsSuccessMarker: raw.ContainsSuccessMarker,
 			IsLoginPage:           raw.IsLoginPage,
 		},
-	}, nil
+	}
+
+	// Only meaningful once the track is on EFB, i.e. after a successful
+	// upload (which includes EFB's "already stored" duplicate answer).
+	if includeTripForm && raw.ContainsSuccessMarker {
+		result.TripForm = s.debugFetchTripForm(ctx, efbClient, filename)
+	}
+
+	return result, nil
+}
+
+// debugFetchTripForm locates the just-uploaded track, fetches its
+// trip-creation form, and re-reads the tracks page to see whether the click
+// changed the track's state. Errors are folded into the returned struct's
+// Note rather than failing the whole debug call — the upload result is
+// still worth returning.
+func (s *SyncEngine) debugFetchTripForm(ctx context.Context, efbClient efb.EFBProvider, filename string) *DebugTripForm {
+	trackID, err := efbClient.FindUnassociatedTrack(ctx, filename)
+	if err != nil {
+		return &DebugTripForm{Note: fmt.Sprintf("find unassociated track: %v", err)}
+	}
+	if trackID == "" {
+		return &DebugTripForm{Note: fmt.Sprintf("no unassociated track found for %q (already has a trip, or not listed)", filename)}
+	}
+
+	fetcher, ok := efbClient.(tripFormFetcher)
+	if !ok {
+		return &DebugTripForm{TrackID: trackID, Note: "efb provider does not support trip-form fetch"}
+	}
+
+	form, err := fetcher.FetchTripForm(ctx, trackID)
+	if err != nil {
+		return &DebugTripForm{TrackID: trackID, Note: fmt.Sprintf("fetch trip form: %v", err)}
+	}
+
+	fields := make(map[string][]string, len(form.Fields))
+	for name, values := range form.Fields {
+		capped := make([]string, len(values))
+		for i, v := range values {
+			capped[i] = efb.TruncateUTF8([]byte(v), MaxDebugFormFieldBytes)
+		}
+		fields[name] = capped
+	}
+
+	result := &DebugTripForm{
+		TrackID:       trackID,
+		RequestURL:    form.RequestURL,
+		FinalURL:      form.FinalURL,
+		StatusCode:    form.StatusCode,
+		ResponseBody:  efb.TruncateUTF8(form.Body, MaxDebugTripFormBytes),
+		BodySizeBytes: form.BodySize,
+		Truncated:     len(form.Body) > MaxDebugTripFormBytes,
+		HasForm:       form.HasForm,
+		IsLoginPage:   form.IsLoginPage,
+		FormFields:    fields,
+	}
+
+	after, err := efbClient.FindUnassociatedTrack(ctx, filename)
+	if err != nil {
+		result.Note = fmt.Sprintf("re-check track after click: %v", err)
+		return result
+	}
+	still := after != ""
+	result.StillUnassociated = &still
+	return result
 }
 
 // rawUploader is the optional interface an [efb.EFBProvider] implements
@@ -967,6 +1082,13 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 // *efb.EFBClient satisfies it; mocks in tests can choose to as well.
 type rawUploader interface {
 	UploadRaw(ctx context.Context, gpxData []byte, filename string) (*efb.RawUploadResult, error)
+}
+
+// tripFormFetcher is the optional interface an [efb.EFBProvider] implements
+// when it can return the raw trip-creation form. The production
+// *efb.EFBClient satisfies it; the mock does not.
+type tripFormFetcher interface {
+	FetchTripForm(ctx context.Context, trackID string) (*efb.TripFormResult, error)
 }
 
 // verboseTripCreator is the optional interface an [efb.EFBProvider]

@@ -219,7 +219,9 @@ func (s *Server) handleAdminActivityError(w http.ResponseWriter, r *http.Request
 // Garmin activity, attempt the upload, return the raw EFB response.
 //
 // Does NOT mutate synced_activities or sync_runs. Used to inspect silent
-// EFB rejections in production.
+// EFB rejections in production. With ?include_trip_form=1 it also clicks
+// the uploaded track's "Fahrt neu anlegen" button and returns the form EFB
+// offers, without submitting it.
 func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInternalAuth(w, r) {
 		return
@@ -243,18 +245,20 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	includeGPX := r.URL.Query().Get("include_gpx") == "1"
+	includeTripForm := r.URL.Query().Get("include_trip_form") == "1"
 
 	s.logger.Info("admin: debug upload",
 		"user_id", userID,
 		"garmin_activity_id", req.GarminActivityID,
 		"include_gpx", includeGPX,
+		"include_trip_form", includeTripForm,
 	)
 
 	// Allow up to 90 s — login + Garmin download + EFB upload can be slow.
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	result, err := s.syncEngine.DebugUploadOnce(ctx, userID, req.GarminActivityID, includeGPX)
+	result, err := s.syncEngine.DebugUploadOnce(ctx, userID, req.GarminActivityID, includeGPX, includeTripForm)
 	if err != nil {
 		s.logger.Error("admin: debug upload failed", "user_id", userID, "error", err)
 		w.Header().Set("Content-Type", "application/json")

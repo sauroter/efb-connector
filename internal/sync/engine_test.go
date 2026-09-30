@@ -2085,7 +2085,7 @@ func TestDebugUploadOnce_DryRunDoesNotMutate(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false)
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
 	}
@@ -2131,7 +2131,7 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false)
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
 	}
@@ -2143,6 +2143,244 @@ func TestDebugUploadOnce_BodyTruncation(t *testing.T) {
 	}
 	if res.Upload.BodySizeBytes != len(body) {
 		t.Errorf("BodySizeBytes = %d, want %d (full size)", res.Upload.BodySizeBytes, len(body))
+	}
+}
+
+// mockTripFormEFB is a stateful EFB stand-in for the trip-form debug path:
+// uploads succeed, the tracks page lists garmin_act-1.gpx as track 777, and
+// the track click answers with clickBody. Submitting the trip form fails the
+// test.
+type mockTripFormEFB struct {
+	*httptest.Server
+	// clicks counts track-click POSTs — the request that touches the
+	// user's EFB account.
+	clicks atomic.Int32
+	// associated makes the tracks page show the track as already having a
+	// trip ("edit:" instead of "track_id:").
+	associated atomic.Bool
+	// draftOnClick makes the click itself flip the track to associated, the
+	// way EFB would if it attached a draft trip.
+	draftOnClick bool
+}
+
+func newMockEFBServerTripForm(t *testing.T, clickBody string) *mockTripFormEFB {
+	t.Helper()
+	const sessionCookie = "mock-session"
+	const row = `<html><body><div style="overflow:auto;border:1px solid darkgrey;">garmin_act-1.gpx` +
+		`<input type='image' name='%s' title='Fahrt'></div></body></html>`
+
+	m := &mockTripFormEFB{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method != http.MethodPost:
+			button := "track_id:777"
+			if m.associated.Load() {
+				button = "edit:4242"
+			}
+			_, _ = fmt.Fprintf(w, row, button)
+		case strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data"):
+			_, _ = w.Write([]byte("Datenbank gespeichert"))
+		default:
+			_ = r.ParseForm()
+			if r.PostForm.Get("track_id:777.x") == "" {
+				t.Errorf("track click posted %v, want track_id:777", r.PostForm)
+			}
+			m.clicks.Add(1)
+			if m.draftOnClick {
+				m.associated.Store(true)
+			}
+			_, _ = w.Write([]byte(clickBody))
+		}
+	})
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("debug-upload must not submit the trip form")
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	m.Server = httptest.NewServer(mux)
+	t.Cleanup(m.Close)
+	return m
+}
+
+func TestDebugUploadOnce_IncludeTripForm(t *testing.T) {
+	const form = `<html><body><form method="POST" action="/trips/create">` +
+		`<input type="text" name="begdate" value="29.09.2026">` +
+		`<select name="waters_store[]"></select>` +
+		`<select name="destination"><option value="7" selected>Ziel</option></select>` +
+		`</form></body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerTripForm(t, form)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	tf := res.TripForm
+	if tf == nil {
+		t.Fatal("includeTripForm=true after a successful upload must populate TripForm")
+	}
+	if tf.TrackID != "777" || tf.Note != "" {
+		t.Errorf("TrackID = %q, Note = %q; want 777 and no note", tf.TrackID, tf.Note)
+	}
+	if !tf.HasForm || tf.StatusCode != http.StatusOK {
+		t.Errorf("HasForm = %v, StatusCode = %d; want true, 200", tf.HasForm, tf.StatusCode)
+	}
+	if tf.ResponseBody != form || tf.BodySizeBytes != len(form) || tf.Truncated {
+		t.Errorf("ResponseBody should be the full raw form, got %d bytes (truncated=%v)", len(tf.ResponseBody), tf.Truncated)
+	}
+	if got := tf.FormFields["begdate"]; len(got) != 1 || got[0] != "29.09.2026" {
+		t.Errorf("FormFields[begdate] = %v, want [29.09.2026]", got)
+	}
+	if got := tf.FormFields["destination"]; len(got) != 1 || got[0] != "7" {
+		t.Errorf("FormFields[destination] = %v, want [7]", got)
+	}
+	// The signal this capture is after: a water select with nothing to offer.
+	if got, ok := tf.FormFields["waters_store[]"]; ok {
+		t.Errorf("FormFields[waters_store[]] = %v, want absent for an empty select", got)
+	}
+	if tf.StillUnassociated == nil || !*tf.StillUnassociated {
+		t.Errorf("StillUnassociated = %v, want true: the click left the track alone", tf.StillUnassociated)
+	}
+	if got := srv.clicks.Load(); got != 1 {
+		t.Errorf("track clicks = %d, want exactly 1", got)
+	}
+
+	failed, _ := db.GetRecentFailedActivities(50, true)
+	runs, _ := db.GetSyncHistory(user.ID, 10)
+	if len(failed) != 0 || len(runs) != 0 {
+		t.Errorf("DebugUploadOnce must not write to the DB; got %d activities, %d runs", len(failed), len(runs))
+	}
+}
+
+// TestDebugUploadOnce_TripFormReportsDraftLeftByClick covers the side effect
+// an operator must be able to see: if EFB attaches a draft to the track on
+// the click alone, the sync will never create a trip for it.
+func TestDebugUploadOnce_TripFormReportsDraftLeftByClick(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerTripForm(t, `<html><body><input name="begdate" value="29.09.2026"></body></html>`)
+	srv.draftOnClick = true
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	tf := res.TripForm
+	if tf == nil || !tf.HasForm {
+		t.Fatalf("expected the fetched form, got %+v", tf)
+	}
+	if tf.StillUnassociated == nil || *tf.StillUnassociated {
+		t.Errorf("StillUnassociated = %v, want false: the click flipped the track", tf.StillUnassociated)
+	}
+}
+
+// A track that already has a trip has no "Fahrt neu anlegen" button to
+// click; the debug call must say so and leave the account alone.
+func TestDebugUploadOnce_TripFormTrackAlreadyAssociated(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerTripForm(t, "unused")
+	srv.associated.Store(true)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	tf := res.TripForm
+	if tf == nil {
+		t.Fatal("expected a TripForm carrying a note")
+	}
+	if tf.TrackID != "" || !strings.Contains(tf.Note, "no unassociated track found") {
+		t.Errorf("TrackID = %q, Note = %q; want empty ID and a not-found note", tf.TrackID, tf.Note)
+	}
+	if tf.StatusCode != 0 || tf.StillUnassociated != nil {
+		t.Errorf("no form was fetched, got StatusCode = %d, StillUnassociated = %v", tf.StatusCode, tf.StillUnassociated)
+	}
+	if got := srv.clicks.Load(); got != 0 {
+		t.Errorf("track clicks = %d, want 0", got)
+	}
+}
+
+func TestDebugUploadOnce_TripFormBodyTruncation(t *testing.T) {
+	form := `<html><body><input type="text" name="begdate" value="29.09.2026">` +
+		`<input type="hidden" name="track_data" value="` + strings.Repeat("y", MaxDebugFormFieldBytes*4) + `">` +
+		strings.Repeat("x", MaxDebugTripFormBytes) + `</body></html>`
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	srv := newMockEFBServerTripForm(t, form)
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	engine := newEngine(db, gp, efb.NewEFBClient(srv.URL))
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	tf := res.TripForm
+	if tf == nil {
+		t.Fatal("expected TripForm")
+	}
+	if !tf.Truncated || len(tf.ResponseBody) != MaxDebugTripFormBytes {
+		t.Errorf("Truncated = %v, len(ResponseBody) = %d; want true, %d", tf.Truncated, len(tf.ResponseBody), MaxDebugTripFormBytes)
+	}
+	if tf.BodySizeBytes != len(form) {
+		t.Errorf("BodySizeBytes = %d, want %d (full size)", tf.BodySizeBytes, len(form))
+	}
+	if got := tf.FormFields["track_data"]; len(got) != 1 || len(got[0]) != MaxDebugFormFieldBytes {
+		t.Errorf("FormFields[track_data] should be capped at %d bytes, got %d value(s)", MaxDebugFormFieldBytes, len(got))
+	}
+	if got := tf.FormFields["begdate"]; len(got) != 1 || got[0] != "29.09.2026" {
+		t.Errorf("FormFields[begdate] = %v, want the short value untouched", got)
+	}
+}
+
+// The trip form is fetched only on request, and only once the track is on
+// EFB — a rejected upload has no track to open a form for.
+func TestDebugUploadOnce_TripFormOnlyWhenRequestedAndUploaded(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+
+	rejected := newMockEFBServerSilentRejection(t, `<html><body>rejected</body></html>`)
+	res, err := newEngine(db, gp, efb.NewEFBClient(rejected.URL)).
+		DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce (rejected upload): %v", err)
+	}
+	if res.TripForm != nil {
+		t.Errorf("TripForm must be omitted when the upload did not succeed, got %+v", res.TripForm)
+	}
+
+	ok := newMockEFBServerTripForm(t, "unused")
+	res, err = newEngine(db, gp, efb.NewEFBClient(ok.URL)).
+		DebugUploadOnce(context.Background(), user.ID, "act-1", false, false)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce (flag off): %v", err)
+	}
+	if res.TripForm != nil {
+		t.Errorf("TripForm must be omitted when not requested, got %+v", res.TripForm)
+	}
+	if got := ok.clicks.Load(); got != 0 {
+		t.Errorf("track clicks = %d, want 0 when the form was not requested", got)
 	}
 }
 
@@ -2247,7 +2485,7 @@ func TestDebugUploadOnce_IncludeGPX(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true)
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true, false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
 	}
@@ -2280,7 +2518,7 @@ func TestDebugUploadOnce_IncludeGPXTruncation(t *testing.T) {
 	ec := efb.NewEFBClient(srv.URL)
 	engine := newEngine(db, gp, ec)
 
-	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true)
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", true, false)
 	if err != nil {
 		t.Fatalf("DebugUploadOnce: %v", err)
 	}
