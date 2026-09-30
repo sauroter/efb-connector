@@ -269,8 +269,9 @@ components:
         The page EFB renders after clicking the uploaded track's "Fahrt neu
         anlegen" button, captured without submitting it. Only present when
         the request was made with `?include_trip_form=1` and the upload
-        succeeded. When the form could not be fetched, `note` says why and
-        the response fields are absent.
+        succeeded. When `note` is set and `status_code` is absent, the form
+        was never fetched: read `note`, and ignore `has_form` and
+        `is_login_page`, which are then `false` by default.
       type: object
       properties:
         track_id:
@@ -278,7 +279,7 @@ components:
           description: EFB track the form was opened for; empty when no unassociated track was found.
         note:
           type: string
-          description: Why the form could not be fetched (no unassociated track, request failed).
+          description: Why the form could not be fetched (no unassociated track, request failed) or the track could not be re-checked.
         request_url:
           type: string
         final_url:
@@ -303,11 +304,19 @@ components:
           type: object
           description: |
             The form's fields as a save would submit them, before the times
-            are filled in. A select with no options has no entry.
+            are filled in. Each value is capped at 1 KB. A select with no
+            options has no entry.
           additionalProperties:
             type: array
             items:
               type: string
+        still_unassociated:
+          type: boolean
+          description: |
+            Whether the tracks page still offers "Fahrt neu anlegen" for the
+            track after the click. `false` means the click alone made EFB
+            attach a draft trip, and the sync will no longer create a trip
+            for this track. Absent when the re-check failed.
       required: [track_id, has_form, is_login_page]
 
     DebugUploadResponse:
@@ -1559,7 +1568,10 @@ paths:
           description: |
             When set to `1` and the upload succeeds, the trip-creation form
             EFB offers for the uploaded track is fetched and returned as
-            `trip_form`. The form is not submitted.
+            `trip_form`. The form is not submitted, but fetching it clicks
+            the track's "Fahrt neu anlegen" button in the user's real EFB
+            account; `trip_form.still_unassociated` reports whether that
+            click changed the track's state.
           schema:
             type: string
             enum: ["1"]

@@ -718,9 +718,34 @@ func TestCreateTripFromTrack_FormNotFound(t *testing.T) {
 	}
 }
 
+// TestCreateTripFromTrack_FormStatusError pins the error for a track click
+// EFB answers with a non-200 status.
+func TestCreateTripFromTrack_FormStatusError(t *testing.T) {
+	srv := newTripFormServerWithStatus(t, http.StatusBadGateway, "upstream down")
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
+	const want = "efb: trip form returned status 502: upstream down"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+	if diag != nil {
+		t.Errorf("no save was attempted, diagnostic should be nil, got %+v", diag)
+	}
+}
+
 // newTripFormServer serves clickBody in answer to the track click and fails
 // the test if the trip form is ever submitted.
 func newTripFormServer(t *testing.T, clickBody string) *httptest.Server {
+	t.Helper()
+	return newTripFormServerWithStatus(t, http.StatusOK, clickBody)
+}
+
+func newTripFormServerWithStatus(t *testing.T, clickStatus int, clickBody string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
@@ -728,7 +753,7 @@ func newTripFormServer(t *testing.T, clickBody string) *httptest.Server {
 		http.Redirect(w, r, "/", http.StatusFound)
 	})
 	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(clickStatus)
 		w.Write([]byte(clickBody)) //nolint:errcheck
 	})
 	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {

@@ -219,8 +219,9 @@ func (s *Server) handleAdminActivityError(w http.ResponseWriter, r *http.Request
 // Garmin activity, attempt the upload, return the raw EFB response.
 //
 // Does NOT mutate synced_activities or sync_runs. Used to inspect silent
-// EFB rejections in production. With ?include_trip_form=1 it also returns
-// the trip-creation form EFB offers for the uploaded track, unsubmitted.
+// EFB rejections in production. With ?include_trip_form=1 it also clicks
+// the uploaded track's "Fahrt neu anlegen" button and returns the form EFB
+// offers, without submitting it.
 func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInternalAuth(w, r) {
 		return
