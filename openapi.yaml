@@ -260,7 +260,55 @@ components:
             `gpx_size_bytes` still reports the full pre-cap size.
         upload:
           $ref: "#/components/schemas/DebugUploadResponse"
+        trip_form:
+          $ref: "#/components/schemas/DebugTripForm"
       required: [user_id, garmin_activity_id, gpx_size_bytes, upload]
+
+    DebugTripForm:
+      description: |
+        The page EFB renders after clicking the uploaded track's "Fahrt neu
+        anlegen" button, captured without submitting it. Only present when
+        the request was made with `?include_trip_form=1` and the upload
+        succeeded. When the form could not be fetched, `note` says why and
+        the response fields are absent.
+      type: object
+      properties:
+        track_id:
+          type: string
+          description: EFB track the form was opened for; empty when no unassociated track was found.
+        note:
+          type: string
+          description: Why the form could not be fetched (no unassociated track, request failed).
+        request_url:
+          type: string
+        final_url:
+          type: string
+        status_code:
+          type: integer
+        response_body:
+          type: string
+          description: Raw page body, capped at 256 KB; see `truncated`.
+        body_size_bytes:
+          type: integer
+          description: Full size of the page in bytes (uncapped).
+        truncated:
+          type: boolean
+          description: True if response_body was truncated to fit the 256 KB cap.
+        has_form:
+          type: boolean
+          description: True if the page contains the trip-creation form (a `begdate` field).
+        is_login_page:
+          type: boolean
+        form_fields:
+          type: object
+          description: |
+            The form's fields as a save would submit them, before the times
+            are filled in. A select with no options has no entry.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required: [track_id, has_form, is_login_page]
 
     DebugUploadResponse:
       description: Raw EFB upload response captured for debugging.
@@ -1502,6 +1550,16 @@ paths:
             When set to `1`, the captured GPX bytes from Garmin are
             included on the response as base64 in `gpx_content_base64`.
             Off by default to keep the payload bounded.
+          schema:
+            type: string
+            enum: ["1"]
+        - name: include_trip_form
+          in: query
+          required: false
+          description: |
+            When set to `1` and the upload succeeds, the trip-creation form
+            EFB offers for the uploaded track is fetched and returned as
+            `trip_form`. The form is not submitted.
           schema:
             type: string
             enum: ["1"]

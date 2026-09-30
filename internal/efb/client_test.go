@@ -641,6 +641,106 @@ func TestCreateTripFromTrack_Success(t *testing.T) {
 	}
 }
 
+func TestFetchTripForm_ReturnsFormWithoutSaving(t *testing.T) {
+	srv := newTripServer(t, func(*http.Request) {
+		t.Error("FetchTripForm must not submit the trip form")
+	})
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	form, err := c.FetchTripForm(context.Background(), "99")
+	if err != nil {
+		t.Fatalf("FetchTripForm: %v", err)
+	}
+	if form.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", form.StatusCode)
+	}
+	if !form.HasForm {
+		t.Error("HasForm should be true when the trip form was served")
+	}
+	if form.BodySize != len(tripFormHTML()) || string(form.Body) != tripFormHTML() {
+		t.Errorf("Body should carry the raw form page, got %d bytes", form.BodySize)
+	}
+	if !strings.HasSuffix(form.RequestURL, "/interpretation/usersmap") {
+		t.Errorf("RequestURL = %q, want the usersmap endpoint", form.RequestURL)
+	}
+	if got := form.Fields.Get("begdate"); got != "15.03.2025" {
+		t.Errorf("Fields[begdate] = %q, want 15.03.2025", got)
+	}
+	if got := form.Fields["waters_store[]"]; len(got) != 1 || got[0] != "10" {
+		t.Errorf("Fields[waters_store[]] = %v, want [10]", got)
+	}
+}
+
+// TestFetchTripForm_NoFormIsNotAnError covers the case the capture exists
+// for: EFB answers the track click with something other than the trip form.
+// That is an HTTP-level outcome to report, not an error.
+func TestFetchTripForm_NoFormIsNotAnError(t *testing.T) {
+	const page = `<html><title>eFB</title><body><p>Kein Gewässer zum Track gefunden</p></body></html>`
+	srv := newTripFormServer(t, page)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	form, err := c.FetchTripForm(context.Background(), "99")
+	if err != nil {
+		t.Fatalf("FetchTripForm: %v", err)
+	}
+	if form.HasForm {
+		t.Error("HasForm should be false when the page has no begdate field")
+	}
+	if string(form.Body) != page {
+		t.Errorf("Body = %q, want the raw page", form.Body)
+	}
+}
+
+// TestCreateTripFromTrack_FormNotFound pins the error for a track click that
+// does not yield the trip form, so routing step 1 through FetchTripForm
+// cannot change how the sync classifies it.
+func TestCreateTripFromTrack_FormNotFound(t *testing.T) {
+	srv := newTripFormServer(t, `<html><body>no form here</body></html>`)
+	c := newClient(srv)
+	if err := c.Login(context.Background(), "any", "any"); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+
+	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
+	const want = "efb: trip creation form not found after track click (status 200)"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+	if diag != nil {
+		t.Errorf("no save was attempted, diagnostic should be nil, got %+v", diag)
+	}
+}
+
+// newTripFormServer serves clickBody in answer to the track click and fails
+// the test if the trip form is ever submitted.
+func newTripFormServer(t *testing.T, clickBody string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "mock-session", Value: "1"})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/interpretation/usersmap", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(clickBody)) //nolint:errcheck
+	})
+	mux.HandleFunc("/trips/create", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the trip form must not be submitted")
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // newTripServerWithSaveResponse is like newTripServer but lets a test control
 // the status and body returned by the /trips/create save POST, so we can
 // exercise the trip-save diagnostic against realistic EFB responses.

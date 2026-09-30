@@ -156,6 +156,26 @@ type RawUploadResult struct {
 	IsLoginPage           bool
 }
 
+// TripFormResult is the unparsed result of clicking a track's
+// "Fahrt neu anlegen" button — the page EFB renders before any save. It is
+// the return shape of [EFBClient.FetchTripForm], used both by
+// [EFBClient.CreateTripFromTrackVerbose] (to drive the form) and by the sync
+// engine's debug path (to surface the raw form to operators).
+type TripFormResult struct {
+	RequestURL string
+	FinalURL   string
+	StatusCode int
+	Body       []byte
+	BodySize   int
+	// HasForm reports whether the body contains the "begdate" trip-form
+	// marker, i.e. whether EFB answered the click with the create form.
+	HasForm     bool
+	IsLoginPage bool
+	// Fields holds the page's form fields as parseFormFields sees them —
+	// exactly what a save would submit before the times are filled in.
+	Fields url.Values
+}
+
 // MaxTripDiagBodyBytes caps the raw body excerpt captured on a
 // [TripSaveDiagnostic]. 4 KB is enough to see EFB's confirmation/alert
 // area without bloating logs (one line per trip creation).
@@ -545,26 +565,16 @@ func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
 	}
 }
 
-// CreateTripFromTrack navigates to the trip creation form for the given EFB
-// track ID, fills in start/end times, and submits the form. It is a thin
-// wrapper over [EFBClient.CreateTripFromTrackVerbose] that discards the
-// diagnostic; the success/failure classification is identical.
-func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
-	_, err := c.CreateTripFromTrackVerbose(ctx, trackID, startTime, durationSecs, enrichment)
-	return err
-}
-
-// CreateTripFromTrackVerbose performs the same trip creation as
-// [EFBClient.CreateTripFromTrack] but additionally returns a
-// [TripSaveDiagnostic] describing EFB's raw trip-save response. The
-// success/failure decision is unchanged (status != 200, or body contains
-// "Fehler"/"error", is a failure). The diagnostic is purely observational and
-// is populated whenever the trip-save POST returned a body (i.e. on both the
-// success path and the 200-but-rejected path). Earlier failures (track click,
-// form not found) return a nil diagnostic with the error.
-func (c *EFBClient) CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
-	// Step 1: POST to /interpretation/usersmap to simulate clicking the
-	// "Fahrt neu anlegen" image button, which redirects to /trips/create.
+// FetchTripForm simulates clicking the track's "Fahrt neu anlegen" image
+// button (a POST to the usersmap endpoint, which redirects to /trips/create)
+// and returns the raw response WITHOUT filling or submitting the form. It is
+// the navigation step shared by [EFBClient.CreateTripFromTrackVerbose] and
+// the admin debug path. The caller must already be authenticated.
+//
+// Network and request-construction errors are returned as a non-nil error
+// with a nil result; HTTP-level outcomes (any status, form present or not)
+// populate the result and return nil.
+func (c *EFBClient) FetchTripForm(ctx context.Context, trackID string) (*TripFormResult, error) {
 	clickFieldName := fmt.Sprintf("track_id:%s", trackID)
 	formData := url.Values{}
 	formData.Set(clickFieldName+".x", "1")
@@ -590,17 +600,60 @@ func (c *EFBClient) CreateTripFromTrackVerbose(ctx context.Context, trackID stri
 		return nil, fmt.Errorf("efb: failed to read trip form response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+
+	bodyStr := string(body)
+	return &TripFormResult{
+		RequestURL:  c.uploadURL,
+		FinalURL:    finalURL,
+		StatusCode:  resp.StatusCode,
+		Body:        body,
+		BodySize:    len(body),
+		HasForm:     strings.Contains(bodyStr, "begdate"),
+		IsLoginPage: isLoginPage(bodyStr),
+		Fields:      parseFormFields(bodyStr),
+	}, nil
+}
+
+// CreateTripFromTrack navigates to the trip creation form for the given EFB
+// track ID, fills in start/end times, and submits the form. It is a thin
+// wrapper over [EFBClient.CreateTripFromTrackVerbose] that discards the
+// diagnostic; the success/failure classification is identical.
+func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
+	_, err := c.CreateTripFromTrackVerbose(ctx, trackID, startTime, durationSecs, enrichment)
+	return err
+}
+
+// CreateTripFromTrackVerbose performs the same trip creation as
+// [EFBClient.CreateTripFromTrack] but additionally returns a
+// [TripSaveDiagnostic] describing EFB's raw trip-save response. The
+// success/failure decision is unchanged (status != 200, or body contains
+// "Fehler"/"error", is a failure). The diagnostic is purely observational and
+// is populated whenever the trip-save POST returned a body (i.e. on both the
+// success path and the 200-but-rejected path). Earlier failures (track click,
+// form not found) return a nil diagnostic with the error.
+func (c *EFBClient) CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
+	// Step 1: fetch the trip-creation form by simulating a click on the
+	// track's "Fahrt neu anlegen" image button.
+	form, err := c.FetchTripForm(ctx, trackID)
+	if err != nil {
+		return nil, err
+	}
+
+	if form.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("efb: trip form returned status %d: %s",
-			resp.StatusCode, truncateBody(body))
+			form.StatusCode, truncateBody(form.Body))
 	}
 
-	if !strings.Contains(string(body), "begdate") {
-		return nil, fmt.Errorf("efb: trip creation form not found after track click (status %d)", resp.StatusCode)
+	if !form.HasForm {
+		return nil, fmt.Errorf("efb: trip creation form not found after track click (status %d)", form.StatusCode)
 	}
 
-	// Step 2: Parse the form HTML to extract all field values.
-	formValues := parseFormFields(string(body))
+	// Step 2: Start from the form's own field values.
+	formValues := form.Fields
 
 	// Step 3: Fill in start and end times.
 	endTime := startTime.Add(time.Duration(durationSecs) * time.Second)
