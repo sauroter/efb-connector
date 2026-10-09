@@ -111,6 +111,24 @@ func TestInternalSyncAll_RejectsWrongAuth(t *testing.T) {
 	}
 }
 
+// The secret alone, without the "Bearer " scheme, must not authenticate.
+func TestInternalAuth_RequiresBearerScheme(t *testing.T) {
+	h := newTestHarness(t)
+
+	for _, header := range []string{"test-secret", "Basic test-secret", "Bearer "} {
+		req, _ := http.NewRequest(http.MethodGet, h.srv.URL+"/internal/admin/status", nil)
+		req.Header.Set("Authorization", header)
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Authorization %q: status = %d, want 401", header, resp.StatusCode)
+		}
+	}
+}
+
 func TestInternalSyncAll_ReturnsAcceptedAndCompletes(t *testing.T) {
 	h := newTestHarness(t)
 

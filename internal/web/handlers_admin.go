@@ -255,6 +255,7 @@ func (s *Server) handleAdminUserDebugUpload(w http.ResponseWriter, r *http.Reque
 	)
 
 	// Allow up to 90 s — login + Garmin download + EFB upload can be slow.
+	s.extendWriteDeadline(w, 95*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
@@ -317,6 +318,7 @@ func (s *Server) handleAdminGarminActivitiesRaw(w http.ResponseWriter, r *http.R
 	}
 
 	// Allow up to 90s — same budget as debug-upload; Garmin can be slow.
+	s.extendWriteDeadline(w, 95*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
@@ -401,8 +403,7 @@ func (s *Server) handleAdminSyncResendContacts(w http.ResponseWriter, r *http.Re
 	}
 
 	// Extend the write deadline — bulk sync with rate limiting can take minutes.
-	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+	s.extendWriteDeadline(w, 5*time.Minute)
 
 	users, err := s.db.GetAllUsersWithStatus()
 	if err != nil {

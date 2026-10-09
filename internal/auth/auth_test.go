@@ -326,6 +326,29 @@ func TestCSRFProtect_POST_WrongToken(t *testing.T) {
 	}
 }
 
+// A valid token in the query string must not satisfy the check — only the
+// POST body counts.
+func TestCSRFProtect_POST_TokenInQueryRejected(t *testing.T) {
+	svc := newTestService(t)
+	user, _ := svc.db.CreateUser("csrfquery@example.com")
+	sessionToken, _ := svc.CreateSession(user.ID)
+
+	handler := svc.CSRFProtect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
+	}))
+
+	target := "/action?" + url.Values{"csrf_token": {svc.csrfToken(sessionToken)}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionToken})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+}
+
 func TestCSRFToken_ViaPublicMethod(t *testing.T) {
 	svc := newTestService(t)
 	user, _ := svc.db.CreateUser("csrfpub@example.com")

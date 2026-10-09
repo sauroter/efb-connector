@@ -80,14 +80,11 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 		// Save credentials (not yet valid) so they persist across the
 		// redirect to the MFA form.  They'll be marked valid once MFA
 		// completes.
-		if err := s.db.SaveGarminCredentials(userID, email, password); err != nil {
+		if err := s.db.SaveGarminCredentialsPendingMFA(userID, email, password, "MFA verification pending"); err != nil {
 			s.logger.Error("failed to save garmin credentials", "user_id", userID, "error", err)
 			setFlash(w, "flash.save_credentials_failed")
 			http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 			return
-		}
-		if err := s.db.InvalidateGarminCredentials(userID, "MFA verification pending"); err != nil {
-			s.logger.Error("failed to invalidate garmin credentials for MFA", "user_id", userID, "error", err)
 		}
 		http.Redirect(w, r, "/settings/garmin/mfa", http.StatusSeeOther)
 		return
@@ -237,8 +234,11 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate credentials against the EFB portal.
-	if err := s.efb.ValidateCredentials(context.Background(), username, password); err != nil {
+	// Validate credentials against the EFB portal. A fresh client per
+	// request: the login lives in its cookie jar, which the consent check
+	// below reuses, and a shared jar would mix concurrent users' sessions.
+	efbClient := s.newEFBSession()
+	if err := efbClient.ValidateCredentials(r.Context(), username, password); err != nil {
 		s.logger.Warn("efb credential validation failed", "user_id", userID, "error", err)
 		setFlash(w, "flash.efb_invalid")
 		http.Redirect(w, r, "/settings/efb", http.StatusSeeOther)
@@ -256,12 +256,12 @@ func (s *Server) handleEFBSettingsSave(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("efb credentials saved", "user_id", userID)
 
 	// Proactive check: EFB v2026.1 added a track-usage consent gate.
-	// The session set up by ValidateCredentials still lives on the
-	// shared EFBProvider's cookie jar, so we can immediately ask EFB
+	// The session set up by ValidateCredentials still lives on this
+	// request's efbClient, so we can immediately ask EFB
 	// whether the upload form is available for this user. If not,
 	// flag the user so the dashboard banner appears, and use a
 	// consent-aware flash on the redirect.
-	if consentRequired, err := s.efb.CheckConsentGate(context.Background()); err != nil {
+	if consentRequired, err := efbClient.CheckConsentGate(r.Context()); err != nil {
 		s.logger.Warn("efb consent check failed (credentials saved anyway)",
 			"user_id", userID, "error", err)
 	} else if consentRequired {

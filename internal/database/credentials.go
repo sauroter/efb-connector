@@ -14,8 +14,20 @@ import (
 // ──────────────────────────────────────────────
 
 // SaveGarminCredentials encrypts email and password with the DB key and upserts
-// a row in garmin_credentials for userID.
+// a row in garmin_credentials for userID, marked valid.
 func (d *DB) SaveGarminCredentials(userID int64, email, password string) error {
+	return d.saveGarminCredentials(userID, email, password, true, nil)
+}
+
+// SaveGarminCredentialsPendingMFA stores credentials that passed the password
+// check but still await an MFA code: persisted (so they survive the redirect
+// to the MFA form) yet marked invalid with reason as last_error. One statement,
+// so a failure can never leave them stored-and-valid before MFA completed.
+func (d *DB) SaveGarminCredentialsPendingMFA(userID int64, email, password, reason string) error {
+	return d.saveGarminCredentials(userID, email, password, false, &reason)
+}
+
+func (d *DB) saveGarminCredentials(userID int64, email, password string, valid bool, lastError *string) error {
 	encEmail, err := crypto.Encrypt([]byte(email), d.encryptionKey)
 	if err != nil {
 		return fmt.Errorf("database: encrypt garmin email: %w", err)
@@ -26,16 +38,20 @@ func (d *DB) SaveGarminCredentials(userID int64, email, password string) error {
 		return fmt.Errorf("database: encrypt garmin password: %w", err)
 	}
 
+	isValid := 0
+	if valid {
+		isValid = 1
+	}
 	_, err = d.db.Exec(`
 		INSERT INTO garmin_credentials (user_id, email_encrypted, password_encrypted, is_valid, last_error, updated_at)
-		VALUES (?, ?, ?, 1, NULL, datetime('now'))
+		VALUES (?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(user_id) DO UPDATE SET
 			email_encrypted    = excluded.email_encrypted,
 			password_encrypted = excluded.password_encrypted,
-			is_valid           = 1,
-			last_error         = NULL,
+			is_valid           = excluded.is_valid,
+			last_error         = excluded.last_error,
 			updated_at         = datetime('now')
-	`, userID, encEmail, encPass)
+	`, userID, encEmail, encPass, isValid, lastError)
 	if err != nil {
 		return fmt.Errorf("database: save garmin credentials for user %d: %w", userID, err)
 	}
