@@ -23,6 +23,20 @@ func TestRoutePattern(t *testing.T) {
 		{http.MethodGet, "/internal/admin/users/42/sync-history", "GET /internal/admin/users/{id}/sync-history"},
 		{http.MethodGet, "/static/style.css", "GET /static/"},
 		{http.MethodGet, "/wp-admin", ""},
+		// Wrong method for a known path: the mux answers 405, no pattern.
+		{http.MethodPost, "/settings", ""},
+		// HEAD is served by GET patterns.
+		{http.MethodHead, "/", "GET /"},
+		{http.MethodHead, "/dashboard", "GET /dashboard"},
+		// Non-canonical paths get a redirect; the mux reports the pattern
+		// the redirect target will match.
+		{http.MethodGet, "/static", "GET /static/"},
+		{http.MethodGet, "/settings/../dashboard", "GET /dashboard"},
+		// "/foo/../" cleans to "/", so the mux reports "GET /" for the
+		// redirect — but the raw path isn't "/", so the catch-all guard
+		// labels it unmatched. Correct: this response is a 301, not the
+		// landing page, and the follow-up request for "/" counts as "GET /".
+		{http.MethodGet, "/foo/../", ""},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(c.method, c.path, nil)

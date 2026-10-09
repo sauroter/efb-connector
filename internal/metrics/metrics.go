@@ -63,12 +63,26 @@ func init() {
 }
 
 // ObserveHTTPRequest records metrics for an HTTP request. pattern is the
-// ServeMux pattern that matched it (see RouteLabel), not the raw URL path.
+// ServeMux pattern that matched it (see RouteLabel), not the raw URL path;
+// method is the raw request method and is bounded by MethodLabel.
 func ObserveHTTPRequest(method, pattern string, status int, durationSeconds float64) {
+	m := MethodLabel(method)
 	p := RouteLabel(pattern)
 	s := fmt.Sprintf("%d", status)
-	HTTPRequestsTotal.WithLabelValues(method, p, s).Inc()
-	HTTPRequestDuration.WithLabelValues(method, p).Observe(durationSeconds)
+	HTTPRequestsTotal.WithLabelValues(m, p, s).Inc()
+	HTTPRequestDuration.WithLabelValues(m, p).Observe(durationSeconds)
+}
+
+// MethodLabel bounds the method label. Go accepts any token as a request
+// method, so labelling by r.Method verbatim would let a client mint a new
+// series per request ("FOOBAR /"). Standard methods pass through; anything
+// else is reported as "OTHER".
+func MethodLabel(method string) string {
+	switch method {
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
+		return method
+	}
+	return "OTHER"
 }
 
 // ObserveSyncRun records metrics for a completed sync run.

@@ -23,6 +23,34 @@ func TestRouteLabel(t *testing.T) {
 	}
 }
 
+func TestMethodLabel(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"GET", "GET"},
+		{"HEAD", "HEAD"},
+		{"POST", "POST"},
+		{"PUT", "PUT"},
+		{"PATCH", "PATCH"},
+		{"DELETE", "DELETE"},
+		{"OPTIONS", "OPTIONS"},
+		// Anything else collapses, so clients can't mint label values.
+		{"FOOBAR", "OTHER"},
+		{"get", "OTHER"},
+		{"CONNECT", "OTHER"},
+		{"TRACE", "OTHER"},
+		{"", "OTHER"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := MethodLabel(c.in); got != c.want {
+				t.Errorf("MethodLabel(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestObserveHTTPRequest_DoesNotPanic(t *testing.T) {
 	// Smoke test: just verify the call path doesn't blow up on edge inputs.
 	// Prometheus state is global so we don't assert on counter values.

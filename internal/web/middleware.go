@@ -33,6 +33,11 @@ func (s *Server) logging(next http.Handler) http.Handler {
 // routePattern returns the mux pattern that serves r, or "" when none does.
 // "GET /" is the landing page but also the mux's catch-all, so it only counts
 // for the root path itself — otherwise every 404 would be labelled "/".
+//
+// This relies on every registered pattern carrying a method. The catch-all
+// guard compares against "GET /" literally, so a method-less "/" (or another
+// method-less pattern matched via a trailing-slash redirect) would slip past
+// it and label unrelated paths with that pattern.
 func routePattern(mux *http.ServeMux, r *http.Request) string {
 	if mux == nil {
 		return ""
