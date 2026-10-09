@@ -81,14 +81,54 @@ func openDBBeforeMigration(t *testing.T, idx int) *DB {
 		t.Fatalf("create migrations table: %v", err)
 	}
 	for i := range idx {
-		if err := d.execMulti(migrations[i]); err != nil {
+		if err := d.applyMigration(i, migrations[i]); err != nil {
 			t.Fatalf("migration %d: %v", i, err)
-		}
-		if _, err := d.db.Exec(`INSERT INTO migrations (id) VALUES (?)`, i); err != nil {
-			t.Fatalf("record migration %d: %v", i, err)
 		}
 	}
 	return d
+}
+
+// A migration's schema change and its bookkeeping row must commit together.
+// If recording the id fails, the schema change has to roll back too —
+// otherwise a crash between the two leaves the migration applied but
+// unrecorded, and the next start re-runs it.
+func TestApplyMigration_RecordAndSchemaAreAtomic(t *testing.T) {
+	d := openDBBeforeMigration(t, len(migrations))
+
+	// Pre-occupy the id so the bookkeeping INSERT hits the primary key.
+	if _, err := d.db.Exec(`INSERT INTO migrations (id) VALUES (9999)`); err != nil {
+		t.Fatalf("pre-insert migration id: %v", err)
+	}
+
+	if err := d.applyMigration(9999, "CREATE TABLE atomic_probe (id INTEGER);\n"); err == nil {
+		t.Fatal("applyMigration: expected error recording a duplicate id, got nil")
+	}
+
+	var n int
+	if err := d.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'atomic_probe'`,
+	).Scan(&n); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	if n != 0 {
+		t.Fatal("atomic_probe exists: schema change committed although recording the migration failed")
+	}
+}
+
+func TestApplyMigration_RecordsID(t *testing.T) {
+	d := openDBBeforeMigration(t, len(migrations))
+
+	if err := d.applyMigration(9998, "CREATE TABLE record_probe (id INTEGER);\n"); err != nil {
+		t.Fatalf("applyMigration: %v", err)
+	}
+
+	var n int
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM migrations WHERE id = 9998`).Scan(&n); err != nil {
+		t.Fatalf("query migrations: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("migrations rows with id 9998 = %d, want 1", n)
+	}
 }
 
 // Migration 0014 inverts the activity-type filter from an exclusion list to a

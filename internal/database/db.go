@@ -92,26 +92,22 @@ func (d *DB) runMigrations() error {
 	}
 
 	for i := startIdx; i < len(migrations); i++ {
-		// Each migration may contain multiple statements separated by semicolons
-		// followed by a blank line, so we execute them individually.
-		if err := d.execMulti(migrations[i]); err != nil {
+		if err := d.applyMigration(i, migrations[i]); err != nil {
 			return fmt.Errorf("database: migration %d: %w", i, err)
-		}
-
-		if _, err := d.db.Exec(`INSERT INTO migrations (id) VALUES (?)`, i); err != nil {
-			return fmt.Errorf("database: record migration %d: %w", i, err)
 		}
 	}
 
 	return nil
 }
 
-// execMulti splits sql on ";\n" boundaries and executes each non-empty
-// statement inside a single transaction so multi-statement migrations
-// apply atomically — if any statement fails, the partial schema change
-// is rolled back and the migration can be safely retried on next start.
-// SQLite supports DDL inside transactions under WAL mode.
-func (d *DB) execMulti(sql string) error {
+// applyMigration splits sql on ";\n" boundaries, executes each non-empty
+// statement and records id in the migrations table, all in one transaction.
+// Either the schema change and its bookkeeping row both land or neither
+// does: recording outside the transaction would let a crash between the two
+// re-run an applied migration on next start, and a repeated ALTER TABLE ADD
+// COLUMN fails, so the server would refuse to boot. SQLite supports DDL
+// inside transactions.
+func (d *DB) applyMigration(id int, sql string) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin migration tx: %w", err)
@@ -127,6 +123,10 @@ func (d *DB) execMulti(sql string) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", stmt[:min(40, len(stmt))], err)
 		}
+	}
+
+	if _, err := tx.Exec(`INSERT INTO migrations (id) VALUES (?)`, id); err != nil {
+		return fmt.Errorf("record migration: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
