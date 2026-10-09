@@ -49,6 +49,13 @@ type PythonGarminProvider struct {
 	// mfaSessions holds active MFA sessions keyed by user ID.
 	mfaSessions   map[int64]*MFASession
 	mfaSessionsMu sync.Mutex
+	// closed is set by Close, under mfaSessionsMu, so a ValidateWithMFA
+	// still in flight does not park a session nobody will ever reap.
+	closed bool
+
+	// mfaReadTimeout bounds each wait for a line from a validate-mfa
+	// subprocess. MFAReadTimeout outside tests.
+	mfaReadTimeout time.Duration
 
 	// stopCleanup signals the cleanup goroutine to exit.
 	stopCleanup chan struct{}
@@ -59,10 +66,11 @@ type PythonGarminProvider struct {
 // encrypt Garmin OAuth tokens at rest; pass nil to disable token encryption.
 func NewPythonGarminProvider(scriptPath string, encryptionKey []byte) *PythonGarminProvider {
 	p := &PythonGarminProvider{
-		scriptPath:    scriptPath,
-		encryptionKey: encryptionKey,
-		mfaSessions:   make(map[int64]*MFASession),
-		stopCleanup:   make(chan struct{}),
+		scriptPath:     scriptPath,
+		encryptionKey:  encryptionKey,
+		mfaSessions:    make(map[int64]*MFASession),
+		stopCleanup:    make(chan struct{}),
+		mfaReadTimeout: MFAReadTimeout,
 	}
 	go p.cleanupStaleMFASessions()
 	return p
@@ -79,16 +87,67 @@ func (p *PythonGarminProvider) Close() {
 	}
 
 	p.mfaSessionsMu.Lock()
-	for uid, s := range p.mfaSessions {
-		_ = s.stdin.Close()
-		_ = s.cmd.Process.Kill()
-		_ = s.cmd.Wait()
-		if s.tmpTokenDir != "" {
-			_ = os.RemoveAll(s.tmpTokenDir)
-		}
-		delete(p.mfaSessions, uid)
-	}
+	p.closed = true
+	sessions := p.mfaSessions
+	p.mfaSessions = make(map[int64]*MFASession)
 	p.mfaSessionsMu.Unlock()
+
+	for _, s := range sessions {
+		s.terminate()
+	}
+}
+
+// terminate kills the session's subprocess, reaps it and removes its
+// decrypted token dir. Callers remove the session from the map first and
+// call this outside mfaSessionsMu: Wait can block, and holding the lock
+// across it would stall every other user's MFA request.
+func (s *MFASession) terminate() {
+	_ = s.stdin.Close()
+	_ = s.cmd.Process.Kill()
+	_ = s.cmd.Wait()
+	if s.tmpTokenDir != "" {
+		_ = os.RemoveAll(s.tmpTokenDir)
+	}
+}
+
+// MFAReadTimeout bounds each wait for a line from the validate-mfa
+// subprocess. A Garmin SSO round trip takes seconds; a hung script would
+// otherwise block the request (and its goroutine) forever. Handlers that
+// call ValidateWithMFA or CompleteMFA size their write deadline from it.
+const MFAReadTimeout = 60 * time.Second
+
+// mfaWaitDelay bounds cmd.Wait after the validate-mfa subprocess exits (or
+// is killed) while a grandchild still holds its stderr open.
+const mfaWaitDelay = 5 * time.Second
+
+// scanLine reads the next stdout line from the session's subprocess, giving
+// up after timeout or when ctx is done. Giving up kills the subprocess, which
+// closes its stdout and unblocks the pending Scan.
+//
+// ok reports whether a line was read. When it is false, reason says why we
+// gave up: an ErrGarminUnavailable-wrapping error on timeout, a wrapped
+// ctx.Err() on cancellation, or nil when the subprocess simply exited.
+// Callers must return a non-nil reason as is — the subprocess's own output
+// says nothing about why it stopped, so classifyError must not see it.
+func (s *MFASession) scanLine(ctx context.Context, timeout time.Duration) (ok bool, reason error) {
+	kill := func() { _ = s.cmd.Process.Kill() }
+	timer := time.AfterFunc(timeout, kill)
+	stop := context.AfterFunc(ctx, kill)
+
+	ok = s.stdout.Scan()
+
+	// A false Stop means the kill has run or is about to, even if Scan
+	// returned a line first: the subprocess is (being) killed either way,
+	// so the line is worthless.
+	timerFired := !timer.Stop()
+	ctxFired := !stop()
+	switch {
+	case ctxFired:
+		return false, fmt.Errorf("garmin: gave up waiting for validate subprocess: %w", ctx.Err())
+	case timerFired:
+		return false, fmt.Errorf("%w: validate subprocess did not answer within %s", ErrGarminUnavailable, timeout)
+	}
+	return ok, nil
 }
 
 // stdinCreds is the JSON envelope written to the subprocess's stdin.
@@ -454,8 +513,12 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	// ── Build and start the subprocess ──
 
+	// Not CommandContext: on "needs_mfa" the subprocess must outlive this
+	// call (and the request behind ctx) until CompleteMFA. ctx bounds only
+	// the initial read below; the stale-session sweeper bounds the rest.
 	cmdArgs := []string{p.scriptPath, "validate-mfa"}
-	cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
+	cmd := exec.Command("python3", cmdArgs...)
+	cmd.WaitDelay = mfaWaitDelay
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -508,9 +571,14 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	}
 
 	// Read the first response line from stdout.
-	if !session.stdout.Scan() {
+	if ok, reason := session.scanLine(ctx, p.mfaReadTimeout); !ok {
 		_ = cmd.Wait()
-		return "", classifyError(ctx, fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
+		if reason != nil {
+			return "", reason
+		}
+		// No "mfa" in this text: classifyError matches it as a keyword,
+		// and only stderr should decide the class here.
+		return "", classifyError(ctx, fmt.Errorf("garmin: validate subprocess exited without output"), session.stderr.String())
 	}
 
 	var resp mfaStatusResponse
@@ -539,8 +607,19 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 			session.encryptionKey = p.encryptionKey
 		}
 		p.mfaSessionsMu.Lock()
+		if p.closed {
+			p.mfaSessionsMu.Unlock()
+			session.terminate()
+			return "", fmt.Errorf("%w: provider is shutting down", ErrGarminUnavailable)
+		}
+		// A concurrent submit for the same user may have stored a session
+		// since cancelMFASession above; it is superseded by this one.
+		replaced := p.mfaSessions[userID]
 		p.mfaSessions[userID] = session
 		p.mfaSessionsMu.Unlock()
+		if replaced != nil {
+			replaced.terminate()
+		}
 		return "needs_mfa", nil
 
 	case "error":
@@ -583,11 +662,16 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 	}
 
 	// Read the response.
-	if !session.stdout.Scan() {
+	if ok, reason := session.scanLine(context.Background(), p.mfaReadTimeout); !ok {
 		_ = session.cmd.Wait()
+		if reason != nil {
+			return reason
+		}
+		// No "mfa" in this text: classifyError matches it as a keyword,
+		// and only stderr should decide the class here.
 		return classifyError(
 			context.TODO(),
-			fmt.Errorf("garmin: no response after MFA code"),
+			fmt.Errorf("garmin: validate subprocess exited without answering the code"),
 			session.stderr.String(),
 		)
 	}
@@ -626,12 +710,7 @@ func (p *PythonGarminProvider) cancelMFASession(userID int64) {
 	p.mfaSessionsMu.Unlock()
 
 	if ok {
-		_ = session.stdin.Close()
-		_ = session.cmd.Process.Kill()
-		_ = session.cmd.Wait()
-		if session.tmpTokenDir != "" {
-			_ = os.RemoveAll(session.tmpTokenDir)
-		}
+		session.terminate()
 	}
 }
 
@@ -655,20 +734,20 @@ func (p *PythonGarminProvider) cleanupStaleMFASessions() {
 		case <-p.stopCleanup:
 			return
 		case <-ticker.C:
+			stale := map[int64]*MFASession{}
 			p.mfaSessionsMu.Lock()
 			for uid, s := range p.mfaSessions {
 				if time.Since(s.created) > maxAge {
-					slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
-					_ = s.stdin.Close()
-					_ = s.cmd.Process.Kill()
-					_ = s.cmd.Wait()
-					if s.tmpTokenDir != "" {
-						_ = os.RemoveAll(s.tmpTokenDir)
-					}
+					stale[uid] = s
 					delete(p.mfaSessions, uid)
 				}
 			}
 			p.mfaSessionsMu.Unlock()
+
+			for uid, s := range stale {
+				slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
+				s.terminate()
+			}
 		}
 	}
 }

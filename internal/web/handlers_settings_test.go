@@ -867,3 +867,28 @@ func waitFor(t *testing.T, deadline time.Duration, cond func() bool) bool {
 	}
 	return cond()
 }
+
+// A Garmin that never answers the MFA code must not tell the user their
+// code was wrong.
+func TestGarminMFASubmit_UnavailableIsNotInvalidCode(t *testing.T) {
+	h := newTestHarness(t)
+	loginAs(t, h, "mfa-unavailable@example.com")
+	h.garmin.SimulateMFA = true
+	h.garmin.MFAErr = garmin.ErrGarminUnavailable
+
+	resp := postForm(t, h, "/settings/garmin", url.Values{
+		"email":    {"g@example.com"},
+		"password": {"pw"},
+	})
+	if loc := resp.Header.Get("Location"); loc != "/settings/garmin/mfa" {
+		t.Fatalf("credentials POST redirected to %q, want /settings/garmin/mfa", loc)
+	}
+
+	resp = postForm(t, h, "/settings/garmin/mfa", url.Values{"mfa_code": {"123456"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if f := flashFrom(resp); f != "flash.garmin_unavailable" {
+		t.Errorf("flash = %q, want flash.garmin_unavailable", f)
+	}
+}
