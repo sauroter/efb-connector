@@ -86,10 +86,8 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 // endpoints) still flush through the logging middleware. A plain type
 // assertion to http.Flusher on the wrapper would otherwise fail.
 func (sw *statusWriter) Flush() {
-	if !sw.wroteHeader {
-		sw.wroteHeader = true
-	}
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		sw.wroteHeader = true
 		f.Flush()
 	}
 }

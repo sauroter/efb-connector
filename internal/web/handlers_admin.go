@@ -71,6 +71,17 @@ func (s *Server) handleAdminUserSyncHistory(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(runs)
 }
 
+// Budgets for admin handlers that respond only once their work is done.
+// Both stay under Fly's 300s proxy idle_timeout (fly.toml): a response with
+// no bytes for that long is cut off by the proxy whatever our deadline says.
+const (
+	// adminSyncTimeout bounds a synchronous single-user sync.
+	adminSyncTimeout = 4 * time.Minute
+	// adminNotifyWriteDeadline covers one sequential mail send per
+	// Garmin-connected user.
+	adminNotifyWriteDeadline = 4*time.Minute + 30*time.Second
+)
+
 // handleAdminUserSync triggers a sync for a specific user, bypassing the rate limiter.
 func (s *Server) handleAdminUserSync(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInternalAuth(w, r) {
@@ -83,8 +94,16 @@ func (s *Server) handleAdminUserSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A full sync (Garmin login, GPX downloads, EFB uploads) outlasts the
+	// 30s server WriteTimeout. Bound it a little under the write deadline so
+	// the result is still written; a timed-out run is recorded as failed
+	// with the context error, like any other aborted sync.
+	s.extendWriteDeadline(w, adminSyncTimeout+5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), adminSyncTimeout)
+	defer cancel()
+
 	s.logger.Info("admin: triggering sync for user", "user_id", userID)
-	runID, syncErr := s.syncEngine.SyncUser(context.Background(), userID, "admin")
+	runID, syncErr := s.syncEngine.SyncUser(ctx, userID, "admin")
 	if syncErr != nil {
 		s.logger.Error("admin: sync failed", "user_id", userID, "run_id", runID, "error", syncErr)
 		w.Header().Set("Content-Type", "application/json")
@@ -537,6 +556,8 @@ func (s *Server) handleAdminNotifyGarminUpgrade(w http.ResponseWriter, r *http.R
 	if !s.requireInternalAuth(w, r) {
 		return
 	}
+
+	s.extendWriteDeadline(w, adminNotifyWriteDeadline)
 
 	users, err := s.db.GetAllUsersWithStatus()
 	if err != nil {
