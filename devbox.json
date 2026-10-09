@@ -3,8 +3,8 @@
   "packages": [
     "go@1.27",
     "python@3.14",
-    "gnumake",
-    "python314Packages.pip@latest"
+    "python314Packages.pip",
+    "gnumake"
   ],
   "shell": {
     "init_hook": [
@@ -14,9 +14,9 @@
       "pip install -q -r requirements.txt 2>/dev/null || true"
     ],
     "scripts": {
-      "dev":   "make dev",
+      "dev": "make dev",
       "build": "make build",
-      "test":  "make test"
+      "test": "make test"
     }
   }
 }

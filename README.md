@@ -37,7 +37,7 @@ A multi-tenant web service that automatically syncs water sport activities from 
 ### Prerequisites
 
 - Go 1.27+
-- Python 3.13+ with `garminconnect` package
+- Python 3.14+ with `garminconnect` package
 - GNU Make (included in devbox)
 
 Or use [devbox](https://www.jetify.com/devbox) to get everything automatically:
