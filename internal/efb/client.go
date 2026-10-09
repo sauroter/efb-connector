@@ -249,6 +249,10 @@ type UploadRejectedError struct {
 	BodySize    int
 	BodyExcerpt string // capped at MaxResponseBodyExcerpt
 	Summary     string // output of summariseResponse, included in Error()
+	// ConsentRequired is set when the rejection is the v2026.1 track-usage
+	// consent page (see IsConsentRequiredBody): a user action is needed,
+	// not a retry.
+	ConsentRequired bool
 }
 
 // Error formats the message in the same shape as the previous inline
@@ -297,10 +301,11 @@ func (c *EFBClient) Upload(ctx context.Context, gpxData []byte, filename string)
 	}
 
 	return &UploadRejectedError{
-		StatusCode:  res.StatusCode,
-		BodySize:    res.BodySize,
-		BodyExcerpt: TruncateUTF8(res.Body, MaxResponseBodyExcerpt),
-		Summary:     summariseResponse(res.Body),
+		StatusCode:      res.StatusCode,
+		BodySize:        res.BodySize,
+		BodyExcerpt:     TruncateUTF8(res.Body, MaxResponseBodyExcerpt),
+		Summary:         summariseResponse(res.Body),
+		ConsentRequired: IsConsentRequiredBody(res.Body),
 	}
 }
 
@@ -813,9 +818,15 @@ var efbHints = []struct {
 	{"Datei ist zu", "file size rejected"},
 	{"ungültig", "invalid file"},
 	{"Fehler beim", "processing error"},
-	{"der anonymisierten Verwendung Eurer Tracks zugestimmt",
-		"EFB consent required: open Meine Tracks and click 'ich stimme zu'"},
+	// Looser fallback behind summariseResponse's IsConsentRequiredBody
+	// check: the phrase alone (no commit_tracks button) is still a strong
+	// signal, and classifyEFBError's message fallback relies on this hint.
+	{consentPhrase, consentHint},
 }
+
+// consentHint is the summary hint for the consent page. Its "EFB consent
+// required" prefix is what classifyEFBError's message fallback matches.
+const consentHint = "EFB consent required: open Meine Tracks and click 'ich stimme zu'"
 
 // consentPhrase and consentButtonName are the two markers of the EFB
 // v2026.1 track-usage consent gate. We require both to flag a body as
@@ -871,12 +882,21 @@ func summariseResponse(b []byte) string {
 		}
 	}
 
-	// Scan for known EFB error/warning patterns.
-	for _, h := range efbHints {
-		if strings.Contains(s, h.pattern) {
-			parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
-			hintFound = true
-			break // one hint is enough
+	// Scan for known EFB error/warning patterns. The consent page is
+	// checked first: it is an actionable state rather than an error, and
+	// its body may also contain generic phrases such as "ungültig" that
+	// would otherwise win the first-match scan below.
+	if IsConsentRequiredBody(b) {
+		parts = append(parts, "hint: "+consentHint)
+		hintFound = true
+	}
+	if !hintFound {
+		for _, h := range efbHints {
+			if strings.Contains(s, h.pattern) {
+				parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
+				hintFound = true
+				break // one hint is enough
+			}
 		}
 	}
 

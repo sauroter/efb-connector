@@ -440,9 +440,14 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	// Build a set of failed activity IDs eligible for retry so we can mark
 	// activities coming from the Garmin list as retries when they were
 	// previously recorded as failed.
+	// Abort on error rather than carry on with an empty set: the status
+	// switch below treats a "failed" activity missing from failedSet as
+	// retries-exhausted, so every pending retry would be skipped silently.
+	// A persistent error therefore blocks this user's syncs until fixed —
+	// preferred over silently dropping their retries.
 	failedActs, err := s.db.GetFailedActivities(userID)
 	if err != nil {
-		log.Error("failed to get failed activities for retry", "error", err)
+		return 0, 0, 0, 0, 0, false, fmt.Errorf("sync: get failed activities: %w", err)
 	}
 	failedSet := make(map[string]bool, len(failedActs))
 	for _, fa := range failedActs {
@@ -1478,6 +1483,10 @@ func isServer5xxError(err error) bool {
 func classifyEFBError(err error) string {
 	if err == nil {
 		return ""
+	}
+	var rej *efb.UploadRejectedError
+	if errors.As(err, &rej) && rej.ConsentRequired {
+		return "consent_required"
 	}
 	msg := err.Error()
 	switch {

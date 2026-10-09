@@ -76,10 +76,11 @@ func (m *MockEFBProvider) Upload(_ context.Context, gpxData []byte, filename str
 		m.logger.Info("[mock-efb] upload rejected: consent gate active", "filename", filename)
 		body := []byte(mockConsentGateBody)
 		return &UploadRejectedError{
-			StatusCode:  http.StatusOK,
-			BodySize:    len(body),
-			BodyExcerpt: string(body),
-			Summary:     summariseResponse(body),
+			StatusCode:      http.StatusOK,
+			BodySize:        len(body),
+			BodyExcerpt:     string(body),
+			Summary:         summariseResponse(body),
+			ConsentRequired: true,
 		}
 	}
 
