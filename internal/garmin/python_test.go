@@ -86,6 +86,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 args = parser.parse_args()
 
@@ -164,6 +166,65 @@ print(json.dumps(activities))
 	}
 }
 
+// A custom range in the past must reach Garmin as that range. Sending only a
+// day count made the script fetch the most recent N days instead, which the
+// window filter then emptied.
+func TestListActivities_PastWindowSendsExplicitDates(t *testing.T) {
+	dir := t.TempDir()
+	// Simulates Garmin: inclusive date query over a fixed history.
+	script := writeMockScript(t, dir, `
+import argparse
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="cmd")
+lp = sub.add_parser("list")
+lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
+lp.add_argument("--json", action="store_true")
+args = parser.parse_args()
+if args.start is None or args.end is None:
+    print("expected --start and --end, got --days %d" % args.days, file=sys.stderr)
+    sys.exit(1)
+with open(os.path.join(os.path.dirname(__file__), "window"), "w") as f:
+    f.write(args.start + " " + args.end)
+
+history = ["2025-10-30", "2025-10-31", "2025-11-01", "2025-11-30", "2025-12-01"]
+print(json.dumps([
+    {"id": i, "name": "Kajak", "type": "kayaking_v2", "parent_type_id": 228,
+     "date": d, "start_time": d + " 10:00:00"}
+    for i, d in enumerate(history) if args.start <= d <= args.end
+]))
+`)
+
+	p := NewPythonGarminProvider(script, nil)
+	start := time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC) // exclusive, as the custom-range handler passes it
+
+	activities, _, err := p.ListActivities(context.Background(), newCreds(), start, end, ListOptions{})
+	if err != nil {
+		t.Fatalf("ListActivities returned error: %v", err)
+	}
+
+	window, err := os.ReadFile(filepath.Join(dir, "window"))
+	if err != nil {
+		t.Fatalf("mock script did not record the requested window: %v", err)
+	}
+	if got, want := string(window), "2025-10-31 2025-12-01"; got != want {
+		t.Errorf("requested Garmin window = %q, want %q (one day of slack on each side)", got, want)
+	}
+
+	// The slack days 2025-10-31 and 2025-12-01 are fetched but trimmed by
+	// the window filter.
+	var got []string
+	for _, a := range activities {
+		got = append(got, a.Date.Format("2006-01-02"))
+	}
+	want := []string{"2025-11-01", "2025-11-30"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("activity dates = %v, want %v", got, want)
+	}
+}
+
 func TestListActivities_EmptyList(t *testing.T) {
 	dir := t.TempDir()
 	script := writeMockScript(t, dir, `
@@ -172,6 +233,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 print(json.dumps([]))
@@ -196,6 +259,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 print("garmin: authentication failed", file=sys.stderr)
@@ -221,6 +286,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 print("MFA required by Garmin", file=sys.stderr)
@@ -248,6 +315,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 lp.add_argument("--no-filter", action="store_true")
 lp.add_argument("--match-by-name", action="store_true")
@@ -298,6 +367,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 lp.add_argument("--no-filter", action="store_true")
 lp.add_argument("--match-by-name", action="store_true")
@@ -387,6 +458,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 # Emit a diagnostics line on stderr alongside the (filtered) JSON list.
@@ -421,6 +494,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 print(json.dumps([]))
@@ -445,6 +520,8 @@ parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest="cmd")
 lp = sub.add_parser("list")
 lp.add_argument("--days", type=int, default=30)
+lp.add_argument("--start")
+lp.add_argument("--end")
 lp.add_argument("--json", action="store_true")
 parser.parse_args()
 print("this is not JSON")
@@ -714,27 +791,6 @@ with open(%q, "w") as f:
 	}
 	if got.TokenStore != "/data/tokens/7" {
 		t.Errorf("TokenStore = %q, want %q", got.TokenStore, "/data/tokens/7")
-	}
-}
-
-// ---- Helper: daysSpan -------------------------------------------------------
-
-func TestDaysSpan(t *testing.T) {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	tests := []struct {
-		start, end time.Time
-		want       int
-	}{
-		{base, base.Add(24 * time.Hour), 2},
-		{base, base.Add(7 * 24 * time.Hour), 8},
-		{base, base, 1},                     // zero span → minimum 1
-		{base, base.Add(-1 * time.Hour), 1}, // negative span → minimum 1
-	}
-	for _, tt := range tests {
-		got := daysSpan(tt.start, tt.end)
-		if got != tt.want {
-			t.Errorf("daysSpan(%v, %v) = %d, want %d", tt.start, tt.end, got, tt.want)
-		}
 	}
 }
 

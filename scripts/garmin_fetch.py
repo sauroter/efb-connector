@@ -3,7 +3,7 @@
 Garmin Connect GPX fetcher for water sport activities.
 
 Usage:
-    python garmin_fetch.py list [--days N]
+    python garmin_fetch.py list [--days N | --start YYYY-MM-DD [--end YYYY-MM-DD]]
     python garmin_fetch.py fetch <activity_id> [--output DIR]
     python garmin_fetch.py fetch-all [--days N] [--output DIR]
     python garmin_fetch.py validate
@@ -415,8 +415,13 @@ def connect_garmin(config):
 
 
 def list_activities(client, days=30, include_all=False, match_by_name=False,
-                    name_keywords=()):
-    """List activities from the last N days.
+                    name_keywords=(), start=None, end=None):
+    """List activities from the last N days, or from `start` to `end`.
+
+    `start`/`end` are inclusive YYYY-MM-DD dates; when `start` is given,
+    `days` is ignored and `end` defaults to today. The sync engine always
+    passes them: a custom range in the past must not be fetched as "the
+    last N days", or none of it overlaps what was asked for.
 
     By default, returns only water-sport activities (passes `is_water_sport`).
     When include_all=True, returns every activity Garmin reports, useful
@@ -435,12 +440,12 @@ def list_activities(client, days=30, include_all=False, match_by_name=False,
     The Go caller in internal/garmin/python.go scans for this marker; it is
     best-effort, so a missing/malformed line must not break the sync.
     """
-    start_date = datetime.now() - timedelta(days=days)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if start is None:
+        start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        end = today
 
-    activities = client.get_activities_by_date(
-        start_date.strftime("%Y-%m-%d"),
-        datetime.now().strftime("%Y-%m-%d")
-    )
+    activities = client.get_activities_by_date(start, end or today)
 
     raw_type_keys = set()
     name_matched_count = 0
@@ -635,6 +640,15 @@ def validate_mfa():
         sys.exit(1)
 
 
+def _iso_date(value):
+    """argparse type: validate a YYYY-MM-DD date, keep it as a string."""
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value!r}")
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch GPX files from Garmin Connect")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -642,6 +656,14 @@ def main():
     # List command
     list_parser = subparsers.add_parser("list", help="List water sport activities")
     list_parser.add_argument("--days", type=int, default=30, help="Number of days to look back (default: 30)")
+    list_parser.add_argument(
+        "--start", type=_iso_date, metavar="YYYY-MM-DD",
+        help="First day to list (inclusive); overrides --days",
+    )
+    list_parser.add_argument(
+        "--end", type=_iso_date, metavar="YYYY-MM-DD",
+        help="Last day to list (inclusive, default: today); only with --start",
+    )
     list_parser.add_argument("--json", action="store_true", help="Output as JSON")
     list_parser.add_argument(
         "--no-filter", action="store_true",
@@ -701,6 +723,8 @@ def main():
             include_all=args.no_filter,
             match_by_name=args.match_by_name,
             name_keywords=args.name_keywords,
+            start=args.start,
+            end=args.end,
         )
 
         if args.json:

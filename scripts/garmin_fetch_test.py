@@ -174,8 +174,10 @@ class ListActivitiesFilteringTest(unittest.TestCase):
     class _FakeClient:
         def __init__(self, activities):
             self._activities = activities
+            self.requested = None
 
-        def get_activities_by_date(self, _start, _end):
+        def get_activities_by_date(self, start, end):
+            self.requested = (start, end)
             return self._activities
 
     def _make_activities(self):
@@ -218,6 +220,22 @@ class ListActivitiesFilteringTest(unittest.TestCase):
     def test_strict_mode_keeps_only_water_sport(self):
         out = gf.list_activities(self._FakeClient(self._make_activities()), days=30)
         self.assertEqual([a["id"] for a in out], [1])
+
+    def test_explicit_range_is_passed_to_garmin(self):
+        # A custom range in the past must be fetched as that range, not as
+        # "the last N days" — otherwise none of it overlaps the request.
+        client = self._FakeClient([])
+        gf.list_activities(client, days=30, start="2025-11-01", end="2025-11-30")
+        self.assertEqual(client.requested, ("2025-11-01", "2025-11-30"))
+
+    def test_days_window_ends_today(self):
+        client = self._FakeClient([])
+        gf.list_activities(client, days=30)
+        today = gf.datetime.now()
+        self.assertEqual(client.requested, (
+            (today - gf.timedelta(days=30)).strftime("%Y-%m-%d"),
+            today.strftime("%Y-%m-%d"),
+        ))
 
     def test_match_by_name_recovers_mistagged(self):
         out = gf.list_activities(
