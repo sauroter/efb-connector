@@ -81,11 +81,8 @@ func openDBBeforeMigration(t *testing.T, idx int) *DB {
 		t.Fatalf("create migrations table: %v", err)
 	}
 	for i := range idx {
-		if err := d.execMulti(migrations[i]); err != nil {
+		if err := d.applyMigration(i, migrations[i]); err != nil {
 			t.Fatalf("migration %d: %v", i, err)
-		}
-		if _, err := d.db.Exec(`INSERT INTO migrations (id) VALUES (?)`, i); err != nil {
-			t.Fatalf("record migration %d: %v", i, err)
 		}
 	}
 	return d
