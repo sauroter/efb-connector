@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	stdsync "sync"
 	"sync/atomic"
@@ -1475,9 +1477,11 @@ type mockEFBProvider struct {
 	createTripTrackID string
 	lastEnrichment    *efb.TripEnrichment
 	uploadCount       int
+	loginCount        int
 }
 
 func (m *mockEFBProvider) Login(_ context.Context, _, _ string) error {
+	m.loginCount++
 	return m.loginErr
 }
 
@@ -2796,5 +2800,78 @@ func TestIsServer5xxError(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isServer5xxError(%v) = %v, want %v", tt.err, got, tt.want)
 		}
+	}
+}
+
+func TestClassifyEFBError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"session expired", errors.New("efb: session expired during upload (got login page)"), "session_expired"},
+		{"5xx", errors.New("efb: upload failed with status 502: x"), "server_error"},
+		{"4xx mentioning status 5", errors.New("efb: upload failed with status 404: status 5 items"), "unknown"},
+		// Typed flag wins even when the summary picked a different hint.
+		{"consent via typed flag", &efb.UploadRejectedError{Summary: "hint: invalid file", ConsentRequired: true}, "consent_required"},
+		{"consent via message", &efb.UploadRejectedError{Summary: "hint: EFB consent required: x"}, "consent_required"},
+		{"plain rejection", &efb.UploadRejectedError{Summary: "hint: invalid file"}, "upload_rejected"},
+		{"network", errors.New("efb: upload request failed: dial tcp"), "network"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyEFBError(tt.err); got != tt.want {
+				t.Errorf("classifyEFBError = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// If the retry set cannot be loaded, the run must abort rather than carry on
+// with an empty set — which would make every pending "failed" activity look
+// retries-exhausted and skip it silently. The fault is injected by renaming a
+// column only GetFailedActivities reads, so GetActivityStatus keeps working
+// and the old log-and-continue behaviour would quietly skip act-1.
+func TestSyncUser_GetFailedActivitiesErrorAbortsRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.db")
+	db, err := database.Open(path, testKey)
+	if err != nil {
+		t.Fatalf("Open DB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	user := setupUser(t, db)
+	if err := db.RecordActivity(user.ID, "act-1", "Paddling Session 1", "kayaking", "2024-01-01", "failed", "earlier error"); err != nil {
+		t.Fatalf("RecordActivity: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := raw.Exec(`ALTER TABLE synced_activities RENAME COLUMN response_body_excerpt TO response_body_excerpt_gone`); err != nil {
+		t.Fatalf("break synced_activities: %v", err)
+	}
+	_ = raw.Close()
+
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	ep := &mockEFBProvider{}
+	engine := newEngineWithProvider(db, gp, ep)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err == nil || !strings.Contains(err.Error(), "get failed activities") {
+		t.Fatalf("SyncUser err = %v, want get failed activities error", err)
+	}
+
+	run, err := db.GetSyncRun(runID)
+	if err != nil || run == nil {
+		t.Fatalf("GetSyncRun: run=%v err=%v", run, err)
+	}
+	if run.Status != "failed" {
+		t.Errorf("status = %q, want failed", run.Status)
+	}
+	if ep.loginCount != 0 || ep.uploadCount != 0 {
+		t.Errorf("EFB logins = %d, uploads = %d, want 0/0", ep.loginCount, ep.uploadCount)
 	}
 }

@@ -209,7 +209,7 @@ ALTER TABLE sync_runs ADD COLUMN excluded_count INTEGER NOT NULL DEFAULT 0;`,
 	// in two directions.
 	//
 	// json_each() raises on malformed input, which would fail the migration,
-	// roll back execMulti's transaction, and make Open — and so the whole
+	// roll back applyMigration's transaction, and make Open — and so the whole
 	// server — refuse to start. Hence the CASE: an unreadable value degrades
 	// to "excluded nothing" rather than taking the service down on deploy.
 	//

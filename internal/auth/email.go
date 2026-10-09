@@ -8,11 +8,17 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // resendEndpoint is the Resend API endpoint for sending emails.
 // It is a package-level variable so tests can override it.
 var resendEndpoint = "https://api.resend.com/emails"
+
+// emailHTTPClient bounds each send. http.DefaultClient has no timeout, so a
+// stalled Resend connection would hang the caller (a login request, or a
+// background goroutine Shutdown waits for) indefinitely.
+var emailHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 func (s *AuthService) isDevMode() bool {
 	return s.resendAPIKey == "" ||
@@ -62,7 +68,7 @@ func (s *AuthService) SendEmail(to, subject, htmlBody, textBody string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.resendAPIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := emailHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("auth: send email: %w", err)
 	}

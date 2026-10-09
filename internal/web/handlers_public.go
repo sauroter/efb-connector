@@ -333,7 +333,10 @@ func requestOrigin(r *http.Request) string {
 // logging. Behind Fly's proxy that is Fly-Client-IP, which the proxy sets
 // itself. X-Forwarded-For is deliberately not consulted: its leftmost entry
 // is whatever the client sent, so trusting it would let anyone rotate their
-// apparent IP per request and sidestep the login rate limit.
+// apparent IP per request and sidestep the login rate limit. Fly-Client-IP is
+// trustworthy only because the app is reachable solely through Fly's proxy
+// ([http_service] in fly.toml), which sets it; outside Fly (e.g. dev) it is
+// client-controlled like any other header.
 func remoteIP(r *http.Request) string {
 	if ip := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); ip != "" {
 		return ip

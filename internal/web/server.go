@@ -68,6 +68,10 @@ type Server struct {
 	bgRootCancel context.CancelFunc
 	bgWG         stdsync.WaitGroup
 
+	// routeMux is the mux built by Routes, kept so the logging middleware
+	// can label metrics by matched route pattern rather than raw path.
+	routeMux *http.ServeMux
+
 	// garminTokenBase is the parent directory for per-user Garmin token
 	// stores. Empty in production (falls back to /data or ~/.config); tests
 	// inject a temp dir via ServerDeps.GarminTokenStoreBase.
@@ -280,6 +284,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Wrap the entire mux in middleware: i18n → security → logging → recovery.
+	s.routeMux = mux
 	return s.recovery(s.logging(securityHeaders(i18n.Middleware(s)(mux))))
 }
 

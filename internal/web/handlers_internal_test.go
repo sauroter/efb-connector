@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -126,6 +127,25 @@ func TestInternalAuth_RequiresBearerScheme(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Authorization %q: status = %d, want 401", header, resp.StatusCode)
 		}
+	}
+}
+
+// An unset secret must lock the endpoints, not match an empty bearer token.
+// Called directly rather than over HTTP: the server trims the trailing space
+// off "Bearer ", which would fail the scheme check and pass this test even
+// without the empty-secret guard.
+func TestInternalAuth_EmptySecretRejectsEmptyBearer(t *testing.T) {
+	h := newTestHarness(t)
+	h.server.internalSecret = ""
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/admin/status", nil)
+	req.Header.Set("Authorization", "Bearer ")
+	rec := httptest.NewRecorder()
+	if h.server.requireInternalAuth(rec, req) {
+		t.Fatal("empty bearer token authorized against an empty secret")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
 

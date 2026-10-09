@@ -2,50 +2,50 @@ package metrics
 
 import "testing"
 
-func TestNormalizePath(t *testing.T) {
+func TestRouteLabel(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		// Internal routes collapse to a single label.
-		{"/internal/sync/run-all", "/internal/*"},
-		{"/internal/admin/users/42/sync", "/internal/*"},
-		{"/internal/", "/internal/*"},
-
-		// Auth routes collapse.
-		{"/auth/verify", "/auth/*"},
-		{"/auth/logout", "/auth/*"},
-
-		// Static assets collapse.
-		{"/static/style.css", "/static/*"},
-		{"/static/img/logo.svg", "/static/*"},
-
-		// Known top-level routes pass through.
-		{"/", "/"},
-		{"/login", "/login"},
-		{"/dashboard", "/dashboard"},
-		{"/impressum", "/impressum"},
-		{"/privacy", "/privacy"},
-		{"/settings/garmin", "/settings/garmin"},
-		{"/settings/efb", "/settings/efb"},
-		{"/settings/garmin/delete", "/settings/garmin/delete"},
-		{"/settings/efb/delete", "/settings/efb/delete"},
-		{"/sync/trigger", "/sync/trigger"},
-		{"/sync/status", "/sync/status"},
-		{"/sync/history", "/sync/history"},
-		{"/account/delete", "/account/delete"},
-		{"/health", "/health"},
-		{"/favicon.ico", "/favicon.ico"},
-
-		// Unknown paths collapse to /other to bound label cardinality.
-		{"/randomly/made/up", "/other"},
-		{"/settings/garmin/mfa", "/other"}, // sub-route not in known list
+		{"GET /settings", "/settings"},
+		{"POST /settings/activity-types", "/settings/activity-types"},
+		{"GET /internal/admin/users/{id}/sync-history", "/internal/admin/users/{id}/sync-history"},
+		{"GET /static/", "/static/"},
+		{"/no-method", "/no-method"},
 		{"", "/other"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			if got := NormalizePath(c.in); got != c.want {
-				t.Errorf("NormalizePath(%q) = %q, want %q", c.in, got, c.want)
+			if got := RouteLabel(c.in); got != c.want {
+				t.Errorf("RouteLabel(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestMethodLabel(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"GET", "GET"},
+		{"HEAD", "HEAD"},
+		{"POST", "POST"},
+		{"PUT", "PUT"},
+		{"PATCH", "PATCH"},
+		{"DELETE", "DELETE"},
+		{"OPTIONS", "OPTIONS"},
+		// Anything else collapses, so clients can't mint label values.
+		{"FOOBAR", "OTHER"},
+		{"get", "OTHER"},
+		{"CONNECT", "OTHER"},
+		{"TRACE", "OTHER"},
+		{"", "OTHER"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := MethodLabel(c.in); got != c.want {
+				t.Errorf("MethodLabel(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
 	}
@@ -54,9 +54,9 @@ func TestNormalizePath(t *testing.T) {
 func TestObserveHTTPRequest_DoesNotPanic(t *testing.T) {
 	// Smoke test: just verify the call path doesn't blow up on edge inputs.
 	// Prometheus state is global so we don't assert on counter values.
-	ObserveHTTPRequest("GET", "/dashboard", 200, 0.123)
-	ObserveHTTPRequest("POST", "/internal/sync/run-all", 401, 0.001)
-	ObserveHTTPRequest("GET", "/some/unknown/path", 404, 0.05)
+	ObserveHTTPRequest("GET", "GET /dashboard", 200, 0.123)
+	ObserveHTTPRequest("POST", "POST /internal/sync/run-all", 401, 0.001)
+	ObserveHTTPRequest("GET", "", 404, 0.05)
 }
 
 func TestObserveSyncRun_DoesNotPanic(t *testing.T) {
