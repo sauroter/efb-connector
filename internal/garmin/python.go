@@ -125,11 +125,16 @@ func (r listActivityJSON) parentTypeID() int {
 	return *r.ParentTypeID
 }
 
-// ListActivities runs `python <script> list --days <N> --json`, writes the
-// credentials to stdin and parses the returned JSON array.
+// ListActivities runs `python <script> list --start <date> --end <date> --json`,
+// writes the credentials to stdin and parses the returned JSON array.
 //
-// The days argument is derived from the difference between end and start,
-// rounded up to the nearest whole day.  A minimum of 1 day is always used.
+// The window is sent as explicit dates, never as a day count: the script
+// counts --days back from today, so a custom range in the past would be
+// fetched as the most recent N days and the window filter below would drop
+// all of it. --start is one day early (the filter trims the extra day) so a
+// boundary disagreement between Garmin's date query and startTimeLocal
+// cannot cost a first-day activity; --end is the last day before the
+// exclusive end.
 //
 // The Python script emits a single-line `DIAGNOSTICS: {...}` envelope on
 // stderr describing what Garmin returned *before* the water-sport filter
@@ -141,11 +146,10 @@ func (p *PythonGarminProvider) ListActivities(
 	start, end time.Time,
 	opts ListOptions,
 ) ([]Activity, ListDiagnostics, error) {
-	days := daysSpan(start, end)
-
 	args := []string{
 		"list",
-		"--days", strconv.Itoa(days),
+		"--start=" + start.AddDate(0, 0, -1).Format("2006-01-02"),
+		"--end=" + end.Add(-time.Nanosecond).Format("2006-01-02"),
 		"--json",
 	}
 	if opts.MatchByName {
