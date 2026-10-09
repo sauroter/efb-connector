@@ -818,6 +818,9 @@ var efbHints = []struct {
 	{"Datei ist zu", "file size rejected"},
 	{"ungültig", "invalid file"},
 	{"Fehler beim", "processing error"},
+	// Looser fallback behind summariseResponse's IsConsentRequiredBody
+	// check: the phrase alone (no commit_tracks button) is still a strong
+	// signal, and classifyEFBError's message fallback relies on this hint.
 	{consentPhrase, consentHint},
 }
 
@@ -887,14 +890,13 @@ func summariseResponse(b []byte) string {
 		parts = append(parts, "hint: "+consentHint)
 		hintFound = true
 	}
-	for _, h := range efbHints {
-		if hintFound {
-			break
-		}
-		if strings.Contains(s, h.pattern) {
-			parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
-			hintFound = true
-			break // one hint is enough
+	if !hintFound {
+		for _, h := range efbHints {
+			if strings.Contains(s, h.pattern) {
+				parts = append(parts, fmt.Sprintf("hint: %s", h.hint))
+				hintFound = true
+				break // one hint is enough
+			}
 		}
 	}
 

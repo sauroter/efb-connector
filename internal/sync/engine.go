@@ -443,6 +443,8 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 	// Abort on error rather than carry on with an empty set: the status
 	// switch below treats a "failed" activity missing from failedSet as
 	// retries-exhausted, so every pending retry would be skipped silently.
+	// A persistent error therefore blocks this user's syncs until fixed —
+	// preferred over silently dropping their retries.
 	failedActs, err := s.db.GetFailedActivities(userID)
 	if err != nil {
 		return 0, 0, 0, 0, 0, false, fmt.Errorf("sync: get failed activities: %w", err)
