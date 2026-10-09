@@ -1,6 +1,7 @@
 package garmin
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -967,5 +968,89 @@ func TestMakeTokenTempDir_Writable(t *testing.T) {
 	}
 	if _, err := os.Stat(tokenFile); err != nil {
 		t.Fatalf("stat token file: %v", err)
+	}
+}
+
+// ---- MFA subprocess lifetime ------------------------------------------------
+
+// startSession starts name with args as an MFASession's subprocess.
+func startSession(t *testing.T, name string, args ...string) *MFASession {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	s := &MFASession{cmd: cmd, stdin: stdin, stdout: bufio.NewScanner(stdout), created: time.Now()}
+	t.Cleanup(s.terminate)
+	return s
+}
+
+// A subprocess that never answers must not block the reader forever.
+func TestMFASessionScanLine_TimesOut(t *testing.T) {
+	s := startSession(t, "sleep", "30")
+
+	start := time.Now()
+	if s.scanLine(context.Background(), 200*time.Millisecond) {
+		t.Fatal("scanLine returned a line from a silent subprocess")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("scanLine took %v, want ~200ms", elapsed)
+	}
+}
+
+func TestMFASessionScanLine_ContextCancel(t *testing.T) {
+	s := startSession(t, "sleep", "30")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if s.scanLine(ctx, time.Minute) {
+		t.Fatal("scanLine returned a line from a silent subprocess")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("scanLine took %v, want ~200ms", elapsed)
+	}
+}
+
+// A pending MFA session must survive the end of the request that started
+// it: the handler passes r.Context(), which is cancelled as soon as the
+// redirect to the MFA form is written.
+func TestValidateWithMFA_SessionOutlivesContext(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "mfa_mock.py")
+	body := `import json, sys
+sys.stdin.readline()
+print(json.dumps({"status": "needs_mfa"}), flush=True)
+json.loads(sys.stdin.readline())
+print(json.dumps({"status": "ok"}), flush=True)
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	p := NewPythonGarminProvider(script, nil)
+	defer p.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	status, err := p.ValidateWithMFA(ctx, 7, GarminCredentials{Email: "e", Password: "p"})
+	if err != nil || status != "needs_mfa" {
+		t.Fatalf("ValidateWithMFA = %q, %v; want needs_mfa", status, err)
+	}
+	cancel()
+	time.Sleep(100 * time.Millisecond) // let a CommandContext kill land, if any
+
+	if err := p.CompleteMFA(7, "123456"); err != nil {
+		t.Fatalf("CompleteMFA after request context ended: %v", err)
 	}
 }

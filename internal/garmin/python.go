@@ -79,16 +79,44 @@ func (p *PythonGarminProvider) Close() {
 	}
 
 	p.mfaSessionsMu.Lock()
-	for uid, s := range p.mfaSessions {
-		_ = s.stdin.Close()
-		_ = s.cmd.Process.Kill()
-		_ = s.cmd.Wait()
-		if s.tmpTokenDir != "" {
-			_ = os.RemoveAll(s.tmpTokenDir)
-		}
-		delete(p.mfaSessions, uid)
-	}
+	sessions := p.mfaSessions
+	p.mfaSessions = make(map[int64]*MFASession)
 	p.mfaSessionsMu.Unlock()
+
+	for _, s := range sessions {
+		s.terminate()
+	}
+}
+
+// terminate kills the session's subprocess, reaps it and removes its
+// decrypted token dir. Callers remove the session from the map first and
+// call this outside mfaSessionsMu: Wait can block, and holding the lock
+// across it would stall every other user's MFA request.
+func (s *MFASession) terminate() {
+	_ = s.stdin.Close()
+	_ = s.cmd.Process.Kill()
+	_ = s.cmd.Wait()
+	if s.tmpTokenDir != "" {
+		_ = os.RemoveAll(s.tmpTokenDir)
+	}
+}
+
+// mfaReadTimeout bounds each wait for a line from the validate-mfa
+// subprocess. A Garmin SSO round trip takes seconds; a hung script would
+// otherwise block the request (and its goroutine) forever.
+const mfaReadTimeout = 60 * time.Second
+
+// scanLine reads the next stdout line from the session's subprocess, giving
+// up after timeout or when ctx is done. Giving up kills the subprocess, which
+// closes its stdout and unblocks the pending Scan; the caller then sees false
+// and takes its usual no-output path.
+func (s *MFASession) scanLine(ctx context.Context, timeout time.Duration) bool {
+	kill := func() { _ = s.cmd.Process.Kill() }
+	timer := time.AfterFunc(timeout, kill)
+	defer timer.Stop()
+	stop := context.AfterFunc(ctx, kill)
+	defer stop()
+	return s.stdout.Scan()
 }
 
 // stdinCreds is the JSON envelope written to the subprocess's stdin.
@@ -454,8 +482,11 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 
 	// ── Build and start the subprocess ──
 
+	// Not CommandContext: on "needs_mfa" the subprocess must outlive this
+	// call (and the request behind ctx) until CompleteMFA. ctx bounds only
+	// the initial read below; the stale-session sweeper bounds the rest.
 	cmdArgs := []string{p.scriptPath, "validate-mfa"}
-	cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
+	cmd := exec.Command("python3", cmdArgs...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -508,7 +539,7 @@ func (p *PythonGarminProvider) ValidateWithMFA(
 	}
 
 	// Read the first response line from stdout.
-	if !session.stdout.Scan() {
+	if !session.scanLine(ctx, mfaReadTimeout) {
 		_ = cmd.Wait()
 		return "", classifyError(ctx, fmt.Errorf("garmin: no output from validate-mfa"), session.stderr.String())
 	}
@@ -583,7 +614,7 @@ func (p *PythonGarminProvider) CompleteMFA(userID int64, code string) error {
 	}
 
 	// Read the response.
-	if !session.stdout.Scan() {
+	if !session.scanLine(context.Background(), mfaReadTimeout) {
 		_ = session.cmd.Wait()
 		return classifyError(
 			context.TODO(),
@@ -626,12 +657,7 @@ func (p *PythonGarminProvider) cancelMFASession(userID int64) {
 	p.mfaSessionsMu.Unlock()
 
 	if ok {
-		_ = session.stdin.Close()
-		_ = session.cmd.Process.Kill()
-		_ = session.cmd.Wait()
-		if session.tmpTokenDir != "" {
-			_ = os.RemoveAll(session.tmpTokenDir)
-		}
+		session.terminate()
 	}
 }
 
@@ -655,20 +681,20 @@ func (p *PythonGarminProvider) cleanupStaleMFASessions() {
 		case <-p.stopCleanup:
 			return
 		case <-ticker.C:
+			stale := map[int64]*MFASession{}
 			p.mfaSessionsMu.Lock()
 			for uid, s := range p.mfaSessions {
 				if time.Since(s.created) > maxAge {
-					slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
-					_ = s.stdin.Close()
-					_ = s.cmd.Process.Kill()
-					_ = s.cmd.Wait()
-					if s.tmpTokenDir != "" {
-						_ = os.RemoveAll(s.tmpTokenDir)
-					}
+					stale[uid] = s
 					delete(p.mfaSessions, uid)
 				}
 			}
 			p.mfaSessionsMu.Unlock()
+
+			for uid, s := range stale {
+				slog.Info("garmin: cleaning up stale MFA session", "user_id", uid)
+				s.terminate()
+			}
 		}
 	}
 }

@@ -138,7 +138,11 @@ func run(logger *slog.Logger) error {
 		efbProvider = mock
 		newEFBSession = func() efb.EFBProvider { return mock }
 	} else {
-		garminProvider = garmin.NewPythonGarminProvider("scripts/garmin_fetch.py", encryptionKey)
+		pythonProvider := garmin.NewPythonGarminProvider("scripts/garmin_fetch.py", encryptionKey)
+		// Stops the MFA sweeper and kills any pending MFA subprocesses,
+		// which would otherwise outlive the server.
+		defer pythonProvider.Close()
+		garminProvider = pythonProvider
 		efbProvider = efb.NewEFBClient(efb.DefaultBaseURL)
 		newEFBSession = func() efb.EFBProvider { return efb.NewEFBClient(efb.DefaultBaseURL) }
 	}

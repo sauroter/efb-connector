@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -64,7 +63,9 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 		Password:       password,
 		TokenStorePath: tokenStorePath,
 	}
-	status, err := s.garmin.ValidateWithMFA(context.Background(), userID, creds)
+	// r.Context() is safe here: it bounds only the provider's initial
+	// handshake, not the lifetime of a pending MFA subprocess.
+	status, err := s.garmin.ValidateWithMFA(r.Context(), userID, creds)
 	if err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
 		if errors.Is(err, garmin.ErrGarminUnavailable) {
