@@ -185,6 +185,8 @@ args = parser.parse_args()
 if args.start is None or args.end is None:
     print("expected --start and --end, got --days %d" % args.days, file=sys.stderr)
     sys.exit(1)
+with open(os.path.join(os.path.dirname(__file__), "window"), "w") as f:
+    f.write(args.start + " " + args.end)
 
 history = ["2025-10-30", "2025-10-31", "2025-11-01", "2025-11-30", "2025-12-01"]
 print(json.dumps([
@@ -203,8 +205,16 @@ print(json.dumps([
 		t.Fatalf("ListActivities returned error: %v", err)
 	}
 
-	// 2025-10-31 is fetched as boundary slack and trimmed by the window
-	// filter; 2025-12-01 is past the last inclusive day.
+	window, err := os.ReadFile(filepath.Join(dir, "window"))
+	if err != nil {
+		t.Fatalf("mock script did not record the requested window: %v", err)
+	}
+	if got, want := string(window), "2025-10-31 2025-12-01"; got != want {
+		t.Errorf("requested Garmin window = %q, want %q (one day of slack on each side)", got, want)
+	}
+
+	// The slack days 2025-10-31 and 2025-12-01 are fetched but trimmed by
+	// the window filter.
 	var got []string
 	for _, a := range activities {
 		got = append(got, a.Date.Format("2006-01-02"))
@@ -781,27 +791,6 @@ with open(%q, "w") as f:
 	}
 	if got.TokenStore != "/data/tokens/7" {
 		t.Errorf("TokenStore = %q, want %q", got.TokenStore, "/data/tokens/7")
-	}
-}
-
-// ---- Helper: daysSpan -------------------------------------------------------
-
-func TestDaysSpan(t *testing.T) {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	tests := []struct {
-		start, end time.Time
-		want       int
-	}{
-		{base, base.Add(24 * time.Hour), 2},
-		{base, base.Add(7 * 24 * time.Hour), 8},
-		{base, base, 1},                     // zero span → minimum 1
-		{base, base.Add(-1 * time.Hour), 1}, // negative span → minimum 1
-	}
-	for _, tt := range tests {
-		got := daysSpan(tt.start, tt.end)
-		if got != tt.want {
-			t.Errorf("daysSpan(%v, %v) = %d, want %d", tt.start, tt.end, got, tt.want)
-		}
 	}
 }
 
