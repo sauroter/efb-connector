@@ -998,8 +998,12 @@ func TestMFASessionScanLine_TimesOut(t *testing.T) {
 	s := startSession(t, "sleep", "30")
 
 	start := time.Now()
-	if s.scanLine(context.Background(), 200*time.Millisecond) {
+	ok, reason := s.scanLine(context.Background(), 200*time.Millisecond)
+	if ok {
 		t.Fatal("scanLine returned a line from a silent subprocess")
+	}
+	if !errors.Is(reason, ErrGarminUnavailable) {
+		t.Errorf("reason = %v, want ErrGarminUnavailable", reason)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("scanLine took %v, want ~200ms", elapsed)
@@ -1012,8 +1016,15 @@ func TestMFASessionScanLine_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if s.scanLine(ctx, time.Minute) {
+	ok, reason := s.scanLine(ctx, time.Minute)
+	if ok {
 		t.Fatal("scanLine returned a line from a silent subprocess")
+	}
+	if !errors.Is(reason, context.DeadlineExceeded) {
+		t.Errorf("reason = %v, want context.DeadlineExceeded", reason)
+	}
+	if errors.Is(reason, ErrGarminUnavailable) {
+		t.Errorf("reason = %v: a cancelled request is not Garmin being unavailable", reason)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("scanLine took %v, want ~200ms", elapsed)
@@ -1052,5 +1063,112 @@ print(json.dumps({"status": "ok"}), flush=True)
 
 	if err := p.CompleteMFA(7, "123456"); err != nil {
 		t.Fatalf("CompleteMFA after request context ended: %v", err)
+	}
+}
+
+// A subprocess that exits without a line is not a timeout: scanLine reports
+// no reason, leaving classification to the subprocess's stderr.
+func TestMFASessionScanLine_ExitIsNotTimeout(t *testing.T) {
+	s := startSession(t, "true")
+
+	ok, reason := s.scanLine(context.Background(), time.Minute)
+	if ok {
+		t.Fatal("scanLine returned a line from a subprocess that printed nothing")
+	}
+	if reason != nil {
+		t.Errorf("reason = %v, want nil for a plain exit", reason)
+	}
+}
+
+// writeMFAScript writes a stand-in for garmin_fetch.py validate-mfa and
+// returns its path. Skips the test when python3 is not on PATH.
+func writeMFAScript(t *testing.T, body string) string {
+	t.Helper()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	script := filepath.Join(t.TempDir(), "mfa_mock.py")
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	return script
+}
+
+// assertMFATimeout checks that err is a read timeout and was not routed
+// through classifyError, whose "mfa" keyword match would turn it into
+// ErrGarminMFARequired and show the user "invalid credentials/code".
+func assertMFATimeout(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrGarminUnavailable) {
+		t.Errorf("err = %v, want ErrGarminUnavailable", err)
+	}
+	if errors.Is(err, ErrGarminMFARequired) {
+		t.Errorf("err = %v: a timeout must not read as ErrGarminMFARequired", err)
+	}
+}
+
+func TestValidateWithMFA_ReadTimeoutIsUnavailable(t *testing.T) {
+	script := writeMFAScript(t, `import sys, time
+sys.stdin.readline()
+time.sleep(30)
+`)
+	p := NewPythonGarminProvider(script, nil)
+	defer p.Close()
+	p.mfaReadTimeout = 200 * time.Millisecond
+
+	start := time.Now()
+	status, err := p.ValidateWithMFA(context.Background(), 7, GarminCredentials{Email: "e", Password: "p"})
+	if status != "" {
+		t.Errorf("status = %q, want empty", status)
+	}
+	assertMFATimeout(t, err)
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("ValidateWithMFA took %v, want ~200ms", elapsed)
+	}
+	if p.HasMFASession(7) {
+		t.Error("timed-out validation left an MFA session behind")
+	}
+}
+
+func TestCompleteMFA_ReadTimeoutIsUnavailable(t *testing.T) {
+	script := writeMFAScript(t, `import json, sys, time
+sys.stdin.readline()
+print(json.dumps({"status": "needs_mfa"}), flush=True)
+sys.stdin.readline()
+time.sleep(30)
+`)
+	p := NewPythonGarminProvider(script, nil)
+	defer p.Close()
+	p.mfaReadTimeout = 200 * time.Millisecond
+
+	status, err := p.ValidateWithMFA(context.Background(), 7, GarminCredentials{Email: "e", Password: "p"})
+	if err != nil || status != "needs_mfa" {
+		t.Fatalf("ValidateWithMFA = %q, %v; want needs_mfa", status, err)
+	}
+
+	start := time.Now()
+	assertMFATimeout(t, p.CompleteMFA(7, "123456"))
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("CompleteMFA took %v, want ~200ms", elapsed)
+	}
+}
+
+// A validation that reaches needs_mfa after Close must not park a session
+// that nothing will reap.
+func TestValidateWithMFA_AfterCloseStoresNoSession(t *testing.T) {
+	script := writeMFAScript(t, `import json, sys
+sys.stdin.readline()
+print(json.dumps({"status": "needs_mfa"}), flush=True)
+sys.stdin.readline()
+`)
+	p := NewPythonGarminProvider(script, nil)
+	p.Close()
+
+	status, err := p.ValidateWithMFA(context.Background(), 7, GarminCredentials{Email: "e", Password: "p"})
+	if err == nil || status != "" {
+		t.Fatalf("ValidateWithMFA after Close = %q, %v; want an error", status, err)
+	}
+	if p.HasMFASession(7) {
+		t.Error("session stored on a closed provider")
 	}
 }

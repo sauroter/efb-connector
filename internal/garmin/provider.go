@@ -164,7 +164,8 @@ type GarminProvider interface {
 	ValidateWithMFA(ctx context.Context, userID int64, creds GarminCredentials) (string, error)
 
 	// CompleteMFA sends the MFA code to complete a previously started
-	// interactive validation.  Returns ErrGarminAuth on invalid code.
+	// interactive validation.  Returns ErrGarminAuth on invalid code, and
+	// ErrGarminUnavailable when Garmin does not answer in time.
 	CompleteMFA(userID int64, code string) error
 
 	// HasMFASession reports whether an active MFA session exists for the

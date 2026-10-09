@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"efb-connector/internal/auth"
 	"efb-connector/internal/garmin"
@@ -33,6 +34,11 @@ func (s *Server) handleGarminSettingsForm(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// garminMFAWriteBudget covers one bounded wait on the validate-mfa
+// subprocess plus margin for its start-up and reaping. It exceeds the
+// server-wide WriteTimeout, so the MFA handlers extend their deadline.
+const garminMFAWriteBudget = garmin.MFAReadTimeout + 30*time.Second
+
 // handleGarminSettingsSave validates Garmin credentials via the GarminProvider,
 // encrypts them, and stores them in the database.
 func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +63,7 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate credentials with MFA support.
+	s.extendWriteDeadline(w, garminMFAWriteBudget)
 	tokenStorePath := s.garminTokenStorePath(userID)
 	creds := garmin.GarminCredentials{
 		Email:          email,
@@ -144,9 +151,15 @@ func (s *Server) handleGarminMFASubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.extendWriteDeadline(w, garminMFAWriteBudget)
 	if err := s.garmin.CompleteMFA(userID, code); err != nil {
 		s.logger.Warn("garmin MFA verification failed", "user_id", userID, "error", err)
-		setFlash(w, "flash.garmin_mfa_invalid")
+		if errors.Is(err, garmin.ErrGarminUnavailable) {
+			// Garmin never answered: the code may well have been right.
+			setFlash(w, "flash.garmin_unavailable")
+		} else {
+			setFlash(w, "flash.garmin_mfa_invalid")
+		}
 		// The MFA session is consumed on failure, redirect to re-enter credentials.
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
