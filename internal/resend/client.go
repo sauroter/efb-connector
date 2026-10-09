@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Endpoint base URLs — package-level vars so tests can override them.
@@ -20,6 +21,11 @@ var (
 	segmentsEndpoint  = "https://api.resend.com/segments"
 	templatesEndpoint = "https://api.resend.com/templates"
 )
+
+// httpClient bounds each API call. http.DefaultClient has no timeout, and the
+// admin contacts sync makes one call per user in sequence, so a single stalled
+// connection would stall the whole run.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 // Client wraps the Resend HTTP API for contacts, segments, and templates.
 type Client struct {
@@ -302,7 +308,7 @@ func (c *Client) doJSON(method, endpoint string, payload any) ([]byte, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}

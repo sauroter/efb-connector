@@ -62,9 +62,10 @@ func init() {
 	)
 }
 
-// ObserveHTTPRequest records metrics for an HTTP request.
-func ObserveHTTPRequest(method, path string, status int, durationSeconds float64) {
-	p := NormalizePath(path)
+// ObserveHTTPRequest records metrics for an HTTP request. pattern is the
+// ServeMux pattern that matched it (see RouteLabel), not the raw URL path.
+func ObserveHTTPRequest(method, pattern string, status int, durationSeconds float64) {
+	p := RouteLabel(pattern)
 	s := fmt.Sprintf("%d", status)
 	HTTPRequestsTotal.WithLabelValues(method, p, s).Inc()
 	HTTPRequestDuration.WithLabelValues(method, p).Observe(durationSeconds)
@@ -158,24 +159,17 @@ func RegisterDBGauges(db *database.DB) {
 	}))
 }
 
-// NormalizePath reduces HTTP paths to route patterns to avoid high-cardinality labels.
-func NormalizePath(path string) string {
-	if strings.HasPrefix(path, "/internal/") {
-		return "/internal/*"
+// RouteLabel turns the ServeMux pattern that served a request ("GET /settings",
+// "POST /internal/admin/users/{id}/sync") into the path label: the method is
+// dropped (it has its own label) and wildcards stay unexpanded, so cardinality
+// is bounded by the route table. An empty pattern — nothing matched — is
+// reported as "/other".
+func RouteLabel(pattern string) string {
+	if pattern == "" {
+		return "/other"
 	}
-	if strings.HasPrefix(path, "/auth/") {
-		return "/auth/*"
-	}
-	if strings.HasPrefix(path, "/static/") {
-		return "/static/*"
-	}
-	// Known routes — return as-is.
-	switch path {
-	case "/", "/login", "/dashboard", "/impressum", "/privacy",
-		"/settings/garmin", "/settings/efb", "/settings/garmin/delete", "/settings/efb/delete",
-		"/sync/trigger", "/sync/status", "/sync/history",
-		"/account/delete", "/health", "/favicon.ico":
+	if _, path, ok := strings.Cut(pattern, " "); ok {
 		return path
 	}
-	return "/other"
+	return pattern
 }

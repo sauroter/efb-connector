@@ -9,7 +9,8 @@ import (
 )
 
 // logging is HTTP middleware that logs every request with method, path, status
-// code, and duration.
+// code, and duration. Metrics are labelled by the route pattern that serves
+// the request, looked up on s.routeMux.
 func (s *Server) logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -25,8 +26,22 @@ func (s *Server) logging(next http.Handler) http.Handler {
 			"duration_ms", duration.Milliseconds(),
 			"remote_addr", r.RemoteAddr,
 		)
-		metrics.ObserveHTTPRequest(r.Method, r.URL.Path, sw.status, duration.Seconds())
+		metrics.ObserveHTTPRequest(r.Method, routePattern(s.routeMux, r), sw.status, duration.Seconds())
 	})
+}
+
+// routePattern returns the mux pattern that serves r, or "" when none does.
+// "GET /" is the landing page but also the mux's catch-all, so it only counts
+// for the root path itself — otherwise every 404 would be labelled "/".
+func routePattern(mux *http.ServeMux, r *http.Request) string {
+	if mux == nil {
+		return ""
+	}
+	_, pattern := mux.Handler(r)
+	if pattern == "GET /" && r.URL.Path != "/" {
+		return ""
+	}
+	return pattern
 }
 
 // recovery is HTTP middleware that recovers from panics in downstream handlers,
