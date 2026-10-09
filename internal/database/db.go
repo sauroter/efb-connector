@@ -106,7 +106,7 @@ func (d *DB) runMigrations() error {
 // does: recording outside the transaction would let a crash between the two
 // re-run an applied migration on next start, and a repeated ALTER TABLE ADD
 // COLUMN fails, so the server would refuse to boot. SQLite supports DDL
-// inside transactions under WAL mode.
+// inside transactions.
 func (d *DB) applyMigration(id int, sql string) error {
 	tx, err := d.db.Begin()
 	if err != nil {
