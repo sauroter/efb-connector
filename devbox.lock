@@ -2,8 +2,8 @@
   "lockfile_version": "1",
   "packages": {
     "github:NixOS/nixpkgs/nixpkgs-unstable": {
-      "last_modified": "2026-08-19T20:44:59Z",
-      "resolved": "github:NixOS/nixpkgs/07e1d92cdc0ed416cfa11ff3ca40d17e61cfba7a?lastModified=1787172299"
+      "last_modified": "2026-10-07T09:43:42Z",
+      "resolved": "github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c?lastModified=1791366222"
     },
     "gnumake": {
       "resolved": "github:NixOS/nixpkgs/ed142ab1b3a092c4d149245d0c4126a5d7ea00b0#gnumake",
@@ -24,41 +24,41 @@
         }
       }
     },
-    "go@1.26": {
-      "last_modified": "2026-08-12T11:28:58Z",
-      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09#go",
+    "go@1.27": {
+      "last_modified": "2026-10-07T09:43:42Z",
+      "resolved": "github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_27",
       "source": "devbox-search",
-      "version": "1.26.5",
+      "version": "1.27.1",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/4im44k446822ixjai0mdaizqskc90qxr-go-1.26.5",
+              "path": "/nix/store/v0l8ihkyjdqqx97g0b8lkllicmalj0lq-go-1.27.1",
               "default": true
             }
           ],
-          "store_path": "/nix/store/4im44k446822ixjai0mdaizqskc90qxr-go-1.26.5"
+          "store_path": "/nix/store/v0l8ihkyjdqqx97g0b8lkllicmalj0lq-go-1.27.1"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/yjifjy7qjzm9jli8xhzwy3y6fzw84405-go-1.26.5",
+              "path": "/nix/store/ba7p38wfl0pm8c1k4a7x9z35yk8kv719-go-1.27.1",
               "default": true
             }
           ],
-          "store_path": "/nix/store/yjifjy7qjzm9jli8xhzwy3y6fzw84405-go-1.26.5"
+          "store_path": "/nix/store/ba7p38wfl0pm8c1k4a7x9z35yk8kv719-go-1.27.1"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/xrgn6m0c5vbz06467q06zdwnk6qqdl7z-go-1.26.5",
+              "path": "/nix/store/pn86sk63a2lpmwx16vj4s5871slkyzfw-go-1.27.1",
               "default": true
             }
           ],
-          "store_path": "/nix/store/xrgn6m0c5vbz06467q06zdwnk6qqdl7z-go-1.26.5"
+          "store_path": "/nix/store/pn86sk63a2lpmwx16vj4s5871slkyzfw-go-1.27.1"
         }
       }
     },
@@ -69,12 +69,12 @@
         "aarch64-darwin": {
           "outputs": [
             {
-              "name": "man",
-              "path": "/nix/store/cfmlr6zisdzk8zkm9s0fv821c73wh4gy-python3.13-pip-25.0.1-man",
+              "path": "/nix/store/ck2mg09wq2rs9wlp85zdg56bixcjf9r3-python3.13-pip-25.0.1",
               "default": true
             },
             {
-              "path": "/nix/store/ck2mg09wq2rs9wlp85zdg56bixcjf9r3-python3.13-pip-25.0.1",
+              "name": "man",
+              "path": "/nix/store/cfmlr6zisdzk8zkm9s0fv821c73wh4gy-python3.13-pip-25.0.1-man",
               "default": true
             }
           ]
@@ -82,9 +82,9 @@
       }
     },
     "python@3.13": {
-      "last_modified": "2026-08-12T11:28:58Z",
+      "last_modified": "2026-10-07T09:43:42Z",
       "plugin_version": "0.0.5",
-      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09#python313",
+      "resolved": "github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#python313",
       "source": "devbox-search",
       "version": "3.13.15",
       "systems": {
@@ -92,39 +92,39 @@
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/8gg2n5r87vsyy8d78n3s90a9r929c14v-python3-3.13.15",
+              "path": "/nix/store/ydlh8id2c98nnlhiy87hwhalg501p1j5-python3-3.13.15",
               "default": true
             }
           ],
-          "store_path": "/nix/store/8gg2n5r87vsyy8d78n3s90a9r929c14v-python3-3.13.15"
+          "store_path": "/nix/store/ydlh8id2c98nnlhiy87hwhalg501p1j5-python3-3.13.15"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/zbmvgni6v5zb58mad6j14zga05wx5k57-python3-3.13.15",
+              "path": "/nix/store/v3n38bhgkjylj7wxk2shklk6yavasxnh-python3-3.13.15",
               "default": true
             },
             {
               "name": "debug",
-              "path": "/nix/store/1xj7y74r9yim4mh1a27psgl7c8zym9ld-python3-3.13.15-debug"
+              "path": "/nix/store/cd7vbs9y5f0x2mglwja1754sgvnvrdvh-python3-3.13.15-debug"
             }
           ],
-          "store_path": "/nix/store/zbmvgni6v5zb58mad6j14zga05wx5k57-python3-3.13.15"
+          "store_path": "/nix/store/v3n38bhgkjylj7wxk2shklk6yavasxnh-python3-3.13.15"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/f5bawl7z7w0qzimg659zg5qn7awmzww5-python3-3.13.15",
+              "path": "/nix/store/3gzjs8czrk47y7cpmr44jc568vqpb2p5-python3-3.13.15",
               "default": true
             },
             {
               "name": "debug",
-              "path": "/nix/store/biis6xqr937r0sk9gzs9i8rvfk2zx05z-python3-3.13.15-debug"
+              "path": "/nix/store/r61fvgv4bavfaqiha0p6869jv4c0h488-python3-3.13.15-debug"
             }
           ],
-          "store_path": "/nix/store/f5bawl7z7w0qzimg659zg5qn7awmzww5-python3-3.13.15"
+          "store_path": "/nix/store/3gzjs8czrk47y7cpmr44jc568vqpb2p5-python3-3.13.15"
         }
       }
     }

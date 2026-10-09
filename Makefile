@@ -7,7 +7,7 @@ PYTHON ?= $(shell test -x .venv/bin/python && echo .venv/bin/python || echo pyth
 
 ENCRYPTION_KEY ?= $(shell openssl rand -base64 32)
 VERSION ?= $(shell git describe --tags --always --dirty)
-GOLANGCI_LINT_VERSION ?= v2.13.1
+GOLANGCI_LINT_VERSION ?= v2.14.0
 GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
 
 dev:
