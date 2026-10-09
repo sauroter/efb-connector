@@ -2798,3 +2798,28 @@ func TestIsServer5xxError(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyEFBError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"session expired", errors.New("efb: session expired during upload (got login page)"), "session_expired"},
+		{"5xx", errors.New("efb: upload failed with status 502: x"), "server_error"},
+		{"4xx mentioning status 5", errors.New("efb: upload failed with status 404: status 5 items"), "unknown"},
+		// Typed flag wins even when the summary picked a different hint.
+		{"consent via typed flag", &efb.UploadRejectedError{Summary: "hint: invalid file", ConsentRequired: true}, "consent_required"},
+		{"consent via message", &efb.UploadRejectedError{Summary: "hint: EFB consent required: x"}, "consent_required"},
+		{"plain rejection", &efb.UploadRejectedError{Summary: "hint: invalid file"}, "upload_rejected"},
+		{"network", errors.New("efb: upload request failed: dial tcp"), "network"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyEFBError(tt.err); got != tt.want {
+				t.Errorf("classifyEFBError = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

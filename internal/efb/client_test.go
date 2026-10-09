@@ -1438,3 +1438,35 @@ func TestIsRateLimitedBody(t *testing.T) {
 		})
 	}
 }
+
+// A consent page that also carries a generic error phrase must still be
+// recognised as the consent gate — efbHints is scanned first-match, and
+// "ungültig" precedes the consent entry there.
+func TestSummariseResponse_ConsentBeatsGenericHint(t *testing.T) {
+	body := strings.Replace(consentGateBody, "<body>", "<body><p>Sitzung ungültig</p>", 1)
+	got := summariseResponse([]byte(body))
+	if !strings.Contains(got, "EFB consent required") {
+		t.Errorf("summary missing consent hint, got: %q", got)
+	}
+	if strings.Contains(got, "invalid file") {
+		t.Errorf("generic hint won over consent hint: %q", got)
+	}
+}
+
+func TestUpload_ConsentPageSetsConsentRequired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Replace(consentGateBody, "<body>", "<body><p>Fehler beim Hochladen</p>", 1)))
+	}))
+	defer srv.Close()
+
+	c := NewEFBClient(srv.URL)
+	err := c.Upload(context.Background(), []byte("<gpx/>"), "a.gpx")
+
+	var rej *UploadRejectedError
+	if !errors.As(err, &rej) {
+		t.Fatalf("err = %v, want *UploadRejectedError", err)
+	}
+	if !rej.ConsentRequired {
+		t.Error("ConsentRequired = false on consent page")
+	}
+}
