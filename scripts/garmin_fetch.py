@@ -346,6 +346,10 @@ def _install_profile_tolerance(client, auth_error_cls):
     footgun that motivated the feature upstream).
 
     Nothing here reads display_name or unit_system; efb-connector uses neither.
+    Keep it that way: since 0.3.13, methods that need display_name re-fetch the
+    profile via _load_social_profile() when it is unset -- outside this hook --
+    and raise a "log in again" error that classifyError maps to neither auth
+    nor unavailable.
     """
     original = getattr(client, "_load_profile_and_settings", None)
     if original is None:
