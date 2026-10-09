@@ -54,7 +54,9 @@ func (s *AuthService) CSRFProtect(next http.Handler) http.Handler {
 				return
 			}
 
-			submitted := r.FormValue("csrf_token")
+			// Body only: FormValue would also accept the token from the query
+			// string, where it leaks into logs and Referer headers.
+			submitted := r.PostFormValue("csrf_token")
 			expected := s.csrfToken(cookie.Value)
 
 			if !hmac.Equal([]byte(submitted), []byte(expected)) {

@@ -32,6 +32,7 @@ type Server struct {
 	syncEngine     *sync.SyncEngine
 	garmin         garmin.GarminProvider
 	efb            efb.EFBProvider
+	newEFBSession  func() efb.EFBProvider
 	rateLimiter    *auth.RateLimiter
 	internalSecret string
 	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
@@ -91,12 +92,18 @@ type runAllState struct {
 
 // ServerDeps bundles the dependencies required to construct a Server.
 type ServerDeps struct {
-	DB             *database.DB
-	Auth           *auth.AuthService
-	Mailer         *mailer.Mailer
-	SyncEngine     *sync.SyncEngine
-	Garmin         garmin.GarminProvider
-	EFB            efb.EFBProvider
+	DB         *database.DB
+	Auth       *auth.AuthService
+	Mailer     *mailer.Mailer
+	SyncEngine *sync.SyncEngine
+	Garmin     garmin.GarminProvider
+	EFB        efb.EFBProvider
+	// NewEFBSession returns an EFB client with its own cookie jar, used by
+	// handlers that log in as a specific user. EFBClient keeps the session
+	// in its jar, so sharing one instance across requests would let two
+	// users' logins overwrite each other. Defaults to returning EFB, which
+	// is what tests and dev mode (a shared mock) want.
+	NewEFBSession  func() efb.EFBProvider
 	RateLimiter    *auth.RateLimiter
 	InternalSecret string
 	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
@@ -127,6 +134,11 @@ func NewServer(deps ServerDeps) (*Server, error) {
 
 	metrics.RegisterDBGauges(deps.DB)
 
+	newEFBSession := deps.NewEFBSession
+	if newEFBSession == nil {
+		newEFBSession = func() efb.EFBProvider { return deps.EFB }
+	}
+
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -137,6 +149,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		syncEngine:       deps.SyncEngine,
 		garmin:           deps.Garmin,
 		efb:              deps.EFB,
+		newEFBSession:    newEFBSession,
 		rateLimiter:      deps.RateLimiter,
 		internalSecret:   deps.InternalSecret,
 		configBaseURL:    deps.BaseURL,

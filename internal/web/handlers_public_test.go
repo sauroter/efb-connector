@@ -469,3 +469,30 @@ func TestLanding_NotFoundOnUnknownPath(t *testing.T) {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }
+
+func TestRemoteIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		headers    map[string]string
+		want       string
+	}{
+		{"fly header wins", "10.0.0.1:1234", map[string]string{"Fly-Client-IP": "203.0.113.7"}, "203.0.113.7"},
+		{"spoofed XFF ignored", "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "1.2.3.4"}, "10.0.0.1"},
+		{"fly header beats spoofed XFF", "10.0.0.1:1234", map[string]string{"Fly-Client-IP": "203.0.113.7", "X-Forwarded-For": "1.2.3.4"}, "203.0.113.7"},
+		{"ipv6 remote addr", "[2001:db8::1]:443", nil, "2001:db8::1"},
+		{"remote addr without port", "10.0.0.1", nil, "10.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/login", nil)
+			r.RemoteAddr = tt.remoteAddr
+			for k, v := range tt.headers {
+				r.Header.Set(k, v)
+			}
+			if got := remoteIP(r); got != tt.want {
+				t.Errorf("remoteIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -328,19 +329,20 @@ func requestOrigin(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// remoteIP extracts the client IP address, respecting X-Forwarded-For when set
-// (the app runs behind a reverse proxy on Fly.io).
+// remoteIP returns the client IP address used for per-IP rate limiting and
+// logging. Behind Fly's proxy that is Fly-Client-IP, which the proxy sets
+// itself. X-Forwarded-For is deliberately not consulted: its leftmost entry
+// is whatever the client sent, so trusting it would let anyone rotate their
+// apparent IP per request and sidestep the login rate limit. Fly-Client-IP is
+// trustworthy only because the app is reachable solely through Fly's proxy
+// ([http_service] in fly.toml), which sets it; outside Fly (e.g. dev) it is
+// client-controlled like any other header.
 func remoteIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first (leftmost) IP, which is the original client.
-		if idx := strings.IndexByte(xff, ','); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
+	if ip := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); ip != "" {
+		return ip
 	}
-	// Strip port from RemoteAddr (e.g. "127.0.0.1:12345").
-	if idx := strings.LastIndexByte(r.RemoteAddr, ':'); idx != -1 {
-		return r.RemoteAddr[:idx]
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
 	return r.RemoteAddr
 }

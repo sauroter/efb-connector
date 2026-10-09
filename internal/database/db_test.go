@@ -1628,3 +1628,58 @@ func itoa(i int) string {
 	}
 	return string(b[bp:])
 }
+
+// Pending-MFA credentials must be stored invalid in one write, and a later
+// plain save (MFA completed, or re-entered without MFA) must make them valid.
+func TestSaveGarminCredentialsPendingMFA(t *testing.T) {
+	db := openTestDB(t)
+	u, err := db.CreateUser("mfa@example.com")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// Start from valid credentials so the pending save has to flip them.
+	if err := db.SaveGarminCredentials(u.ID, "old@example.com", "old"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if err := db.SaveGarminCredentialsPendingMFA(u.ID, "g@example.com", "pw", "MFA verification pending"); err != nil {
+		t.Fatalf("SaveGarminCredentialsPendingMFA: %v", err)
+	}
+
+	valid, err := db.GetGarminCredentialsValid(u.ID)
+	if err != nil {
+		t.Fatalf("GetGarminCredentialsValid: %v", err)
+	}
+	if valid {
+		t.Error("pending-MFA credentials are marked valid")
+	}
+	email, pass, err := db.GetGarminCredentials(u.ID)
+	if err != nil {
+		t.Fatalf("GetGarminCredentials: %v", err)
+	}
+	if email != "g@example.com" || pass != "pw" {
+		t.Errorf("stored = %q/%q, want the pending credentials", email, pass)
+	}
+	if got := garminLastError(t, db, u.ID); !got.Valid || got.String != "MFA verification pending" {
+		t.Errorf("last_error = %+v, want the pending reason", got)
+	}
+
+	if err := db.SaveGarminCredentials(u.ID, "g@example.com", "pw"); err != nil {
+		t.Fatalf("SaveGarminCredentials: %v", err)
+	}
+	if valid, _ := db.GetGarminCredentialsValid(u.ID); !valid {
+		t.Error("plain save after pending-MFA did not mark credentials valid")
+	}
+	if got := garminLastError(t, db, u.ID); got.Valid {
+		t.Errorf("last_error = %q after plain save, want NULL", got.String)
+	}
+}
+
+func garminLastError(t *testing.T, db *DB, userID int64) sql.NullString {
+	t.Helper()
+	var lastErr sql.NullString
+	if err := db.db.QueryRow(`SELECT last_error FROM garmin_credentials WHERE user_id = ?`, userID).Scan(&lastErr); err != nil {
+		t.Fatalf("query last_error: %v", err)
+	}
+	return lastErr
+}

@@ -35,8 +35,9 @@ const runAllSkipWindow = "-6 hours"
 // requireInternalAuth checks the Authorization: Bearer <INTERNAL_SECRET> header.
 // Returns true if authorized, false (and writes 401) if not.
 func (s *Server) requireInternalAuth(w http.ResponseWriter, r *http.Request) bool {
-	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(provided), []byte(s.internalSecret)) != 1 {
+	provided, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !hasBearer || s.internalSecret == "" ||
+		subtle.ConstantTimeCompare([]byte(provided), []byte(s.internalSecret)) != 1 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}

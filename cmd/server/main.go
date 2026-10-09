@@ -178,6 +178,7 @@ func run(logger *slog.Logger) error {
 		SyncEngine:      syncEngine,
 		Garmin:          garminProvider,
 		EFB:             efbProvider,
+		NewEFBSession:   newEFBSession,
 		RateLimiter:     rateLimiter,
 		InternalSecret:  internalSecret,
 		BaseURL:         baseURL,

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestSecurityHeaders_AppliedToAllResponses(t *testing.T) {
@@ -79,5 +80,45 @@ func TestStatusWriter_WriteWithoutWriteHeader(t *testing.T) {
 	}
 	if sw.status != http.StatusOK {
 		t.Errorf("default status should remain 200, got %d", sw.status)
+	}
+}
+
+// The logging middleware wraps every response. Streaming admin endpoints
+// assert http.Flusher and extend the write deadline via ResponseController;
+// both must reach the real connection through the wrapper.
+func TestLogging_PreservesFlushAndWriteDeadline(t *testing.T) {
+	h := newTestHarness(t)
+
+	var flusherOK bool
+	var deadlineErr error
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, flusherOK = w.(http.Flusher)
+		deadlineErr = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute))
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(h.server.logging(inner))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	resp.Body.Close()
+
+	if !flusherOK {
+		t.Error("wrapped writer does not implement http.Flusher")
+	}
+	if deadlineErr != nil {
+		t.Errorf("SetWriteDeadline through wrapper: %v", deadlineErr)
+	}
+}
+
+func TestStatusWriter_FlushForwards(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := &statusWriter{ResponseWriter: rec, status: http.StatusOK}
+
+	sw.Flush()
+	if !rec.Flushed {
+		t.Error("Flush did not reach the underlying writer")
 	}
 }

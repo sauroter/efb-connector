@@ -101,3 +101,28 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 	}
 	return sw.ResponseWriter.Write(b)
 }
+
+// Flush forwards to the underlying writer so streaming handlers (NDJSON admin
+// endpoints) still flush through the logging middleware. A plain type
+// assertion to http.Flusher on the wrapper would otherwise fail.
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		sw.wroteHeader = true
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying writer to http.ResponseController, without
+// which SetWriteDeadline cannot reach the connection and fails silently.
+func (sw *statusWriter) Unwrap() http.ResponseWriter {
+	return sw.ResponseWriter
+}
+
+// extendWriteDeadline lifts the server-wide WriteTimeout for one response.
+// Handlers whose work budget exceeds it must call this, or the client sees
+// the connection closed before the result is written.
+func (s *Server) extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d)); err != nil {
+		s.logger.Warn("could not extend write deadline", "error", err)
+	}
+}
