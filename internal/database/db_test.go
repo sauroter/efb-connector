@@ -720,6 +720,62 @@ func TestGetFailedActivities(t *testing.T) {
 	}
 }
 
+// A failed activity's trip metadata must survive to the retry, including when
+// a later write (a retry of the row, recorded without metadata) upserts it.
+func TestGetFailedActivities_TripMetaRoundTripAndPreserved(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("tripmeta@example.com")
+
+	meta := ActivityTripMeta{
+		StartTime:    time.Date(2026, 3, 2, 9, 15, 30, 0, time.UTC),
+		DurationSecs: 5400,
+		StartLat:     47.58,
+		StartLng:     12.70,
+		EndLat:       47.60,
+		EndLng:       12.71,
+	}
+	if err := db.RecordActivityWithMeta(u.ID, "act-1", "A", "kayaking", "2026-03-02", "failed", "download", meta); err != nil {
+		t.Fatalf("RecordActivityWithMeta: %v", err)
+	}
+	if err := db.RecordActivity(u.ID, "act-1", "A", "kayaking", "2026-03-02", "failed", "again"); err != nil {
+		t.Fatalf("RecordActivity: %v", err)
+	}
+	if err := db.RecordActivityWithResponse(u.ID, "act-1", "A", "kayaking", "2026-03-02", "failed", "rejected", 200, 10, "", ActivityTripMeta{}); err != nil {
+		t.Fatalf("RecordActivityWithResponse: %v", err)
+	}
+
+	failed, err := db.GetFailedActivities(u.ID)
+	if err != nil {
+		t.Fatalf("GetFailedActivities: %v", err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failed activity, got %d", len(failed))
+	}
+	if got := failed[0].TripMeta; got != meta {
+		t.Errorf("TripMeta = %+v, want %+v", got, meta)
+	}
+}
+
+// Rows recorded without metadata (as all rows before migration 0016 were)
+// come back with a zero TripMeta.
+func TestGetFailedActivities_NoTripMeta(t *testing.T) {
+	db := openTestDB(t)
+	u, _ := db.CreateUser("notripmeta@example.com")
+
+	_ = db.RecordActivity(u.ID, "act-1", "A", "kayaking", "2026-03-02", "failed", "oops")
+
+	failed, err := db.GetFailedActivities(u.ID)
+	if err != nil {
+		t.Fatalf("GetFailedActivities: %v", err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failed activity, got %d", len(failed))
+	}
+	if got := failed[0].TripMeta; got != (ActivityTripMeta{}) {
+		t.Errorf("TripMeta = %+v, want zero", got)
+	}
+}
+
 func TestIncrementRetryCount(t *testing.T) {
 	db := openTestDB(t)
 	u, _ := db.CreateUser("retry@example.com")
@@ -1193,7 +1249,7 @@ func TestRecordActivityWithResponse_StoresDiagnostics(t *testing.T) {
 	err := db.RecordActivityWithResponse(
 		u.ID, "act-diag", "A", "kayaking", "2026-04-28",
 		"failed", "efb: upload did not succeed: ...",
-		200, len(body), body,
+		200, len(body), body, ActivityTripMeta{},
 	)
 	if err != nil {
 		t.Fatalf("RecordActivityWithResponse: %v", err)
@@ -1229,7 +1285,7 @@ func TestRecordActivityWithResponse_RotationCap(t *testing.T) {
 		body := "body-" + itoa(i)
 		err := db.RecordActivityWithResponse(
 			u.ID, "act-"+itoa(i), "A", "kayaking", "2026-04-28",
-			"failed", "rejection", 200, len(body), body,
+			"failed", "rejection", 200, len(body), body, ActivityTripMeta{},
 		)
 		if err != nil {
 			t.Fatalf("RecordActivityWithResponse #%d: %v", i, err)
@@ -1254,7 +1310,7 @@ func TestRecordActivityWithResponse_RotationCap(t *testing.T) {
 	body := "body-final"
 	if err := db.RecordActivityWithResponse(
 		u.ID, "act-7", "A", "kayaking", "2026-04-28",
-		"failed", "rejection", 200, len(body), body,
+		"failed", "rejection", 200, len(body), body, ActivityTripMeta{},
 	); err != nil {
 		t.Fatalf("RecordActivityWithResponse rotation pass: %v", err)
 	}
@@ -1299,7 +1355,7 @@ func TestRecordActivityWithResponse_RotationCap_SameSecond(t *testing.T) {
 		body := "body-" + itoa(i)
 		if err := db.RecordActivityWithResponse(
 			u.ID, "act-"+itoa(i), "A", "k", "2026-04-28",
-			"failed", "rejection", 200, len(body), body,
+			"failed", "rejection", 200, len(body), body, ActivityTripMeta{},
 		); err != nil {
 			t.Fatalf("RecordActivityWithResponse #%d: %v", i, err)
 		}
@@ -1354,14 +1410,14 @@ func TestRecordActivityWithResponse_NoExcerptDoesNotPrune(t *testing.T) {
 	for i := 1; i <= MaxStoredResponseBodies; i++ {
 		_ = db.RecordActivityWithResponse(
 			u.ID, "act-"+itoa(i), "A", "k", "2026-04-28",
-			"failed", "rejection", 200, 10, "body",
+			"failed", "rejection", 200, 10, "body", ActivityTripMeta{},
 		)
 	}
 	// Now record a download failure: empty body excerpt should NOT prune
 	// the existing 5 stored bodies.
 	if err := db.RecordActivityWithResponse(
 		u.ID, "act-dl", "B", "k", "2026-04-28",
-		"failed", "garmin download failed", 0, 0, "",
+		"failed", "garmin download failed", 0, 0, "", ActivityTripMeta{},
 	); err != nil {
 		t.Fatalf("RecordActivityWithResponse download: %v", err)
 	}
@@ -1380,7 +1436,7 @@ func TestGetRecentFailedActivities_IncludeBody(t *testing.T) {
 	u, _ := db.CreateUser("includebody@example.com")
 	_ = db.RecordActivityWithResponse(
 		u.ID, "act-x", "A", "k", "2026-04-28",
-		"failed", "rejection", 200, 10, "the-body-text",
+		"failed", "rejection", 200, 10, "the-body-text", ActivityTripMeta{},
 	)
 
 	without, _ := db.GetRecentFailedActivities(50, false)
@@ -1403,7 +1459,7 @@ func TestGetFailedActivity_ByID(t *testing.T) {
 	u, _ := db.CreateUser("byid@example.com")
 	_ = db.RecordActivityWithResponse(
 		u.ID, "act-byid", "A", "k", "2026-04-28",
-		"failed", "rejection", 200, 10, "body-byid",
+		"failed", "rejection", 200, 10, "body-byid", ActivityTripMeta{},
 	)
 	all, _ := db.GetRecentFailedActivities(50, true)
 	if len(all) != 1 {

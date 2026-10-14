@@ -249,4 +249,23 @@ UPDATE users SET selected_activity_types = (
 	// bypasses selected_activity_types (the user typed it, so they want
 	// it). '[]' is the correct default: no keywords, nothing changes.
 	`ALTER TABLE users ADD COLUMN name_keywords TEXT NOT NULL DEFAULT '[]';`,
+
+	// 0016 – keep what trip creation needs on the activity row.
+	//
+	// A failed activity is retried on later runs, and once it has left the
+	// Garmin window the retry is rebuilt from this table alone. Without a
+	// start time the engine cannot create a trip, so such a retry uploaded
+	// the track, recorded success — which is final — and never created the
+	// Fahrt: a track in EFB with no trip, silently and for good.
+	//
+	// start_time is the activity's local wall-clock start in the
+	// "2006-01-02 15:04:05" form the Garmin script emits. Rows recorded
+	// before this migration stay NULL; their retries still upload but cannot
+	// create a trip, and the engine logs that rather than skipping silently.
+	`ALTER TABLE synced_activities ADD COLUMN start_time    TEXT;
+ALTER TABLE synced_activities ADD COLUMN duration_secs REAL;
+ALTER TABLE synced_activities ADD COLUMN start_lat     REAL;
+ALTER TABLE synced_activities ADD COLUMN start_lng     REAL;
+ALTER TABLE synced_activities ADD COLUMN end_lat       REAL;
+ALTER TABLE synced_activities ADD COLUMN end_lng       REAL;`,
 }

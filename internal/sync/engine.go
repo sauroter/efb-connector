@@ -190,6 +190,20 @@ type activityToSync struct {
 	isRetry      bool
 }
 
+// tripMeta is what gets recorded with the activity so that a retry rebuilt
+// from synced_activities (once the activity has left the Garmin window) can
+// still create its trip.
+func (a activityToSync) tripMeta() database.ActivityTripMeta {
+	return database.ActivityTripMeta{
+		StartTime:    a.startTime,
+		DurationSecs: a.durationSecs,
+		StartLat:     a.startLat,
+		StartLng:     a.startLng,
+		EndLat:       a.endLat,
+		EndLng:       a.endLng,
+	}
+}
+
 // SyncUser runs a full sync for one user using the default time window.
 // Returns the sync_run ID.
 func (s *SyncEngine) SyncUser(ctx context.Context, userID int64, trigger string) (int64, error) {
@@ -507,17 +521,25 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 	// Include previously failed activities eligible for retry that were NOT
 	// already in the Garmin list (e.g. activities that fell outside the
-	// current sync_days window but still deserve a retry).
+	// current sync_days window but still deserve a retry). Everything about
+	// them comes from synced_activities — including the trip metadata, without
+	// which the upload would succeed but no trip could be created.
 	for _, fa := range failedActs {
 		if queued[fa.GarminActivityID] {
 			continue
 		}
 		toSync = append(toSync, activityToSync{
-			garminID: fa.GarminActivityID,
-			name:     fa.ActivityName,
-			actType:  fa.ActivityType,
-			date:     fa.ActivityDate,
-			isRetry:  true,
+			garminID:     fa.GarminActivityID,
+			name:         fa.ActivityName,
+			actType:      fa.ActivityType,
+			date:         fa.ActivityDate,
+			startTime:    fa.TripMeta.StartTime,
+			durationSecs: fa.TripMeta.DurationSecs,
+			startLat:     fa.TripMeta.StartLat,
+			startLng:     fa.TripMeta.StartLng,
+			endLat:       fa.TripMeta.EndLat,
+			endLng:       fa.TripMeta.EndLng,
+			isRetry:      true,
 		})
 	}
 
@@ -551,7 +573,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		if errors.As(err, &rl) {
 			log.Warn("efb login rate-limited; not invalidating credentials", "body_size", rl.BodySize)
 			for _, act := range toSync {
-				if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "EFB rate limit, retry later"); recErr != nil {
+				if recErr := s.db.RecordActivityWithMeta(userID, act.garminID, act.name, act.actType, act.date, "failed", "EFB rate limit, retry later", act.tripMeta()); recErr != nil {
 					log.Error("failed to record activity", "activity_id", act.garminID, "error", recErr)
 				}
 				failed++
@@ -565,7 +587,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		}
 		// Mark all queued activities as failed.
 		for _, act := range toSync {
-			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", "efb login failed"); recErr != nil {
+			if recErr := s.db.RecordActivityWithMeta(userID, act.garminID, act.name, act.actType, act.date, "failed", "efb login failed", act.tripMeta()); recErr != nil {
 				log.Error("failed to record activity", "activity_id", act.garminID, "error", recErr)
 			}
 			failed++
@@ -588,7 +610,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 		gpxData, err := s.garmin.DownloadGPX(ctx, garminCreds, act.garminID)
 		if err != nil {
 			log.Error("failed to download GPX", "error", err)
-			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "failed", err.Error()); recErr != nil {
+			if recErr := s.db.RecordActivityWithMeta(userID, act.garminID, act.name, act.actType, act.date, "failed", err.Error(), act.tripMeta()); recErr != nil {
 				log.Error("failed to record activity", "error", recErr)
 			}
 			if act.isRetry {
@@ -609,7 +631,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 			log.Info("garmin returned GPX with no track points; skipping upload",
 				"gpx_size", len(gpxData),
 			)
-			if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "no_track_points", "Garmin returned a GPX with no track points (activity recorded without GPS)"); recErr != nil {
+			if recErr := s.db.RecordActivityWithMeta(userID, act.garminID, act.name, act.actType, act.date, "no_track_points", "Garmin returned a GPX with no track points (activity recorded without GPS)", act.tripMeta()); recErr != nil {
 				log.Error("failed to record activity", "error", recErr)
 			}
 			skipped++
@@ -649,7 +671,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 				log.Warn("EFB non-recoverable error, stopping sync for this user", "error_category", cat)
 				reason := fmt.Sprintf("skipped: EFB %s", cat)
 				for _, remaining := range toSync[i+1:] {
-					if recErr := s.db.RecordActivity(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", reason); recErr != nil {
+					if recErr := s.db.RecordActivityWithMeta(userID, remaining.garminID, remaining.name, remaining.actType, remaining.date, "failed", reason, remaining.tripMeta()); recErr != nil {
 						log.Error("failed to record activity", "activity_id", remaining.garminID, "error", recErr)
 					}
 					failed++
@@ -667,7 +689,7 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 		// 7d: Success.
 		log.Info("activity uploaded successfully")
-		if recErr := s.db.RecordActivity(userID, act.garminID, act.name, act.actType, act.date, "success", ""); recErr != nil {
+		if recErr := s.db.RecordActivityWithMeta(userID, act.garminID, act.name, act.actType, act.date, "success", "", act.tripMeta()); recErr != nil {
 			log.Error("failed to record successful activity", "error", recErr)
 		}
 		// Self-healing for the consent gate: any successful upload proves
@@ -680,6 +702,15 @@ func (s *SyncEngine) doSync(ctx context.Context, userID, runID int64, log *slog.
 
 		// 7e: Create trip from the uploaded track (if enabled).
 		// Trip creation failure is non-fatal — log and continue.
+		//
+		// A zero start time means a retry of a row recorded before trip
+		// metadata was persisted (migration 0016). Its track is in EFB but
+		// no trip can be made, and success is final — say so, because this
+		// is the "track uploaded but no Fahrt" signature and nothing else
+		// would explain it later.
+		if prefs.AutoCreateTrips && act.startTime.IsZero() {
+			log.Warn("no start time for trip creation; track uploaded without trip", "is_retry", act.isRetry)
+		}
 		if prefs.AutoCreateTrips && !act.startTime.IsZero() {
 			trackID, findErr := efbClient.FindUnassociatedTrack(ctx, filename)
 			if findErr != nil {
@@ -772,11 +803,12 @@ func (s *SyncEngine) recordUploadFailure(userID int64, act activityToSync, uploa
 			userID, act.garminID, act.name, act.actType, act.date,
 			"failed", uploadErr.Error(),
 			rej.StatusCode, rej.BodySize, rej.BodyExcerpt,
+			act.tripMeta(),
 		)
 	}
-	return s.db.RecordActivity(
+	return s.db.RecordActivityWithMeta(
 		userID, act.garminID, act.name, act.actType, act.date,
-		"failed", uploadErr.Error(),
+		"failed", uploadErr.Error(), act.tripMeta(),
 	)
 }
 

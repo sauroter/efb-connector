@@ -32,28 +32,85 @@ type SyncedActivity struct {
 	ResponseStatusCode  int
 	ResponseSizeBytes   int
 	ResponseBodyExcerpt string
+
+	// TripMeta is what trip creation needs, recorded so a retry rebuilt
+	// from this table can still create the trip. Zero on rows recorded
+	// before migration 0016. Only GetFailedActivities loads it, so it is
+	// kept out of the admin JSON that embeds this struct rather than show
+	// a misleading zero there.
+	TripMeta ActivityTripMeta `json:"-"`
+}
+
+// ActivityTripMeta is the part of a Garmin activity that trip creation needs
+// beyond what identifies it: when it started (local wall clock), how long it
+// lasted, and where it started and ended.
+//
+// It is stored all-or-nothing, keyed on StartTime: a zero StartTime writes
+// NULL to every column, and the upsert keeps whatever the row already holds
+// for a NULL — so a later write that lacks the metadata (a retry of an older
+// row) never erases it.
+type ActivityTripMeta struct {
+	StartTime    time.Time
+	DurationSecs float64
+	StartLat     float64
+	StartLng     float64
+	EndLat       float64
+	EndLng       float64
+}
+
+// tripMetaTimeLayout is the start_time column format: the local wall-clock
+// form the Garmin script emits. The zone is deliberately not stored — trip
+// creation works on the wall clock.
+const tripMetaTimeLayout = "2006-01-02 15:04:05"
+
+// args returns the six column values for an INSERT, all NULL when m carries
+// no start time.
+func (m ActivityTripMeta) args() []any {
+	if m.StartTime.IsZero() {
+		return []any{nil, nil, nil, nil, nil, nil}
+	}
+	return []any{m.StartTime.Format(tripMetaTimeLayout), m.DurationSecs, m.StartLat, m.StartLng, m.EndLat, m.EndLng}
 }
 
 // RecordActivity upserts an activity row: insert on first encounter, update on
-// conflict (same user_id + garmin_activity_id).
+// conflict (same user_id + garmin_activity_id). Trip metadata already on the
+// row is kept; see [DB.RecordActivityWithMeta] to set it.
 func (d *DB) RecordActivity(userID int64, garminID, name, actType, date, status, errMsg string) error {
+	return d.RecordActivityWithMeta(userID, garminID, name, actType, date, status, errMsg, ActivityTripMeta{})
+}
+
+// RecordActivityWithMeta upserts an activity row like [DB.RecordActivity] and
+// also stores meta, so a later retry of this activity can create its trip.
+func (d *DB) RecordActivityWithMeta(userID int64, garminID, name, actType, date, status, errMsg string, meta ActivityTripMeta) error {
+	args := append([]any{userID, garminID, name, actType, date, status, nullableStr(errMsg)}, meta.args()...)
 	_, err := d.db.Exec(`
 		INSERT INTO synced_activities
-			(user_id, garmin_activity_id, activity_name, activity_type, activity_date, upload_status, error_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+			(user_id, garmin_activity_id, activity_name, activity_type, activity_date, upload_status, error_message,
+			 start_time, duration_secs, start_lat, start_lng, end_lat, end_lng)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, garmin_activity_id) DO UPDATE SET
 			activity_name  = excluded.activity_name,
 			activity_type  = excluded.activity_type,
 			activity_date  = excluded.activity_date,
 			upload_status  = excluded.upload_status,
 			error_message  = excluded.error_message,
+			`+tripMetaUpsert+`,
 			synced_at      = datetime('now')
-	`, userID, garminID, name, actType, date, status, nullableStr(errMsg))
+	`, args...)
 	if err != nil {
 		return fmt.Errorf("database: record activity %q for user %d: %w", garminID, userID, err)
 	}
 	return nil
 }
+
+// tripMetaUpsert is the ON CONFLICT assignment list for the trip metadata
+// columns: a NULL in the new write keeps the stored value.
+const tripMetaUpsert = `start_time    = COALESCE(excluded.start_time, start_time),
+			duration_secs = COALESCE(excluded.duration_secs, duration_secs),
+			start_lat     = COALESCE(excluded.start_lat, start_lat),
+			start_lng     = COALESCE(excluded.start_lng, start_lng),
+			end_lat       = COALESCE(excluded.end_lat, end_lat),
+			end_lng       = COALESCE(excluded.end_lng, end_lng)`
 
 // RecordActivityWithResponse upserts an activity row like [DB.RecordActivity]
 // and additionally captures HTTP response diagnostics from the EFB upload
@@ -70,6 +127,7 @@ func (d *DB) RecordActivityWithResponse(
 	garminID, name, actType, date, status, errMsg string,
 	statusCode, sizeBytes int,
 	bodyExcerpt string,
+	meta ActivityTripMeta,
 ) error {
 	tx, err := d.db.Begin()
 	if err != nil {
@@ -81,8 +139,9 @@ func (d *DB) RecordActivityWithResponse(
 		INSERT INTO synced_activities
 			(user_id, garmin_activity_id, activity_name, activity_type, activity_date,
 			 upload_status, error_message,
-			 response_status_code, response_size_bytes, response_body_excerpt)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 response_status_code, response_size_bytes, response_body_excerpt,
+			 start_time, duration_secs, start_lat, start_lng, end_lat, end_lng)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, garmin_activity_id) DO UPDATE SET
 			activity_name         = excluded.activity_name,
 			activity_type         = excluded.activity_type,
@@ -92,12 +151,13 @@ func (d *DB) RecordActivityWithResponse(
 			response_status_code  = excluded.response_status_code,
 			response_size_bytes   = excluded.response_size_bytes,
 			response_body_excerpt = excluded.response_body_excerpt,
+			`+tripMetaUpsert+`,
 			synced_at             = datetime('now')
-	`,
+	`, append([]any{
 		userID, garminID, name, actType, date,
 		status, nullableStr(errMsg),
 		nullableInt(statusCode), nullableInt(sizeBytes), nullableStr(bodyExcerpt),
-	); err != nil {
+	}, meta.args()...)...); err != nil {
 		return fmt.Errorf("database: record activity with response %q for user %d: %w", garminID, userID, err)
 	}
 
@@ -163,7 +223,8 @@ func (d *DB) GetFailedActivities(userID int64) ([]SyncedActivity, error) {
 	rows, err := d.db.Query(`
 		SELECT id, user_id, garmin_activity_id, activity_name, activity_type,
 		       activity_date, synced_at, upload_status, retry_count, error_message,
-		       response_status_code, response_size_bytes, response_body_excerpt
+		       response_status_code, response_size_bytes, response_body_excerpt,
+		       start_time, duration_secs, start_lat, start_lng, end_lat, end_lng
 		  FROM synced_activities
 		 WHERE user_id = ? AND upload_status = 'failed' AND retry_count < 3
 	`, userID)
@@ -317,7 +378,8 @@ func scanFailedActivityDetail(row interface {
 
 // scanActivity scans a *sql.Rows row into a SyncedActivity. Expects the
 // SELECT to include the response_status_code / response_size_bytes /
-// response_body_excerpt columns after error_message.
+// response_body_excerpt columns after error_message, followed by the six
+// trip metadata columns (start_time … end_lng).
 func scanActivity(rows interface {
 	Scan(...any) error
 }) (*SyncedActivity, error) {
@@ -326,12 +388,15 @@ func scanActivity(rows interface {
 	var errMsg *string
 	var statusCode, sizeBytes *int
 	var bodyExcerpt *string
+	var startTime sql.NullString
+	var duration, startLat, startLng, endLat, endLng sql.NullFloat64
 
 	err := rows.Scan(
 		&a.ID, &a.UserID, &a.GarminActivityID,
 		&a.ActivityName, &a.ActivityType, &a.ActivityDate,
 		&syncedAt, &a.UploadStatus, &a.RetryCount, &errMsg,
 		&statusCode, &sizeBytes, &bodyExcerpt,
+		&startTime, &duration, &startLat, &startLng, &endLat, &endLng,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("database: scan activity: %w", err)
@@ -349,6 +414,20 @@ func scanActivity(rows interface {
 	}
 	if bodyExcerpt != nil {
 		a.ResponseBodyExcerpt = *bodyExcerpt
+	}
+	// An unparseable start_time is treated like a missing one: the retry
+	// still uploads, it just cannot create a trip.
+	if startTime.Valid {
+		if st, err := time.Parse(tripMetaTimeLayout, startTime.String); err == nil {
+			a.TripMeta = ActivityTripMeta{
+				StartTime:    st,
+				DurationSecs: duration.Float64,
+				StartLat:     startLat.Float64,
+				StartLng:     startLng.Float64,
+				EndLat:       endLat.Float64,
+				EndLng:       endLng.Float64,
+			}
+		}
 	}
 	return &a, nil
 }
