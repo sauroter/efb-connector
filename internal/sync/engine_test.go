@@ -1471,13 +1471,15 @@ type mockEFBProvider struct {
 	createTripErr   error
 
 	// Call tracking.
-	findTrackCalled   bool
-	findTrackFilename string
-	createTripCalled  bool
-	createTripTrackID string
-	lastEnrichment    *efb.TripEnrichment
-	uploadCount       int
-	loginCount        int
+	findTrackCalled    bool
+	findTrackFilename  string
+	createTripCalled   bool
+	createTripTrackID  string
+	createTripStart    time.Time
+	createTripDuration float64
+	lastEnrichment     *efb.TripEnrichment
+	uploadCount        int
+	loginCount         int
 }
 
 func (m *mockEFBProvider) Login(_ context.Context, _, _ string) error {
@@ -1500,9 +1502,11 @@ func (m *mockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return m.findTrackResult, m.findTrackErr
 }
 
-func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, _ time.Time, _ float64, enrichment *efb.TripEnrichment) error {
+func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *efb.TripEnrichment) error {
 	m.createTripCalled = true
 	m.createTripTrackID = trackID
+	m.createTripStart = startTime
+	m.createTripDuration = durationSecs
 	m.lastEnrichment = enrichment
 	return m.createTripErr
 }
@@ -1654,6 +1658,120 @@ func TestSync_TripCreationFailure_DoesNotFailSync(t *testing.T) {
 	// Verify trip creation was attempted.
 	if !mockEFB.createTripCalled {
 		t.Error("expected CreateTripFromTrack to be called")
+	}
+}
+
+// An activity whose upload failed is retried on later runs even after it has
+// left the Garmin window — it then reaches the engine from synced_activities,
+// not from the Garmin list. That retry must still get a trip: the start time,
+// duration and coordinates have to come from what was recorded at the failure.
+// Before they were persisted, such a retry uploaded the track and reported
+// success while silently skipping trip creation, and success is final, so the
+// track was never looked at again.
+func TestSync_OffWindowRetryCreatesTrip(t *testing.T) {
+	// Both ways the first attempt can fail record through different DB
+	// writes: a Garmin download error via RecordActivityWithMeta, an EFB
+	// silent rejection via RecordActivityWithResponse.
+	tests := []struct {
+		name        string
+		downloadErr error
+		uploadErr   error
+	}{
+		{name: "garmin download failed", downloadErr: fmt.Errorf("garmin: temporary network error")},
+		{name: "efb rejected upload", uploadErr: &efb.UploadRejectedError{StatusCode: 200, BodySize: 10, BodyExcerpt: "<html/>"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			user := setupUser(t, db)
+			if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+				t.Fatalf("UpdateAutoCreateTrips: %v", err)
+			}
+
+			start := time.Date(2026, 3, 2, 9, 15, 0, 0, time.UTC)
+			gp := &mockGarminProvider{
+				activities: []garmin.Activity{{
+					ProviderID:   "act-1",
+					Name:         "Paddling Session 1",
+					Type:         "kayaking",
+					Date:         start,
+					StartTime:    start,
+					DurationSecs: 5400,
+					StartLat:     47.58,
+					StartLng:     12.70,
+					EndLat:       47.60,
+					EndLng:       12.71,
+				}},
+			}
+			if tc.downloadErr != nil {
+				gp.downloadErr = map[string]error{"act-1": tc.downloadErr}
+			}
+			mockEFB := &mockEFBProvider{findTrackResult: "track-789", uploadErr: tc.uploadErr}
+			engine := newEngineWithProvider(db, gp, mockEFB)
+
+			runID1, _ := engine.SyncUser(context.Background(), user.ID, "manual")
+			if run1, _ := db.GetSyncRun(runID1); run1.ActivitiesFailed != 1 {
+				t.Fatalf("first run failed = %d, want 1", run1.ActivitiesFailed)
+			}
+
+			// The activity is no longer in the Garmin window; only the retry
+			// path can bring it back.
+			gp.activities = nil
+			gp.downloadErr = nil
+			mockEFB.uploadErr = nil
+			mockEFB.createTripCalled = false
+			runID2, err := engine.SyncUser(context.Background(), user.ID, "manual")
+			if err != nil {
+				t.Fatalf("second SyncUser: %v", err)
+			}
+
+			run2, _ := db.GetSyncRun(runID2)
+			if run2.ActivitiesSynced != 1 {
+				t.Fatalf("second run synced = %d, want 1", run2.ActivitiesSynced)
+			}
+			if run2.TripsCreated != 1 {
+				t.Errorf("second run trips_created = %d, want 1", run2.TripsCreated)
+			}
+			if !mockEFB.createTripStart.Equal(start) {
+				t.Errorf("trip start = %v, want %v", mockEFB.createTripStart, start)
+			}
+			if mockEFB.createTripDuration != 5400 {
+				t.Errorf("trip duration = %v, want 5400", mockEFB.createTripDuration)
+			}
+		})
+	}
+}
+
+// A failed row recorded before trip metadata was persisted still retries and
+// uploads, but has no start time to build a trip from — so no trip is
+// attempted (rather than one with a zero date).
+func TestSync_OffWindowRetryWithoutTripMeta(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+	if err := db.RecordActivity(user.ID, "act-1", "Paddling Session 1", "kayaking", "2026-03-02", "failed", "earlier error"); err != nil {
+		t.Fatalf("RecordActivity: %v", err)
+	}
+
+	gp := &mockGarminProvider{}
+	mockEFB := &mockEFBProvider{findTrackResult: "track-789"}
+	engine := newEngineWithProvider(db, gp, mockEFB)
+
+	runID, err := engine.SyncUser(context.Background(), user.ID, "manual")
+	if err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	run, _ := db.GetSyncRun(runID)
+	if run.ActivitiesSynced != 1 {
+		t.Errorf("synced = %d, want 1", run.ActivitiesSynced)
+	}
+	if run.TripsCreated != 0 {
+		t.Errorf("trips_created = %d, want 0", run.TripsCreated)
+	}
+	if mockEFB.findTrackCalled || mockEFB.createTripCalled {
+		t.Error("expected no trip-creation attempt without a start time")
 	}
 }
 
