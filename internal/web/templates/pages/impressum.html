@@ -1,0 +1,4 @@
+{{template "base" .}}
+{{define "title"}}{{if eq .Lang "de"}}Impressum — EFB Connector{{else}}Legal Notice — EFB Connector{{end}}{{end -}}
+{{define "main_class"}} container-narrow{{end -}}
+{{define "content"}}{{if eq .Lang "de"}}{{template "impressum_de" .}}{{else}}{{template "impressum_en" .}}{{end}}{{end -}}

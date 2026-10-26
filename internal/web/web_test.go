@@ -69,7 +69,6 @@ func newTestHarness(t *testing.T) *testHarness {
 		InternalSecret:       "test-secret",
 		BaseURL:              "",
 		Logger:               logger,
-		TemplatesDir:         "../../templates",
 		Version:              "test",
 		GarminTokenStoreBase: t.TempDir(),
 	})

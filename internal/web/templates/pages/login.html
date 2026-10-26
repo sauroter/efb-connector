@@ -1,0 +1,24 @@
+{{template "base" .}}
+{{define "title"}}{{call .T "login.title"}}{{end -}}
+{{define "styles"}}
+  <style>
+    .auth-card { max-width: 420px; margin: 4rem auto; }
+  </style>
+{{end -}}
+{{define "content"}}
+    <article class="auth-card">
+      <hgroup>
+        <h1>{{call .T "login.heading"}}</h1>
+        <p>{{call .T "login.subtitle"}}</p>
+      </hgroup>
+
+      {{template "flash" .}}
+
+      <form method="POST" action="/login">
+        <label for="email">{{call .T "login.email_label"}}
+          <input type="email" id="email" name="email" placeholder="{{call .T "login.email_placeholder"}}" required autofocus>
+        </label>
+        <button type="submit">{{call .T "login.submit"}}</button>
+      </form>
+    </article>
+  {{end -}}

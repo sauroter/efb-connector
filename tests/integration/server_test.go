@@ -60,7 +60,6 @@ func newTestServer(t *testing.T) *testServer {
 		InternalSecret: "test-secret",
 		BaseURL:        "",
 		Logger:         logger,
-		TemplatesDir:   "../../templates",
 		Version:        "test",
 	})
 	if err != nil {

@@ -1,0 +1,4 @@
+{{template "base" .}}
+{{define "title"}}{{if eq .Lang "de"}}Datenschutzerklärung — EFB Connector{{else}}Privacy Policy — EFB Connector{{end}}{{end -}}
+{{define "main_class"}} container-narrow{{end -}}
+{{define "content"}}{{if eq .Lang "de"}}{{template "privacy_de" .}}{{else}}{{template "privacy_en" .}}{{end}}{{end -}}

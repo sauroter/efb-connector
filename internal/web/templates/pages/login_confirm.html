@@ -1,0 +1,24 @@
+{{template "base" .}}
+{{define "title"}}{{call .T "login_confirm.title"}}{{end -}}
+{{define "styles"}}
+  <style>
+    .auth-card { max-width: 420px; margin: 4rem auto; }
+  </style>
+{{end -}}
+{{define "content"}}
+    <article class="auth-card">
+      <hgroup>
+        <h1>{{call .T "login_confirm.heading"}}</h1>
+        <p>{{call .T "login_confirm.subtitle"}}</p>
+      </hgroup>
+
+      {{template "flash" .}}
+
+      <form method="POST" action="/auth/verify">
+        <input type="hidden" name="token" value="{{.Token}}">
+        <button type="submit">{{call .T "login_confirm.submit"}}</button>
+      </form>
+
+      <p><small>{{call .T "login_confirm.hint"}}</small></p>
+    </article>
+  {{end -}}

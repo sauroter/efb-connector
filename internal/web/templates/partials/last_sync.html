@@ -1,0 +1,36 @@
+{{define "last_sync"}}{{with .LastSync}}
+<div id="sync-status" class="sync-status-container"
+  {{if syncActive .}}
+  hx-get="/sync/status"
+  hx-trigger="every 3s"
+  hx-target="#sync-status"
+  hx-swap="outerHTML"
+  {{end}}>
+  <p>
+    {{if syncActive .}}
+    <span class="spinner"></span>
+    {{call $.T "sync.syncing"}}
+    {{else}}
+    {{$allOnEFB := and (gt .ActivitiesFound 0) (eq .ActivitiesSynced 0) (eq .ActivitiesFailed 0) (gt .ActivitiesSkipped 0)}}
+    {{call $.T "sync.last_sync"}}
+    <span class="status-badge {{if eq .Status "success"}}status-success{{else if eq .Status "completed"}}status-completed{{else if eq .Status "partial"}}status-partial{{else if eq .Status "failed"}}status-failed{{else if eq .Status "running"}}status-running{{end}}">
+      {{.Status}}
+    </span>
+    {{if $allOnEFB}}<span class="status-badge status-success">{{call $.T "sync.all_on_efb"}}</span>{{end}}
+    &mdash;
+    {{call $.T "sync.found"}} {{.ActivitiesFound}},
+    {{call $.T "sync.synced"}} {{.ActivitiesSynced}},
+    {{if .TripsCreated}}{{call $.T "sync.trips"}} {{.TripsCreated}},{{end}}
+    <span title="{{call $.T "sync.skipped_tooltip"}}" style="cursor: help; text-decoration: underline dotted;">{{call $.T "sync.skipped"}}</span> {{.ActivitiesSkipped}},
+    {{call $.T "sync.failed"}} {{.ActivitiesFailed}}
+    {{end}}
+  </p>
+  {{if .ErrorMessage}}
+  <p><small style="color: var(--pico-del-color);">{{call $.T "sync.error"}} {{.ErrorMessage}}</small></p>
+  {{end}}
+</div>
+{{else}}
+<div id="sync-status" class="sync-status-container">
+  <p style="color: var(--pico-muted-color);">{{call .T "sync.no_runs"}}</p>
+</div>
+{{end}}{{end}}

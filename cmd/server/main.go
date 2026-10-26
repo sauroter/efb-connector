@@ -188,7 +188,6 @@ func run(logger *slog.Logger) error {
 		BaseURL:         baseURL,
 		FeedbackEmail:   feedbackEmail,
 		Logger:          logger,
-		TemplatesDir:    "templates",
 		Version:         version,
 		Resend:          resendClient,
 		ResendSegActive: resendSegActive,

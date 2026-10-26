@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"efb-connector/internal/auth"
+	"efb-connector/internal/database"
 	"efb-connector/internal/garmin"
 )
 
@@ -76,7 +77,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to load sync history", "user_id", userID, "error", err)
 	}
 
-	var lastSync map[string]any
+	var lastSync *database.SyncRun
 	hasSynced := false
 	// noActivitiesHint is true when the user's most recent sync completed
 	// cleanly but Garmin returned zero water-sport activities — the silent
@@ -98,22 +99,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	var noActivitiesHint, filteredOutHint, emptyWindowHint bool
 	if len(syncRuns) > 0 {
 		run := syncRuns[0]
-		lastSync = map[string]any{
-			"ID":                run.ID,
-			"Status":            run.Status,
-			"StartedAt":         run.StartedAt,
-			"FinishedAt":        run.FinishedAt,
-			"ActivitiesFound":   run.ActivitiesFound,
-			"ActivitiesSynced":  run.ActivitiesSynced,
-			"ActivitiesSkipped": run.ActivitiesSkipped,
-			"ActivitiesFailed":  run.ActivitiesFailed,
-			"TripsCreated":      run.TripsCreated,
-			"ErrorMessage":      run.ErrorMessage,
-			"TypeKeysSeen":      run.TypeKeysSeen,
-			"RawCount":          run.RawCount,
-			"NameMatchedCount":  run.NameMatchedCount,
-			"ExcludedCount":     run.ExcludedCount,
-		}
+		lastSync = &run
 		isClean := run.Status == "success" || run.Status == "completed"
 		hasSynced = isClean || run.Status == "partial"
 		emptyRun := isClean &&

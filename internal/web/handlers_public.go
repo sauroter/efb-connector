@@ -284,22 +284,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// handleImpressum renders the Impressum (legal notice) page.
+// handleImpressum renders the Impressum (legal notice) page. The template
+// picks the German or English text by the request language.
 func (s *Server) handleImpressum(w http.ResponseWriter, r *http.Request) {
-	tmpl := "impressum.html"
-	if i18n.FromContext(r.Context()) == i18n.EN {
-		tmpl = "impressum_en.html"
-	}
-	s.render(w, r, tmpl, nil)
+	s.render(w, r, "impressum.html", nil)
 }
 
-// handlePrivacy renders the privacy policy page.
+// handlePrivacy renders the privacy policy page in the request language.
 func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
-	tmpl := "privacy.html"
-	if i18n.FromContext(r.Context()) == i18n.EN {
-		tmpl = "privacy_en.html"
-	}
-	s.render(w, r, tmpl, nil)
+	s.render(w, r, "privacy.html", nil)
 }
 
 // baseURL returns the application base URL. It prefers the explicitly
