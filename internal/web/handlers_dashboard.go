@@ -122,8 +122,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			run.ActivitiesFailed == 0 &&
 			run.ErrorMessage == ""
 		filteredOutHint = emptyRun && run.ExcludedCount > 0
-		emptyWindowHint = emptyRun && !filteredOutHint && run.RawCount == 0 && run.TypeKeysSeen != nil
-		noActivitiesHint = emptyRun && !filteredOutHint && !emptyWindowHint
+		emptyWindow := emptyRun && !filteredOutHint && run.RawCount == 0 && run.TypeKeysSeen != nil
+		// A custom-range run's window isn't sync_days, and pointing the
+		// user back at the custom range they just used would be circular.
+		// The re-tag advice is just as wrong there, so show neither.
+		emptyWindowHint = emptyWindow && run.Trigger != "manual_custom"
+		noActivitiesHint = emptyRun && !filteredOutHint && !emptyWindow
 	}
 
 	// Compute getting-started state.

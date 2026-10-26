@@ -221,6 +221,66 @@ func TestDashboard_EmptyWindowHintReplacesNoActivitiesHint(t *testing.T) {
 	}
 }
 
+// An empty custom-range run must not get the empty-window hint: its window
+// isn't sync_days, and the hint would send the user back to the custom
+// range they just used. The re-tag advice would be wrong too.
+func TestDashboard_EmptyCustomRangeShowsNoHint(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "custom-range@example.com")
+
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, err := h.db.CreateSyncRun(uid, "manual_custom")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("UpdateSyncRun: %v", err)
+	}
+	if err := h.db.RecordSyncDiagnostics(runID, 0, []string{}, 0, 0); err != nil {
+		t.Fatalf("RecordSyncDiagnostics: %v", err)
+	}
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	for _, heading := range []string{"No activities in the sync window", "No matching activities found"} {
+		if strings.Contains(body, heading) {
+			t.Errorf("hint banner %q must not render for an empty custom-range run", heading)
+		}
+	}
+}
+
+// When Garmin returned activities but none were water sports, the re-tag
+// advice is the right one — the empty-window hint must not take over.
+func TestDashboard_NonWaterActivitiesKeepNoActivitiesHint(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "runner@example.com")
+
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, err := h.db.CreateSyncRun(uid, "scheduled")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("UpdateSyncRun: %v", err)
+	}
+	if err := h.db.RecordSyncDiagnostics(runID, 2, []string{"running"}, 0, 0); err != nil {
+		t.Fatalf("RecordSyncDiagnostics: %v", err)
+	}
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	if !strings.Contains(body, "No matching activities found") {
+		t.Error("generic no-activities hint should render when Garmin returned only non-water activities")
+	}
+	if strings.Contains(body, "No activities in the sync window") {
+		t.Error("empty-window hint must require raw_count 0")
+	}
+}
+
 // A clean zero run without recorded diagnostics (legacy row, or diagnostics
 // write failed) can't be told apart, so it keeps the generic hint.
 func TestDashboard_EmptyWindowHintNeedsDiagnostics(t *testing.T) {
