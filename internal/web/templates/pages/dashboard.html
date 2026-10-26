@@ -1,24 +1,9 @@
-{{define "dashboard.html"}}<!DOCTYPE html>
-<html lang="{{.Lang}}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>{{call .T "dashboard.title"}}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="https://unpkg.com/htmx.org@2.0.10/dist/htmx.min.js" defer></script>
-  <style>
-    .sync-status-container { min-height: 3rem; }
-  </style>
-</head>
-<body>
-  {{template "nav" .}}
-
-  <main class="container">
-    {{if .Flash}}
-    <div role="alert" class="flash-message">{{.Flash}}</div>
-    {{end}}
+{{template "base" .}}
+{{define "title"}}{{call .T "dashboard.title"}}{{end -}}
+{{define "scripts"}}{{template "htmx"}}{{end -}}
+{{define "nav"}}{{template "nav_app" .}}{{end -}}
+{{define "content"}}
+    {{template "flash" .}}
 
     {{if .EFBConsentRequired}}
     <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
@@ -147,33 +132,10 @@
       </div>
       {{end}}
 
-      <div id="sync-status" class="sync-status-container">
-        {{if .LastSync}}
-          {{$status := index .LastSync "Status"}}
-          {{$allOnEFB := and (gt (index .LastSync "ActivitiesFound") 0) (eq (index .LastSync "ActivitiesSynced") 0) (eq (index .LastSync "ActivitiesFailed") 0) (gt (index .LastSync "ActivitiesSkipped") 0)}}
-          <p>
-            {{call .T "sync.last_sync"}}
-            <span class="status-badge {{if eq $status "success"}}status-success{{else if eq $status "completed"}}status-completed{{else if eq $status "partial"}}status-partial{{else if eq $status "failed"}}status-failed{{else if eq $status "running"}}status-running{{end}}">
-              {{$status}}
-            </span>
-            {{if $allOnEFB}}<span class="status-badge status-success">{{call .T "sync.all_on_efb"}}</span>{{end}}
-            &mdash;
-            {{call .T "sync.found"}} {{index .LastSync "ActivitiesFound"}},
-            {{call .T "sync.synced"}} {{index .LastSync "ActivitiesSynced"}},
-            {{if index .LastSync "TripsCreated"}}{{call .T "sync.trips"}} {{index .LastSync "TripsCreated"}},{{end}}
-            <span title="{{call .T "sync.skipped_tooltip"}}" style="cursor: help; text-decoration: underline dotted;">{{call .T "sync.skipped"}}</span> {{index .LastSync "ActivitiesSkipped"}},
-            {{call .T "sync.failed"}} {{index .LastSync "ActivitiesFailed"}}
-          </p>
-          {{if index .LastSync "ErrorMessage"}}
-          <p><small style="color: var(--pico-del-color);">{{call .T "sync.error"}} {{index .LastSync "ErrorMessage"}}</small></p>
-          {{end}}
-        {{else}}
-          <p style="color: var(--pico-muted-color);">{{call .T "sync.no_runs"}}</p>
-        {{end}}
-      </div>
+      {{template "last_sync" .}}
 
       {{if .LastSync}}
-        {{if and (gt (index .LastSync "ActivitiesSynced") 0) (eq (index .LastSync "TripsCreated") 0) (not .AutoCreateTrips)}}
+        {{if and (gt .LastSync.ActivitiesSynced 0) (eq .LastSync.TripsCreated 0) (not .AutoCreateTrips)}}
         <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
           <header><strong>{{call .T "dashboard.tracks_no_trips.heading"}}</strong></header>
           <p>{{call .T "dashboard.tracks_no_trips.body"}}</p>
@@ -186,7 +148,7 @@
       <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
         <header><strong>{{call .T "dashboard.no_activities_hint.heading"}}</strong></header>
         <p>{{call .T "dashboard.no_activities_hint.body"}}</p>
-        {{$typeKeys := index .LastSync "TypeKeysSeen"}}
+        {{$typeKeys := .LastSync.TypeKeysSeen}}
         {{if $typeKeys}}
         <p>
           <small>
@@ -203,7 +165,7 @@
       <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
         <header><strong>{{call .T "dashboard.filtered_out_hint.heading"}}</strong></header>
         <p>{{call .T "dashboard.filtered_out_hint.body"}}</p>
-        {{$typeKeys := index .LastSync "TypeKeysSeen"}}
+        {{$typeKeys := .LastSync.TypeKeysSeen}}
         {{if $typeKeys}}
         <p>
           <small>
@@ -298,8 +260,4 @@
         </form>
       </article>
     </dialog>
-  </main>
-
-  {{template "footer" .}}
-</body>
-</html>{{end}}
+  {{end -}}

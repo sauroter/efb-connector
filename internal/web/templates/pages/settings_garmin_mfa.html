@@ -1,23 +1,13 @@
-{{define "settings_garmin_mfa.html"}}<!DOCTYPE html>
-<html lang="{{.Lang}}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>{{call .T "settings.mfa_heading"}}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <link rel="stylesheet" href="/static/styles.css">
+{{template "base" .}}
+{{define "title"}}{{call .T "settings.mfa_heading"}}{{end -}}
+{{define "styles"}}
   <style>
     .settings-card { max-width: 540px; }
   </style>
-</head>
-<body>
-  {{template "nav" .}}
-
-  <main class="container">
-    {{if .Flash}}
-    <div role="alert" class="flash-message">{{.Flash}}</div>
-    {{end}}
+{{end -}}
+{{define "nav"}}{{template "nav_app" .}}{{end -}}
+{{define "content"}}
+    {{template "flash" .}}
 
     <article class="settings-card">
       <header><strong>{{call .T "settings.mfa_heading"}}</strong></header>
@@ -34,8 +24,4 @@
       <p style="text-align: center;"><a href="/settings/garmin">{{call .T "settings.mfa_cancel"}}</a></p>
     </article>
 
-  </main>
-
-  {{template "footer" .}}
-</body>
-</html>{{end}}
+  {{end -}}

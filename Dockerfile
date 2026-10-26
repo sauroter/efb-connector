@@ -15,7 +15,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=builder /app/efb-connector ./
 COPY scripts/ ./scripts/
-COPY templates/ ./templates/
 COPY static/ ./static/
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh

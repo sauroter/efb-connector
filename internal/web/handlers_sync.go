@@ -3,13 +3,12 @@ package web
 import (
 	"context"
 	"fmt"
-	"html"
 	"net/http"
 	"strconv"
 	"time"
 
 	"efb-connector/internal/auth"
-	"efb-connector/internal/i18n"
+	"efb-connector/internal/database"
 	"efb-connector/internal/sync"
 )
 
@@ -91,8 +90,7 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Request") == "true" {
 		// Return a "running" partial that will auto-poll for updates.
 		s.render(w, r, "sync_status.html", map[string]any{
-			"HasRun": true,
-			"Status": "running",
+			"LastSync": &database.SyncRun{Status: "running"},
 		})
 		return
 	}
@@ -193,29 +191,12 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var data map[string]any
+	var lastSync *database.SyncRun
 	if len(runs) > 0 {
-		run := runs[0]
-		data = map[string]any{
-			"HasRun":            true,
-			"ID":                run.ID,
-			"Status":            run.Status,
-			"StartedAt":         run.StartedAt,
-			"FinishedAt":        run.FinishedAt,
-			"ActivitiesFound":   run.ActivitiesFound,
-			"ActivitiesSynced":  run.ActivitiesSynced,
-			"ActivitiesSkipped": run.ActivitiesSkipped,
-			"ActivitiesFailed":  run.ActivitiesFailed,
-			"TripsCreated":      run.TripsCreated,
-			"ErrorMessage":      run.ErrorMessage,
-		}
-	} else {
-		data = map[string]any{
-			"HasRun": false,
-		}
+		lastSync = &runs[0]
 	}
 
-	s.render(w, r, "sync_status.html", data)
+	s.render(w, r, "sync_status.html", map[string]any{"LastSync": lastSync})
 }
 
 // handleSyncHistory renders the full sync history page.
@@ -252,12 +233,7 @@ func (s *Server) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 // msg is an i18n key (e.g. "flash.sync_rate_limited").
 func (s *Server) syncError(w http.ResponseWriter, r *http.Request, msg string) {
 	if r.Header.Get("HX-Request") == "true" {
-		lang := i18n.FromContext(r.Context())
-		translated := html.EscapeString(i18n.T(lang, msg))
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if _, err := w.Write([]byte(`<div id="sync-status"><p style="color:#991b1b;">` + translated + `</p></div>`)); err != nil {
-			s.logger.Error("failed to write sync error response", "error", err)
-		}
+		s.render(w, r, "sync_error.html", map[string]any{"Key": msg})
 		return
 	}
 	setFlash(w, msg)

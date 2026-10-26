@@ -1,19 +1,4 @@
-{{define "impressum_en.html"}}<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <title>Legal Notice — EFB Connector</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <nav class="container">
-    <ul><li><a href="/" style="display: inline-flex; align-items: center; gap: 0.4rem;"><img src="/static/favicon.svg" alt="" width="24" height="24"><strong>EFB Connector</strong></a></li></ul>
-  </nav>
-
-  <main class="container" style="max-width: 720px;">
+{{define "impressum_en"}}
     <h1>Legal Notice</h1>
     <h2>Information pursuant to § 5 TMG (German Telemedia Act)</h2>
 
@@ -40,8 +25,4 @@
     <p>
       This website contains links to external third-party websites over whose content I have no influence. Therefore, I cannot accept any liability for this third-party content. The respective provider or operator of the linked pages is always responsible for the content of the linked pages. The linked pages were checked for possible legal violations at the time of linking. Illegal content was not recognizable at the time of linking. However, permanent content control of the linked pages is not reasonable without concrete indications of a legal violation. Upon becoming aware of legal violations, I will remove such links immediately.
     </p>
-  </main>
-
-  {{template "footer" .}}
-</body>
-</html>{{end}}
+  {{end}}

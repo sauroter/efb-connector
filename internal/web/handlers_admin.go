@@ -538,16 +538,13 @@ func (s *Server) handleAdminReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "admin_report.html", map[string]any{
+	s.render(w, r, "admin_report.html", map[string]any{
 		"Funnel":   funnel,
 		"Stuck":    stuck,
 		"Overview": overview,
 		"Failures": failures,
 		"Now":      time.Now().UTC(),
-	}); err != nil {
-		s.logger.Error("admin: render report", "error", err)
-	}
+	})
 }
 
 // handleAdminNotifyGarminUpgrade sends a notification email to all users with

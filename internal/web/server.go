@@ -3,12 +3,16 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	stdsync "sync"
 	"time"
@@ -24,6 +28,12 @@ import (
 	"efb-connector/internal/sync"
 )
 
+// templatesFS holds the web UI templates. Embedded so the binary does not
+// depend on the working directory it is started from.
+//
+//go:embed templates
+var templatesFS embed.FS
+
 // Server holds all dependencies needed by the HTTP handlers.
 type Server struct {
 	db             *database.DB
@@ -38,7 +48,7 @@ type Server struct {
 	configBaseURL  string // e.g. "https://efb-connector.fly.dev" (may be empty)
 	feedbackEmail  string // receives feedback notifications (empty = no email)
 	logger         *slog.Logger
-	templates      *template.Template
+	templates      map[string]*template.Template // keyed by page file name
 	version        string
 
 	// Resend contacts integration.
@@ -109,7 +119,6 @@ type ServerDeps struct {
 	BaseURL        string // configured base URL (e.g. "https://efb-connector.fly.dev")
 	FeedbackEmail  string // receives feedback notifications (optional)
 	Logger         *slog.Logger
-	TemplatesDir   string // path to the templates/ directory
 	Version        string // build version (set via ldflags)
 
 	// Resend contacts integration (all optional).
@@ -124,10 +133,14 @@ type ServerDeps struct {
 	GarminTokenStoreBase string
 }
 
-// NewServer creates a Server with the given dependencies and parses all
-// templates from the templates directory.
+// NewServer creates a Server with the given dependencies and parses the
+// embedded templates.
 func NewServer(deps ServerDeps) (*Server, error) {
-	tmpl, err := parseTemplates(deps.TemplatesDir, deps.Version)
+	sub, err := fs.Sub(templatesFS, "templates")
+	if err != nil {
+		return nil, fmt.Errorf("web: templates fs: %w", err)
+	}
+	tmpl, err := parseTemplates(sub, deps.Version)
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
@@ -305,10 +318,23 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		data["Flash"] = t(fl)
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
+	// Render into a buffer so a template error mid-page yields a clean 500
+	// instead of a half-written page with an error appended.
+	tmpl, ok := s.templates[name]
+	if !ok {
+		s.logger.Error("template not found", "template", name)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		s.logger.Error("template render failed", "template", name, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := buf.WriteTo(w); err != nil {
+		s.logger.Warn("template write failed", "template", name, "error", err)
 	}
 }
 
@@ -371,9 +397,12 @@ func dataDirExists() bool {
 	return err == nil && info.IsDir()
 }
 
-// parseTemplates loads all templates from the given directory.
-func parseTemplates(dir string, version string) (*template.Template, error) {
-	tmpl := template.New("").Funcs(template.FuncMap{
+// parseTemplates builds one template set per file in pages/. Each set holds
+// the base layout, every partial, and that one page, so pages can each
+// define their own "title" and "content" blocks without overwriting each
+// other — a single shared set would keep only the last page's definitions.
+func parseTemplates(fsys fs.FS, version string) (map[string]*template.Template, error) {
+	root := template.New("").Funcs(template.FuncMap{
 		"version": func() string { return version },
 		"tf": func(t func(string) string, key string, args ...any) string {
 			return fmt.Sprintf(t(key), args...)
@@ -392,21 +421,36 @@ func parseTemplates(dir string, version string) (*template.Template, error) {
 		},
 	})
 
-	// Parse partials first so they are available to top-level templates.
-	partials := filepath.Join(dir, "partials", "*.html")
-	if matches, _ := filepath.Glob(partials); len(matches) > 0 {
-		if _, err := tmpl.ParseGlob(partials); err != nil {
+	for _, pattern := range []string{"layouts/*.html", "partials/*.html", "partials/*/*.html"} {
+		matches, err := fs.Glob(fsys, pattern)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			continue
+		}
+		if _, err := root.ParseFS(fsys, pattern); err != nil {
 			return nil, err
 		}
 	}
 
-	// Parse top-level templates.
-	pages := filepath.Join(dir, "*.html")
-	if matches, _ := filepath.Glob(pages); len(matches) > 0 {
-		if _, err := tmpl.ParseGlob(pages); err != nil {
+	pages, err := fs.Glob(fsys, "pages/*.html")
+	if err != nil {
+		return nil, err
+	}
+	if len(pages) == 0 {
+		return nil, fmt.Errorf("no templates found in pages/")
+	}
+	sets := make(map[string]*template.Template, len(pages))
+	for _, page := range pages {
+		set, err := root.Clone()
+		if err != nil {
 			return nil, err
 		}
+		if _, err := set.ParseFS(fsys, page); err != nil {
+			return nil, err
+		}
+		sets[path.Base(page)] = set
 	}
-
-	return tmpl, nil
+	return sets, nil
 }
