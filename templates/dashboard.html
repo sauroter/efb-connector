@@ -216,6 +216,13 @@
       </article>
       {{end}}
 
+      {{if .ShowEmptyWindowHint}}
+      <article role="alert" style="border-left: 4px solid var(--pico-color-amber-500); margin-top: 1rem;">
+        <header><strong>{{call .T "dashboard.empty_window_hint.heading"}}</strong></header>
+        <p>{{tf .T "dashboard.empty_window_hint.body" .SyncDays}}</p>
+      </article>
+      {{end}}
+
       {{if and .GarminConnected .EFBConnected}}
       <form method="POST" action="/sync/trigger"
             hx-post="/sync/trigger"

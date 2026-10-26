@@ -90,7 +90,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// excluded_count. Getting this wrong is worse than showing nothing — the
 	// no-activities copy tells people to re-tag activities that are already
 	// tagged correctly, and never mentions /settings.
-	var noActivitiesHint, filteredOutHint bool
+	//
+	// emptyWindowHint is the third way: Garmin returned no activities at all
+	// in the sync window (raw_count 0 with type_keys_seen recorded). Typical
+	// for a fresh account whose last trip is older than sync_days; the fix
+	// is a custom date range, and the re-tag advice would again be wrong.
+	var noActivitiesHint, filteredOutHint, emptyWindowHint bool
 	if len(syncRuns) > 0 {
 		run := syncRuns[0]
 		lastSync = map[string]any{
@@ -117,7 +122,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			run.ActivitiesFailed == 0 &&
 			run.ErrorMessage == ""
 		filteredOutHint = emptyRun && run.ExcludedCount > 0
-		noActivitiesHint = emptyRun && !filteredOutHint
+		emptyWindow := emptyRun && !filteredOutHint && run.RawCount == 0 && run.TypeKeysSeen != nil
+		// A custom-range run's window isn't sync_days, and pointing the
+		// user back at the custom range they just used would be circular.
+		// The re-tag advice is just as wrong there, so show neither.
+		emptyWindowHint = emptyWindow && run.Trigger != "manual_custom"
+		noActivitiesHint = emptyRun && !filteredOutHint && !emptyWindow
 	}
 
 	// Compute getting-started state.
@@ -159,6 +169,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// them why nothing has run yet.
 		"ShowNoActivitiesHint": noActivitiesHint && !showGettingStarted,
 		"ShowFilteredOutHint":  filteredOutHint && !showGettingStarted,
+		"ShowEmptyWindowHint":  emptyWindowHint && !showGettingStarted,
 	})
 }
 

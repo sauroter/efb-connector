@@ -117,6 +117,8 @@ var De = map[string]string{
 	"dashboard.filtered_out_hint.heading": "Aktivitäten durch deine Auswahl gefiltert",
 	"dashboard.filtered_out_hint.body":    "Garmin Connect hat Aktivitäten geliefert, aber alle gehören zu Sportarten, die in deinen Einstellungen nicht ausgewählt sind. Standardmäßig synchronisieren wir nur Paddelsportarten — Segeln, Windsurfen, Surfen und Motorboot sind ausgeschaltet. Aktiviere die passende Sportart, wenn sie ins EFB soll.",
 	"dashboard.filtered_out_hint.fix":     "Sportarten auswählen",
+	"dashboard.empty_window_hint.heading": "Keine Aktivitäten im Sync-Zeitraum",
+	"dashboard.empty_window_hint.body":    "Garmin Connect hat für die letzten %d Tage gar keine Aktivitäten geliefert. Ältere Fahrten holst du über „Benutzerdefinierten Zeitraum synchronisieren“ unten nach — wähle als Startdatum den Tag nach deiner letzten Fahrt, die schon im EFB ist.",
 
 	// ── Getting started ──
 	"setup.heading":            "Erste Schritte",
