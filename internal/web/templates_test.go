@@ -14,7 +14,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"efb-connector/internal/database"
 	"efb-connector/internal/i18n"
 )
 
@@ -78,6 +80,10 @@ func TestPages_RenderOneDocumentPerLanguage(t *testing.T) {
 				}
 				if n := strings.Count(body, `<footer class="container"`); n != 1 {
 					t.Errorf("%s: %d site footers, want 1", path, n)
+				}
+				// Versioned so a release's CSS isn't masked by a cached copy.
+				if !strings.Contains(body, `/static/styles.css?v=test"`) {
+					t.Errorf("%s: stylesheet link not versioned", path)
 				}
 			}
 			check := func(path string) {
@@ -187,6 +193,24 @@ func TestDashboard_RunningSyncPolls(t *testing.T) {
 		if !strings.Contains(body, i18n.T(i18n.EN, "sync.syncing")) {
 			t.Errorf("%s: missing syncing text", path)
 		}
+	}
+}
+
+// A "running" row the server lost (restart, OOM) is never finished, so it
+// must not keep a dashboard polling forever: past staleRunAfter it renders
+// as a static badge.
+func TestSyncStatus_StaleRunningRunDoesNotPoll(t *testing.T) {
+	h := newTestHarness(t)
+	rec := httptest.NewRecorder()
+	h.server.render(rec, httptest.NewRequest(http.MethodGet, "/", nil), "sync_status.html", map[string]any{
+		"LastSync": &database.SyncRun{Status: "running", StartedAt: time.Now().Add(-staleRunAfter - time.Minute)},
+	})
+	body := rec.Body.String()
+	if strings.Contains(body, "hx-get") {
+		t.Errorf("stale running run polls: %q", body)
+	}
+	if !strings.Contains(body, "status-running") {
+		t.Errorf("stale running run lost its badge: %q", body)
 	}
 }
 

@@ -90,7 +90,7 @@ func (s *Server) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Request") == "true" {
 		// Return a "running" partial that will auto-poll for updates.
 		s.render(w, r, "sync_status.html", map[string]any{
-			"LastSync": &database.SyncRun{Status: "running"},
+			"LastSync": &database.SyncRun{Status: "running", StartedAt: time.Now()},
 		})
 		return
 	}

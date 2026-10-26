@@ -397,6 +397,17 @@ func dataDirExists() bool {
 	return err == nil && info.IsDir()
 }
 
+// staleRunAfter is how long a "running" sync_run is shown as in progress.
+// Nothing finishes a run the server lost to a restart or OOM, so past this
+// age it renders as a static badge instead of polling /sync/status forever.
+const staleRunAfter = time.Hour
+
+// syncActive reports whether run is a sync still in progress, i.e. one the
+// sync-status partial should show with a spinner and keep polling.
+func syncActive(run *database.SyncRun) bool {
+	return run != nil && run.Status == "running" && time.Since(run.StartedAt) < staleRunAfter
+}
+
 // parseTemplates builds one template set per file in pages/. Each set holds
 // the base layout, every partial, and that one page, so pages can each
 // define their own "title" and "content" blocks without overwriting each
@@ -413,6 +424,7 @@ func parseTemplates(fsys fs.FS, version string) (map[string]*template.Template, 
 			}
 			return t.Format("2006-01-02 15:04 UTC")
 		},
+		"syncActive": syncActive,
 		"mul100": func(a, b int) float64 {
 			if b == 0 {
 				return 0
