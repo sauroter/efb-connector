@@ -118,6 +118,8 @@ var En = map[string]string{
 	"dashboard.filtered_out_hint.heading": "Activities filtered out by your selection",
 	"dashboard.filtered_out_hint.body":    "Garmin Connect did return activities, but all of them belong to sports that aren't selected in your settings. By default we sync only paddle sports — sailing, windsurfing, surfing and motorboating are switched off. Tick the sport you want if it belongs in your EFB.",
 	"dashboard.filtered_out_hint.fix":     "Choose activity types",
+	"dashboard.empty_window_hint.heading": "No activities in the sync window",
+	"dashboard.empty_window_hint.body":    "Garmin Connect returned no activities at all for the last %d days. To import older trips, use \"Sync a custom date range\" below — pick the day after your last trip that is already in EFB as the start date.",
 
 	// ── Getting started ──
 	"setup.heading":            "Getting Started",

@@ -180,6 +180,69 @@ func TestDashboard_FilteredOutHintReplacesNoActivitiesHint(t *testing.T) {
 	}
 }
 
+// A run where Garmin returned nothing at all (raw_count 0) — e.g. a fresh
+// account whose last trip is older than sync_days — must not get the re-tag
+// advice either: there is nothing to re-tag, the fix is a custom date range.
+func TestDashboard_EmptyWindowHintReplacesNoActivitiesHint(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "fresh-account@example.com")
+
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, err := h.db.CreateSyncRun(uid, "manual")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if err := h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, ""); err != nil {
+		t.Fatalf("UpdateSyncRun: %v", err)
+	}
+	if err := h.db.RecordSyncDiagnostics(runID, 0, []string{}, 0, 0); err != nil {
+		t.Fatalf("RecordSyncDiagnostics: %v", err)
+	}
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	for _, want := range []string{
+		"No activities in the sync window",
+		"no activities at all for the last 3 days",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard body missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"No matching activities found",
+		"Kajakfahren",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("dashboard must not show the re-tag advice %q when Garmin returned no activities", unwanted)
+		}
+	}
+}
+
+// A clean zero run without recorded diagnostics (legacy row, or diagnostics
+// write failed) can't be told apart, so it keeps the generic hint.
+func TestDashboard_EmptyWindowHintNeedsDiagnostics(t *testing.T) {
+	h := newTestHarness(t)
+	uid := loginAs(t, h, "no-diagnostics@example.com")
+
+	if err := h.db.UpdateSetupCompleted(uid, true); err != nil {
+		t.Fatalf("UpdateSetupCompleted: %v", err)
+	}
+
+	runID, _ := h.db.CreateSyncRun(uid, "scheduled")
+	_ = h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, "")
+
+	body := getBody(t, h.client, h.srv.URL+"/dashboard")
+	if strings.Contains(body, "No activities in the sync window") {
+		t.Error("empty-window hint must require recorded diagnostics")
+	}
+	if !strings.Contains(body, "No matching activities found") {
+		t.Error("generic no-activities hint should still render without diagnostics")
+	}
+}
+
 func TestDashboard_NoActivitiesHintSuppressedDuringSetup(t *testing.T) {
 	h := newTestHarness(t)
 	uid := loginAs(t, h, "setup-still-incomplete@example.com")
@@ -190,10 +253,13 @@ func TestDashboard_NoActivitiesHintSuppressedDuringSetup(t *testing.T) {
 	// not render.
 	runID, _ := h.db.CreateSyncRun(uid, "scheduled")
 	_ = h.db.UpdateSyncRun(runID, "completed", 0, 0, 0, 0, 0, "")
+	_ = h.db.RecordSyncDiagnostics(runID, 0, []string{}, 0, 0)
 
 	body := getBody(t, h.client, h.srv.URL+"/dashboard")
-	if strings.Contains(body, "No matching activities found") {
-		t.Error("hint banner must be suppressed while ShowGettingStarted is true")
+	for _, heading := range []string{"No matching activities found", "No activities in the sync window"} {
+		if strings.Contains(body, heading) {
+			t.Errorf("hint banner %q must be suppressed while ShowGettingStarted is true", heading)
+		}
 	}
 }
 
@@ -208,8 +274,10 @@ func TestDashboard_NoActivitiesHintSuppressedWhenSyncErrored(t *testing.T) {
 	_ = h.db.UpdateSyncRun(runID, "failed", 0, 0, 0, 0, 0, "garmin: temporarily unavailable")
 
 	body := getBody(t, h.client, h.srv.URL+"/dashboard")
-	if strings.Contains(body, "No matching activities found") {
-		t.Error("hint banner must be suppressed when last sync errored — the error message itself explains nothing was imported")
+	for _, heading := range []string{"No matching activities found", "No activities in the sync window"} {
+		if strings.Contains(body, heading) {
+			t.Errorf("hint banner %q must be suppressed when last sync errored — the error message itself explains nothing was imported", heading)
+		}
 	}
 }
 
