@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -2416,7 +2417,7 @@ func TestDebugUploadOnce_IncludeTripFormWithDevMock(t *testing.T) {
 	db := openTestDB(t)
 	user := setupUser(t, db)
 	gp := &mockGarminProvider{activities: makeActivities(1)}
-	mock := efb.NewMockEFBProvider(discardLogger())
+	mock := efb.NewMockEFBProvider(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	engine := newEngineWithProvider(db, gp, mock)
 
 	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
