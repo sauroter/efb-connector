@@ -341,7 +341,7 @@ func (s *Server) handleAdminGarminActivitiesRaw(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	activities, diag, err := s.garmin.ListActivitiesRaw(ctx, creds, days)
+	activities, diag, err := s.garminAdmin.ListActivitiesRaw(ctx, creds, days)
 	if err != nil {
 		s.logger.Warn("admin: list raw garmin activities",
 			"user_id", userID, "days", days, "error", err)

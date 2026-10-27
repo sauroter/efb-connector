@@ -4,10 +4,13 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+var _ EFBProvider = (*MockEFBProvider)(nil)
 
 // UploadRecord records a single upload for test assertions.
 type UploadRecord struct {
@@ -101,14 +104,40 @@ func (m *MockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return "mock-track-1", nil
 }
 
-func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
+// CreateTripFromTrack accepts every trip and returns a diagnostic shaped
+// like a successful EFB save, so the engine's diagnostic logging runs in
+// dev mode too.
+func (m *MockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
 	m.logger.Info("[mock-efb] create trip from track",
 		"trackID", trackID,
 		"startTime", startTime,
 		"durationSecs", durationSecs,
 		"hasEnrichment", enrichment != nil,
 	)
-	return nil
+	return &TripSaveDiagnostic{
+		StatusCode:          http.StatusOK,
+		FinalURL:            "mock://trips",
+		PageTitle:           "mock trip saved",
+		Summary:             "mock trip saved",
+		ContainsGespeichert: true,
+	}, nil
+}
+
+// FetchTripForm returns a canned trip-creation form for trackID, the shape
+// EFB answers a track click with. Nothing is recorded.
+func (m *MockEFBProvider) FetchTripForm(_ context.Context, trackID string) (*TripFormResult, error) {
+	m.logger.Info("[mock-efb] fetch trip form", "trackID", trackID)
+	body := []byte(`<form method="post"><input name="begdate" value="01.01.2026"/>` +
+		`<input name="track_id" value="` + trackID + `"/><input type="submit" name="save" value="speichern"/></form>`)
+	return &TripFormResult{
+		RequestURL: "mock://upload",
+		FinalURL:   "mock://trips/create",
+		StatusCode: http.StatusOK,
+		Body:       body,
+		BodySize:   len(body),
+		HasForm:    true,
+		Fields:     url.Values{"begdate": {"01.01.2026"}, "track_id": {trackID}},
+	}, nil
 }
 
 // CheckConsentGate reports whether the mock is currently simulating the

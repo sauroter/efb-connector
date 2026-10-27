@@ -3,14 +3,24 @@ package garmin
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
+var _ GarminProvider = (*MockGarminProvider)(nil)
+
 // MockGarminProvider implements GarminProvider with canned data. It is
 // intended for local development and integration tests.
+//
+// In dev mode one instance is shared by the web handlers and every sync
+// worker, so all methods take mu. The exported fields are configuration:
+// set them before the provider is in use.
 type MockGarminProvider struct {
-	// Activities to return from ListActivities. If nil, default sample
-	// activities are generated.
+	mu sync.Mutex
+
+	// Activities to return from ListActivities, which keeps only those
+	// inside the requested window. If nil, default sample activities are
+	// generated.
 	Activities []Activity
 
 	// Diagnostics returned alongside Activities. Zero value is fine —
@@ -40,10 +50,9 @@ type MockGarminProvider struct {
 	// mfaPending tracks users with pending MFA sessions.
 	mfaPending map[int64]bool
 
-	// LastOpts is the ListOptions value passed to the most recent
-	// ListActivities call. Lets tests assert on per-call preferences
-	// (e.g. MatchByName).
-	LastOpts ListOptions
+	// lastOpts is the ListOptions value passed to the most recent
+	// ListActivities call; read it through LastListOptions.
+	lastOpts ListOptions
 }
 
 // NewMockGarminProvider returns a MockGarminProvider with sample activities.
@@ -53,22 +62,47 @@ func NewMockGarminProvider() *MockGarminProvider {
 	}
 }
 
-func (m *MockGarminProvider) ListActivities(_ context.Context, _ GarminCredentials, _, _ time.Time, opts ListOptions) ([]Activity, ListDiagnostics, error) {
-	m.LastOpts = opts
+// ListActivities returns the canned activities that fall within
+// [start, end), filtered the same way as the real provider. The sample
+// activities carry a time of day in Date where the real provider's is
+// date-only; normalising them to midnight would change which ones survive
+// a short window.
+func (m *MockGarminProvider) ListActivities(_ context.Context, _ GarminCredentials, start, end time.Time, opts ListOptions) ([]Activity, ListDiagnostics, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastOpts = opts
 	if m.ListErr != nil {
 		return nil, ListDiagnostics{}, m.ListErr
 	}
-	if m.Activities != nil {
-		return m.Activities, m.Diagnostics, nil
+	all := m.Activities
+	if all == nil {
+		all = defaultActivities()
 	}
-	return defaultActivities(), m.Diagnostics, nil
+	var filtered []Activity
+	for _, a := range all {
+		if inWindow(a, start, end) {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered, m.Diagnostics, nil
 }
 
-// ListActivitiesRaw returns the same canned activities as ListActivities
-// in mock mode — the filter distinction is enforced by the Python script
-// in production. Tests that need to distinguish should set
+// LastListOptions returns the ListOptions passed to the most recent
+// ListActivities call, so tests can assert on per-call preferences (e.g.
+// MatchByName).
+func (m *MockGarminProvider) LastListOptions() ListOptions {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastOpts
+}
+
+// ListActivitiesRaw returns every canned activity, ignoring the window —
+// the water-sport filter distinction is enforced by the Python script in
+// production. Tests that need to distinguish should set
 // MockGarminProvider.Activities to a curated raw set.
 func (m *MockGarminProvider) ListActivitiesRaw(_ context.Context, _ GarminCredentials, _ int) ([]Activity, ListDiagnostics, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ListErr != nil {
 		return nil, ListDiagnostics{}, m.ListErr
 	}
@@ -79,6 +113,8 @@ func (m *MockGarminProvider) ListActivitiesRaw(_ context.Context, _ GarminCreden
 }
 
 func (m *MockGarminProvider) DownloadGPX(_ context.Context, _ GarminCredentials, activityID string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.DownloadErr != nil {
 		if err, ok := m.DownloadErr[activityID]; ok {
 			return nil, err
@@ -93,10 +129,14 @@ func (m *MockGarminProvider) DownloadGPX(_ context.Context, _ GarminCredentials,
 }
 
 func (m *MockGarminProvider) ValidateCredentials(_ context.Context, _ GarminCredentials) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.ValidateErr
 }
 
 func (m *MockGarminProvider) ValidateWithMFA(_ context.Context, userID int64, _ GarminCredentials) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.ValidateErr != nil {
 		return "", m.ValidateErr
 	}
@@ -111,6 +151,8 @@ func (m *MockGarminProvider) ValidateWithMFA(_ context.Context, userID int64, _ 
 }
 
 func (m *MockGarminProvider) CompleteMFA(userID int64, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.mfaPending == nil || !m.mfaPending[userID] {
 		return fmt.Errorf("garmin: no MFA session for user %d", userID)
 	}
@@ -123,6 +165,8 @@ func (m *MockGarminProvider) CompleteMFA(userID int64, _ string) error {
 }
 
 func (m *MockGarminProvider) HasMFASession(userID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.mfaPending == nil {
 		return false
 	}

@@ -46,6 +46,8 @@ const (
 	defaultTripCreatePath = "/trips/create"
 )
 
+var _ EFBProvider = (*EFBClient)(nil)
+
 // EFBClient is an authenticated HTTP client for the Kanu-EFB portal.
 // After a successful Login call the cookie jar retains the session, so
 // subsequent Upload calls do not require re-authentication.
@@ -159,7 +161,7 @@ type RawUploadResult struct {
 // TripFormResult is the unparsed result of clicking a track's
 // "Fahrt neu anlegen" button — the page EFB renders before any save. It is
 // the return shape of [EFBClient.FetchTripForm], used both by
-// [EFBClient.CreateTripFromTrackVerbose] (to drive the form) and by the sync
+// [EFBClient.CreateTripFromTrack] (to drive the form) and by the sync
 // engine's debug path (to surface the raw form to operators).
 type TripFormResult struct {
 	RequestURL string
@@ -190,7 +192,7 @@ var alertClassRe = regexp.MustCompile(`class=['"]([^'"]*alert[^'"]*)['"]`)
 // trip-save POST. It is populated on both success and failure so an operator
 // can learn EFB's real success/failure markers from the logs before any
 // detection logic is built on top of them. Returned by
-// [EFBClient.CreateTripFromTrackVerbose].
+// [EFBClient.CreateTripFromTrack].
 type TripSaveDiagnostic struct {
 	StatusCode            int
 	FinalURL              string
@@ -573,7 +575,7 @@ func parseUnassociatedTrack(htmlBody, gpxFilename string) string {
 // FetchTripForm simulates clicking the track's "Fahrt neu anlegen" image
 // button (a POST to the usersmap endpoint, which redirects to /trips/create)
 // and returns the raw response WITHOUT filling or submitting the form. It is
-// the navigation step shared by [EFBClient.CreateTripFromTrackVerbose] and
+// the navigation step shared by [EFBClient.CreateTripFromTrack] and
 // the admin debug path. The caller must already be authenticated.
 //
 // Network and request-construction errors are returned as a non-nil error
@@ -624,23 +626,15 @@ func (c *EFBClient) FetchTripForm(ctx context.Context, trackID string) (*TripFor
 }
 
 // CreateTripFromTrack navigates to the trip creation form for the given EFB
-// track ID, fills in start/end times, and submits the form. It is a thin
-// wrapper over [EFBClient.CreateTripFromTrackVerbose] that discards the
-// diagnostic; the success/failure classification is identical.
-func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error {
-	_, err := c.CreateTripFromTrackVerbose(ctx, trackID, startTime, durationSecs, enrichment)
-	return err
-}
-
-// CreateTripFromTrackVerbose performs the same trip creation as
-// [EFBClient.CreateTripFromTrack] but additionally returns a
-// [TripSaveDiagnostic] describing EFB's raw trip-save response. The
-// success/failure decision is unchanged (status != 200, or body contains
-// "Fehler"/"error", is a failure). The diagnostic is purely observational and
-// is populated whenever the trip-save POST returned a body (i.e. on both the
-// success path and the 200-but-rejected path). Earlier failures (track click,
-// form not found) return a nil diagnostic with the error.
-func (c *EFBClient) CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
+// track ID, fills in start/end times, and submits the form. It also returns
+// a [TripSaveDiagnostic] describing EFB's raw trip-save response. The
+// success/failure decision does not depend on it (status != 200, or body
+// contains "Fehler"/"error", is a failure). The diagnostic is purely
+// observational and is populated whenever the trip-save POST returned a body
+// (i.e. on both the success path and the 200-but-rejected path). Earlier
+// failures (track click, form not found) return a nil diagnostic with the
+// error.
+func (c *EFBClient) CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error) {
 	// Step 1: fetch the trip-creation form by simulating a click on the
 	// track's "Fahrt neu anlegen" image button.
 	form, err := c.FetchTripForm(ctx, trackID)

@@ -29,13 +29,31 @@ type EFBProvider interface {
 	// CreateTripFromTrack navigates to the trip creation form for the given
 	// EFB track ID, fills in start/end times, and submits the form.
 	// If enrichment is non-nil, the enrichment text is appended to the
-	// trip comment.
-	CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) error
+	// trip comment. The returned diagnostic describes EFB's raw answer to
+	// the save; it is purely observational, may be nil, and is returned
+	// alongside the error on a rejected save.
+	CreateTripFromTrack(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *TripEnrichment) (*TripSaveDiagnostic, error)
 
 	// CheckConsentGate reports whether the EFB tracks page is currently
 	// rendering the v2026.1 track-usage consent page in place of the
 	// upload form. Caller must already be authenticated.
 	CheckConsentGate(ctx context.Context) (consentRequired bool, err error)
+
+	Debugger
+}
+
+// Debugger is the operator-only part of an EFB session, used by the
+// debug-upload admin endpoint to show EFB's raw answers. Like the rest of
+// the session it requires a prior Login.
+type Debugger interface {
+	// UploadRaw performs the same POST as Upload but returns the unparsed
+	// response instead of classifying it.
+	UploadRaw(ctx context.Context, gpxData []byte, filename string) (*RawUploadResult, error)
+
+	// FetchTripForm clicks the track's "Fahrt neu anlegen" button and
+	// returns the trip-creation form without submitting it. The click is
+	// real: on the production portal it happens in the user's account.
+	FetchTripForm(ctx context.Context, trackID string) (*TripFormResult, error)
 }
 
 // SectionEnrichment contains river condition data for a single river section.

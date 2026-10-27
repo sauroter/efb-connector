@@ -23,8 +23,10 @@ dev-consent:
 build:
 	go build -ldflags="-X main.version=$(VERSION)" -o efb-connector ./cmd/server
 
+# -race: dev mode shares one mock provider between web handlers and sync
+# workers, and only the race detector catches unsynchronised state there.
 test: test-python
-	go test ./...
+	go test -race ./...
 
 # Regression tests for the pure-Python helpers in scripts/garmin_fetch.py
 # (filter logic, name-fallback regex). Run as part of `make test`.
@@ -34,7 +36,7 @@ test-python:
 	$(PYTHON) -m unittest scripts.garmin_fetch_test
 
 cover:
-	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go test -race ./... -coverprofile=coverage.out -covermode=atomic
 	go tool cover -func=coverage.out | tail -20
 
 lint:
