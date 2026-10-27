@@ -39,7 +39,7 @@ func (s *Server) handleGarminSettingsForm(w http.ResponseWriter, r *http.Request
 // server-wide WriteTimeout, so the MFA handlers extend their deadline.
 const garminMFAWriteBudget = garmin.MFAReadTimeout + 30*time.Second
 
-// handleGarminSettingsSave validates Garmin credentials via the GarminProvider,
+// handleGarminSettingsSave validates Garmin credentials via the Garmin MFA flow,
 // encrypts them, and stores them in the database.
 func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserFromContext(r.Context())
@@ -72,7 +72,7 @@ func (s *Server) handleGarminSettingsSave(w http.ResponseWriter, r *http.Request
 	}
 	// r.Context() is safe here: it bounds only the provider's initial
 	// handshake, not the lifetime of a pending MFA subprocess.
-	status, err := s.garmin.ValidateWithMFA(r.Context(), userID, creds)
+	status, err := s.garminMFA.ValidateWithMFA(r.Context(), userID, creds)
 	if err != nil {
 		s.logger.Warn("garmin credential validation failed", "user_id", userID, "error", err)
 		if errors.Is(err, garmin.ErrGarminUnavailable) {
@@ -119,7 +119,7 @@ func (s *Server) handleGarminMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.garmin.HasMFASession(userID) {
+	if !s.garminMFA.HasMFASession(userID) {
 		setFlash(w, "flash.garmin_mfa_expired")
 		http.Redirect(w, r, "/settings/garmin", http.StatusSeeOther)
 		return
@@ -152,7 +152,7 @@ func (s *Server) handleGarminMFASubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.extendWriteDeadline(w, garminMFAWriteBudget)
-	if err := s.garmin.CompleteMFA(userID, code); err != nil {
+	if err := s.garminMFA.CompleteMFA(userID, code); err != nil {
 		s.logger.Warn("garmin MFA verification failed", "user_id", userID, "error", err)
 		if errors.Is(err, garmin.ErrGarminUnavailable) {
 			// Garmin never answered: the code may well have been right.

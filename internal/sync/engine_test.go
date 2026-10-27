@@ -42,7 +42,7 @@ func openTestDB(t *testing.T) *database.DB {
 	return db
 }
 
-// mockGarminProvider implements garmin.GarminProvider for testing.
+// mockGarminProvider implements garmin.ActivitySource for testing.
 type mockGarminProvider struct {
 	activities    []garmin.Activity
 	diagnostics   garmin.ListDiagnostics
@@ -50,7 +50,6 @@ type mockGarminProvider struct {
 	listPanic     bool              // when true, ListActivities panics (tests the worker recover boundary)
 	gpxData       map[string][]byte // activityID → GPX bytes
 	downloadErr   map[string]error  // activityID → error
-	validateErr   error
 	lastListStart time.Time
 	lastListEnd   time.Time
 	lastListOpts  garmin.ListOptions
@@ -63,13 +62,6 @@ func (m *mockGarminProvider) ListActivities(_ context.Context, _ garmin.GarminCr
 	if m.listPanic {
 		panic("mock garmin: simulated panic in ListActivities")
 	}
-	if m.listErr != nil {
-		return nil, garmin.ListDiagnostics{}, m.listErr
-	}
-	return m.activities, m.diagnostics, nil
-}
-
-func (m *mockGarminProvider) ListActivitiesRaw(_ context.Context, _ garmin.GarminCredentials, _ int) ([]garmin.Activity, garmin.ListDiagnostics, error) {
 	if m.listErr != nil {
 		return nil, garmin.ListDiagnostics{}, m.listErr
 	}
@@ -89,22 +81,6 @@ func (m *mockGarminProvider) DownloadGPX(_ context.Context, _ garmin.GarminCrede
 	// empty-track guard (introduced for the EFB "XML-Fehler" fix)
 	// doesn't reclassify mock activities as no_track_points.
 	return []byte(`<?xml version="1.0"?><gpx><trk><trkseg><trkpt lat="0" lon="0"/></trkseg></trk></gpx>`), nil
-}
-
-func (m *mockGarminProvider) ValidateCredentials(_ context.Context, _ garmin.GarminCredentials) error {
-	return m.validateErr
-}
-
-func (m *mockGarminProvider) ValidateWithMFA(_ context.Context, _ int64, _ garmin.GarminCredentials) (string, error) {
-	return "ok", m.validateErr
-}
-
-func (m *mockGarminProvider) CompleteMFA(_ int64, _ string) error {
-	return nil
-}
-
-func (m *mockGarminProvider) HasMFASession(_ int64) bool {
-	return false
 }
 
 // newMockEFBServer creates a test HTTP server simulating the EFB portal.
@@ -374,7 +350,7 @@ func makeActivities(n int) []garmin.Activity {
 }
 
 // newEngine creates a SyncEngine with noSleep for testing.
-func newEngine(db *database.DB, gp garmin.GarminProvider, ec *efb.EFBClient) *SyncEngine {
+func newEngine(db *database.DB, gp garmin.ActivitySource, ec *efb.EFBClient) *SyncEngine {
 	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ec }, discardLogger())
 	e.sleepFunc = noSleep
 	e.interUserPacing = 0
@@ -1469,6 +1445,7 @@ type mockEFBProvider struct {
 	findTrackResult string
 	findTrackErr    error
 	createTripErr   error
+	tripDiag        *efb.TripSaveDiagnostic
 
 	// Call tracking.
 	findTrackCalled    bool
@@ -1502,23 +1479,31 @@ func (m *mockEFBProvider) FindUnassociatedTrack(_ context.Context, gpxFilename s
 	return m.findTrackResult, m.findTrackErr
 }
 
-func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *efb.TripEnrichment) error {
+func (m *mockEFBProvider) CreateTripFromTrack(_ context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *efb.TripEnrichment) (*efb.TripSaveDiagnostic, error) {
 	m.createTripCalled = true
 	m.createTripTrackID = trackID
 	m.createTripStart = startTime
 	m.createTripDuration = durationSecs
 	m.lastEnrichment = enrichment
-	return m.createTripErr
+	return m.tripDiag, m.createTripErr
 }
 
 func (m *mockEFBProvider) CheckConsentGate(_ context.Context) (bool, error) {
 	return false, nil
 }
 
+func (m *mockEFBProvider) UploadRaw(_ context.Context, _ []byte, _ string) (*efb.RawUploadResult, error) {
+	return nil, errors.New("mockEFBProvider: UploadRaw not implemented")
+}
+
+func (m *mockEFBProvider) FetchTripForm(_ context.Context, _ string) (*efb.TripFormResult, error) {
+	return nil, errors.New("mockEFBProvider: FetchTripForm not implemented")
+}
+
 // newEngineWithProvider creates a SyncEngine with a custom EFB provider and noSleep.
 // The provider is wrapped in a factory that returns the same instance, which is
 // safe because tests run single-worker (sequential).
-func newEngineWithProvider(db *database.DB, gp garmin.GarminProvider, ep efb.EFBProvider) *SyncEngine {
+func newEngineWithProvider(db *database.DB, gp garmin.ActivitySource, ep efb.EFBProvider) *SyncEngine {
 	e := NewSyncEngine(db, gp, func() efb.EFBProvider { return ep }, discardLogger())
 	e.sleepFunc = noSleep
 	return e
@@ -1574,6 +1559,44 @@ func TestSync_AutoCreateTrips_Enabled(t *testing.T) {
 	}
 	if mockEFB.createTripTrackID != "track-123" {
 		t.Errorf("CreateTripFromTrack trackID = %q, want %q", mockEFB.createTripTrackID, "track-123")
+	}
+}
+
+// The trip-save diagnostic is part of the provider contract, so a plain
+// fake (no httptest EFB) must be enough to get it logged.
+func TestSync_LogsTripSaveDiagnosticFromProvider(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	if err := db.UpdateAutoCreateTrips(user.ID, true); err != nil {
+		t.Fatalf("UpdateAutoCreateTrips: %v", err)
+	}
+
+	mockEFB := &mockEFBProvider{
+		findTrackResult: "track-123",
+		tripDiag:        &efb.TripSaveDiagnostic{StatusCode: 299, AlertClass: "alert alert-success"},
+	}
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	engine := NewSyncEngine(db, gp, func() efb.EFBProvider { return mockEFB }, logger, WithoutSleep())
+
+	if _, err := engine.SyncUser(context.Background(), user.ID, "manual"); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+
+	var line string
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, `msg="trip save diagnostic"`) {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no trip save diagnostic logged; log:\n%s", buf.String())
+	}
+	for _, want := range []string{"track_id=track-123", "status_code=299", `alert_class="alert alert-success"`, "classified_success=true"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("diagnostic line missing %s: %s", want, line)
+		}
 	}
 }
 
@@ -2384,6 +2407,34 @@ func TestDebugUploadOnce_IncludeTripForm(t *testing.T) {
 	runs, _ := db.GetSyncHistory(user.ID, 10)
 	if len(failed) != 0 || len(runs) != 0 {
 		t.Errorf("DebugUploadOnce must not write to the DB; got %d activities, %d runs", len(failed), len(runs))
+	}
+}
+
+// The dev-mode mock is a full EFB session, debug features included, so
+// debug-upload with include_trip_form works against `make dev`.
+func TestDebugUploadOnce_IncludeTripFormWithDevMock(t *testing.T) {
+	db := openTestDB(t)
+	user := setupUser(t, db)
+	gp := &mockGarminProvider{activities: makeActivities(1)}
+	mock := efb.NewMockEFBProvider(discardLogger())
+	engine := newEngineWithProvider(db, gp, mock)
+
+	res, err := engine.DebugUploadOnce(context.Background(), user.ID, "act-1", false, true)
+	if err != nil {
+		t.Fatalf("DebugUploadOnce: %v", err)
+	}
+	if !res.Upload.ContainsSuccessMarker {
+		t.Fatalf("mock upload not reported as successful: %+v", res.Upload)
+	}
+	tf := res.TripForm
+	if tf == nil {
+		t.Fatal("TripForm = nil, want the mock's form")
+	}
+	if tf.Note != "" || !tf.HasForm || tf.TrackID != "mock-track-1" {
+		t.Errorf("TripForm = %+v; want mock-track-1 with a form and no note", tf)
+	}
+	if got := tf.FormFields["track_id"]; len(got) != 1 || got[0] != "mock-track-1" {
+		t.Errorf("FormFields[track_id] = %v, want [mock-track-1]", got)
 	}
 }
 

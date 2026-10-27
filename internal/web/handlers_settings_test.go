@@ -258,7 +258,7 @@ func TestMatchByName_PassedToGarminProviderOnSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncUser: %v", err)
 	}
-	if !h.garmin.LastOpts.MatchByName {
+	if !h.garmin.LastListOptions().MatchByName {
 		t.Errorf("mock provider received MatchByName=false, want true")
 	}
 }
@@ -298,8 +298,8 @@ func TestMatchByName_KeywordsPersistNormalisedAndPropagateToSync(t *testing.T) {
 	if _, err := h.server.syncEngine.SyncUser(context.Background(), uid, "manual"); err != nil {
 		t.Fatalf("SyncUser: %v", err)
 	}
-	if !slices.Equal(h.garmin.LastOpts.NameKeywords, want) {
-		t.Errorf("provider received NameKeywords=%v, want %v", h.garmin.LastOpts.NameKeywords, want)
+	if !slices.Equal(h.garmin.LastListOptions().NameKeywords, want) {
+		t.Errorf("provider received NameKeywords=%v, want %v", h.garmin.LastListOptions().NameKeywords, want)
 	}
 }
 

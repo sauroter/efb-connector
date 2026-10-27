@@ -40,7 +40,8 @@ type Server struct {
 	auth           *auth.AuthService
 	mailer         *mailer.Mailer
 	syncEngine     *sync.SyncEngine
-	garmin         garmin.GarminProvider
+	garminMFA      garmin.MFAFlow
+	garminAdmin    garmin.RawActivityLister
 	efb            efb.EFBProvider
 	newEFBSession  func() efb.EFBProvider
 	rateLimiter    *auth.RateLimiter
@@ -106,8 +107,12 @@ type ServerDeps struct {
 	Auth       *auth.AuthService
 	Mailer     *mailer.Mailer
 	SyncEngine *sync.SyncEngine
-	Garmin     garmin.GarminProvider
-	EFB        efb.EFBProvider
+	// GarminMFA drives the interactive credential setup on the settings
+	// pages; GarminAdmin backs the operator-only raw activity listing.
+	// Both are normally the same provider.
+	GarminMFA   garmin.MFAFlow
+	GarminAdmin garmin.RawActivityLister
+	EFB         efb.EFBProvider
 	// NewEFBSession returns an EFB client with its own cookie jar, used by
 	// handlers that log in as a specific user. EFBClient keeps the session
 	// in its jar, so sharing one instance across requests would let two
@@ -160,7 +165,8 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		auth:             deps.Auth,
 		mailer:           deps.Mailer,
 		syncEngine:       deps.SyncEngine,
-		garmin:           deps.Garmin,
+		garminMFA:        deps.GarminMFA,
+		garminAdmin:      deps.GarminAdmin,
 		efb:              deps.EFB,
 		newEFBSession:    newEFBSession,
 		rateLimiter:      deps.RateLimiter,

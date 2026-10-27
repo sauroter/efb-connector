@@ -130,9 +130,10 @@ type Activity struct {
 	DistanceM float64
 }
 
-// GarminProvider is the interface that wraps Garmin Connect access.
+// ActivitySource is the part of Garmin Connect access the sync hot path
+// needs: list the user's water-sport activities, then fetch their tracks.
 // Implementations must be safe for concurrent use by multiple goroutines.
-type GarminProvider interface {
+type ActivitySource interface {
 	// ListActivities returns all water-sport activities for the given account
 	// that fall within the half-open interval [start, end), plus diagnostic
 	// counts (raw pre-filter total, typeKeys seen) that are useful for
@@ -141,22 +142,26 @@ type GarminProvider interface {
 	// the strict water-sport filter.
 	ListActivities(ctx context.Context, creds GarminCredentials, start, end time.Time, opts ListOptions) ([]Activity, ListDiagnostics, error)
 
-	// ListActivitiesRaw returns *every* activity Garmin reports for the
-	// account, with no water-sport filtering applied. It is intended for
-	// operator-only diagnostic use (e.g. answering "what activity types
-	// does this user have?" when a feedback ticket reports no imports).
-	// Implementations should not call this on the sync hot path.
-	ListActivitiesRaw(ctx context.Context, creds GarminCredentials, days int) ([]Activity, ListDiagnostics, error)
-
 	// DownloadGPX returns the raw GPX bytes for the activity identified by
 	// activityID (the value of Activity.ProviderID).
 	DownloadGPX(ctx context.Context, creds GarminCredentials, activityID string) ([]byte, error)
+}
 
+// CredentialValidator checks Garmin credentials in a single,
+// non-interactive call. Nothing in production uses it today: the web
+// settings flow goes through [MFAFlow] because it must be able to pause
+// for an MFA code.
+type CredentialValidator interface {
 	// ValidateCredentials verifies that the supplied credentials are accepted
 	// by Garmin Connect.  It returns ErrGarminAuth when the credentials are
 	// wrong and ErrGarminMFARequired when an interactive challenge is needed.
 	ValidateCredentials(ctx context.Context, creds GarminCredentials) error
+}
 
+// MFAFlow is the stateful, web-only credential setup that can pause for an
+// MFA code between two HTTP requests. Implementations keep the pending
+// session per user and must be safe for concurrent use.
+type MFAFlow interface {
 	// ValidateWithMFA starts an interactive credential validation that
 	// supports MFA.  It returns "ok" when credentials are accepted without
 	// MFA, or "needs_mfa" when the user must supply an MFA code via
@@ -171,4 +176,31 @@ type GarminProvider interface {
 	// HasMFASession reports whether an active MFA session exists for the
 	// given user.
 	HasMFASession(userID int64) bool
+}
+
+// RawActivityLister is operator-only diagnostics. It must not be used on
+// the sync hot path.
+type RawActivityLister interface {
+	// ListActivitiesRaw returns *every* activity Garmin reports for the
+	// account, with no water-sport filtering applied. It answers "what
+	// activity types does this user have?" when a feedback ticket reports
+	// no imports.
+	ListActivitiesRaw(ctx context.Context, creds GarminCredentials, days int) ([]Activity, ListDiagnostics, error)
+}
+
+// GarminProvider is everything a Garmin Connect backend implements. Only
+// the server's wiring holds one; each consumer depends on the narrow
+// interface it uses.
+type GarminProvider interface {
+	ActivitySource
+	CredentialValidator
+	MFAFlow
+	RawActivityLister
+}
+
+// inWindow reports whether a falls within [start, end) the way
+// ListActivities filters: by local start date, with start rounded down to
+// the day because the script works in whole days.
+func inWindow(a Activity, start, end time.Time) bool {
+	return !a.Date.Before(start.Truncate(24*time.Hour)) && a.Date.Before(end)
 }

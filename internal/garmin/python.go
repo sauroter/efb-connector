@@ -33,6 +33,8 @@ type MFASession struct {
 	encryptionKey []byte // AES key for re-encryption (nil if disabled)
 }
 
+var _ GarminProvider = (*PythonGarminProvider)(nil)
+
 // PythonGarminProvider implements GarminProvider by shelling out to the
 // garmin_fetch.py script.  Credentials are passed to the subprocess via stdin
 // as a JSON object — never via environment variables — so that the process
@@ -274,7 +276,7 @@ func (p *PythonGarminProvider) ListActivities(
 	// some activities may fall outside [start, end).
 	var filtered []Activity
 	for _, a := range activities {
-		if !a.Date.Before(start.Truncate(24*time.Hour)) && a.Date.Before(end) {
+		if inWindow(a, start, end) {
 			filtered = append(filtered, a)
 		}
 	}

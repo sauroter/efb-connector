@@ -635,7 +635,7 @@ func TestCreateTripFromTrack_Success(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
+	_, err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestCreateTripFromTrack_FormNotFound(t *testing.T) {
 		t.Fatalf("login failed: %v", err)
 	}
 
-	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+	diag, err := c.CreateTripFromTrack(context.Background(), "99",
 		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
 	const want = "efb: trip creation form not found after track click (status 200)"
 	if err == nil || err.Error() != want {
@@ -727,7 +727,7 @@ func TestCreateTripFromTrack_FormStatusError(t *testing.T) {
 		t.Fatalf("login failed: %v", err)
 	}
 
-	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+	diag, err := c.CreateTripFromTrack(context.Background(), "99",
 		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
 	const want = "efb: trip form returned status 502: upstream down"
 	if err == nil || err.Error() != want {
@@ -796,13 +796,13 @@ func newTripServerWithSaveResponse(t *testing.T, saveStatus int, saveBody string
 	return srv
 }
 
-func TestCreateTripFromTrackVerbose_SuccessPopulatesDiagnostic(t *testing.T) {
+func TestCreateTripFromTrack_SuccessPopulatesDiagnostic(t *testing.T) {
 	srv := newTripServer(t, nil) // save body: "Trip saved successfully"
 	c := newClient(srv)
 	if err := c.Login(context.Background(), "any", "any"); err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
-	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+	diag, err := c.CreateTripFromTrack(context.Background(), "99",
 		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -821,18 +821,18 @@ func TestCreateTripFromTrackVerbose_SuccessPopulatesDiagnostic(t *testing.T) {
 	}
 }
 
-// TestCreateTripFromTrackVerbose_AlertSuccessIsNotFailure is the regression
+// TestCreateTripFromTrack_AlertSuccessIsNotFailure is the regression
 // guard for the v74 bug: a success page using a Bootstrap alert-success banner
 // must be classified as success (err == nil), while the diagnostic records the
 // markers so we can build correct detection later.
-func TestCreateTripFromTrackVerbose_AlertSuccessIsNotFailure(t *testing.T) {
+func TestCreateTripFromTrack_AlertSuccessIsNotFailure(t *testing.T) {
 	body := `<html><body><div class="alert alert-success">Fahrt erfolgreich gespeichert</div></body></html>`
 	srv := newTripServerWithSaveResponse(t, http.StatusOK, body)
 	c := newClient(srv)
 	if err := c.Login(context.Background(), "any", "any"); err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
-	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+	diag, err := c.CreateTripFromTrack(context.Background(), "99",
 		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
 	if err != nil {
 		t.Fatalf("alert-success page must classify as success, got error: %v", err)
@@ -848,14 +848,14 @@ func TestCreateTripFromTrackVerbose_AlertSuccessIsNotFailure(t *testing.T) {
 	}
 }
 
-func TestCreateTripFromTrackVerbose_FehlerIsFailure(t *testing.T) {
+func TestCreateTripFromTrack_FehlerIsFailure(t *testing.T) {
 	body := `<html><body><div class="alert alert-danger">Fehler beim Speichern</div></body></html>`
 	srv := newTripServerWithSaveResponse(t, http.StatusOK, body)
 	c := newClient(srv)
 	if err := c.Login(context.Background(), "any", "any"); err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
-	diag, err := c.CreateTripFromTrackVerbose(context.Background(), "99",
+	diag, err := c.CreateTripFromTrack(context.Background(), "99",
 		time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC), 3600, nil)
 	if err == nil {
 		t.Fatal("expected error for a body containing 'Fehler'")
@@ -882,7 +882,7 @@ func TestCreateTripFromTrack_TimesFilledCorrectly(t *testing.T) {
 
 	// Start: 14:30, Duration: 5400s (1h30m) -> End: 16:00
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 5400, nil)
+	_, err := c.CreateTripFromTrack(context.Background(), "99", startTime, 5400, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -950,7 +950,7 @@ func TestCreateTripFromTrack_SubmitFailure(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
+	_, err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err == nil {
 		t.Fatal("expected error for server 500, got nil")
 	}
@@ -1080,7 +1080,7 @@ func TestCreateTripFromTrack_ErrorIndicatorInResponse(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
+	_, err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, nil)
 	if err == nil {
 		t.Fatal("expected error when response contains 'Fehler', got nil")
 	}
@@ -1118,7 +1118,7 @@ func TestCreateTripFromTrack_WithEnrichment(t *testing.T) {
 	}
 
 	startTime := time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC)
-	err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, enrichment)
+	_, err := c.CreateTripFromTrack(context.Background(), "99", startTime, 3600, enrichment)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

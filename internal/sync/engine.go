@@ -47,7 +47,7 @@ const efbConsentURL = "https://efb.kanu-efb.de/interpretation/usersmap"
 // SyncEngine orchestrates the per-user sync flow.
 type SyncEngine struct {
 	db     *database.DB
-	garmin garmin.GarminProvider
+	garmin garmin.ActivitySource
 	logger *slog.Logger
 
 	// newEFBSession creates a fresh EFBProvider for each user sync. Each
@@ -132,7 +132,7 @@ func WithRateLimitBackoff(d time.Duration) Option {
 //
 // Optional behavior (Rivermap enrichment, email notifications, sleep
 // disabling) is configured via [Option] values.
-func NewSyncEngine(db *database.DB, gp garmin.GarminProvider, newEFBSession func() efb.EFBProvider, logger *slog.Logger, opts ...Option) *SyncEngine {
+func NewSyncEngine(db *database.DB, gp garmin.ActivitySource, newEFBSession func() efb.EFBProvider, logger *slog.Logger, opts ...Option) *SyncEngine {
 	var tokenBase string
 	if info, err := os.Stat("/data"); err == nil && info.IsDir() {
 		tokenBase = "/data/garmin_tokens"
@@ -1005,13 +1005,8 @@ func (s *SyncEngine) DebugUploadOnce(ctx context.Context, userID int64, garminID
 		return nil, fmt.Errorf("debug-upload: efb login: %w", err)
 	}
 
-	rawClient, ok := efbClient.(rawUploader)
-	if !ok {
-		return nil, fmt.Errorf("debug-upload: efb provider does not support raw upload")
-	}
-
 	filename := fmt.Sprintf("garmin_%s.gpx", garminID)
-	raw, err := rawClient.UploadRaw(ctx, gpxData, filename)
+	raw, err := efbClient.UploadRaw(ctx, gpxData, filename)
 	if err != nil {
 		return nil, fmt.Errorf("debug-upload: upload: %w", err)
 	}
@@ -1072,12 +1067,7 @@ func (s *SyncEngine) debugFetchTripForm(ctx context.Context, efbClient efb.EFBPr
 		return &DebugTripForm{Note: fmt.Sprintf("no unassociated track found for %q (already has a trip, or not listed)", filename)}
 	}
 
-	fetcher, ok := efbClient.(tripFormFetcher)
-	if !ok {
-		return &DebugTripForm{TrackID: trackID, Note: "efb provider does not support trip-form fetch"}
-	}
-
-	form, err := fetcher.FetchTripForm(ctx, trackID)
+	form, err := efbClient.FetchTripForm(ctx, trackID)
 	if err != nil {
 		return &DebugTripForm{TrackID: trackID, Note: fmt.Sprintf("fetch trip form: %v", err)}
 	}
@@ -1114,39 +1104,13 @@ func (s *SyncEngine) debugFetchTripForm(ctx context.Context, efbClient efb.EFBPr
 	return result
 }
 
-// rawUploader is the optional interface an [efb.EFBProvider] implements
-// when it can return the raw upload response. The production
-// *efb.EFBClient satisfies it; mocks in tests can choose to as well.
-type rawUploader interface {
-	UploadRaw(ctx context.Context, gpxData []byte, filename string) (*efb.RawUploadResult, error)
-}
-
-// tripFormFetcher is the optional interface an [efb.EFBProvider] implements
-// when it can return the raw trip-creation form. The production
-// *efb.EFBClient satisfies it; the mock does not.
-type tripFormFetcher interface {
-	FetchTripForm(ctx context.Context, trackID string) (*efb.TripFormResult, error)
-}
-
-// verboseTripCreator is the optional interface an [efb.EFBProvider]
-// implements when it can return a diagnostic of the trip-save response.
-// The production *efb.EFBClient satisfies it; the mock does not (it falls
-// back to CreateTripFromTrack).
-type verboseTripCreator interface {
-	CreateTripFromTrackVerbose(ctx context.Context, trackID string, startTime time.Time, durationSecs float64, enrichment *efb.TripEnrichment) (*efb.TripSaveDiagnostic, error)
-}
-
-// createTripLoggingDiag creates a trip from an uploaded track. When the EFB
-// provider supports it, it captures and logs a diagnostic of the raw EFB
-// trip-save response on BOTH success and failure, so we can learn EFB's real
-// markers from the logs. The success/failure decision is identical to
-// CreateTripFromTrack — this only adds observability.
+// createTripLoggingDiag creates a trip from an uploaded track and logs the
+// provider's diagnostic of the raw EFB trip-save response on BOTH success
+// and failure, so we can learn EFB's real markers from the logs. The
+// success/failure decision is CreateTripFromTrack's — this only adds
+// observability.
 func (s *SyncEngine) createTripLoggingDiag(ctx context.Context, efbClient efb.EFBProvider, trackID string, act activityToSync, enrichment *efb.TripEnrichment, log *slog.Logger) error {
-	vc, ok := efbClient.(verboseTripCreator)
-	if !ok {
-		return efbClient.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment)
-	}
-	diag, err := vc.CreateTripFromTrackVerbose(ctx, trackID, act.startTime, act.durationSecs, enrichment)
+	diag, err := efbClient.CreateTripFromTrack(ctx, trackID, act.startTime, act.durationSecs, enrichment)
 	if diag != nil {
 		log.Info("trip save diagnostic",
 			"garmin_activity_id", act.garminID,
